@@ -2485,17 +2485,41 @@ def upsert_review_case(
     )
 
 
-def list_review_cases(
-    connection: sqlite3.Connection, *, status: Optional[str] = None
-) -> List[ReviewCase]:
+def count_review_cases(connection: sqlite3.Connection, *, status: Optional[str] = None) -> int:
     if status is not None and status not in ALLOWED_REVIEW_STATUSES:
         raise ValueError(f"Unknown status filter: {status}")
     if status:
-        rows = connection.execute(
-            "SELECT * FROM review_cases WHERE status = ? ORDER BY similarity DESC", (status,)
-        )
+        row = connection.execute(
+            "SELECT COUNT(*) FROM review_cases WHERE status = ?", (status,)
+        ).fetchone()
     else:
-        rows = connection.execute("SELECT * FROM review_cases ORDER BY similarity DESC")
+        row = connection.execute("SELECT COUNT(*) FROM review_cases").fetchone()
+    return int(row[0])
+
+
+def list_review_cases(
+    connection: sqlite3.Connection, *, status: Optional[str] = None, limit: Optional[int] = None
+) -> List[ReviewCase]:
+    """Cases ordered by descending similarity, so the strongest candidates for
+    human attention come first. ``limit`` bounds how many are returned: a real
+    queue can hold thousands, and rendering all of them at once would make the
+    page unusable rather than more informative."""
+    if status is not None and status not in ALLOWED_REVIEW_STATUSES:
+        raise ValueError(f"Unknown status filter: {status}")
+    if limit is not None and limit < 0:
+        raise ValueError("limit must not be negative")
+
+    clauses = "SELECT * FROM review_cases"
+    parameters: List[Any] = []
+    if status:
+        clauses += " WHERE status = ?"
+        parameters.append(status)
+    clauses += " ORDER BY similarity DESC"
+    if limit is not None:
+        clauses += " LIMIT ?"
+        parameters.append(limit)
+
+    rows = connection.execute(clauses, tuple(parameters))
     return [_row_to_review_case(row) for row in rows]
 
 
@@ -2549,11 +2573,14 @@ def running_under_streamlit() -> bool:
     so the review mode renders the page instead of launching another server."""
     if os.environ.get("ACP_ARDEN_REVIEW_CHILD") == "1":
         return True
-    try:
-        from streamlit.runtime.scriptrunner import get_script_run_ctx
-    except Exception:  # noqa: BLE001 - Streamlit is optional at import time
+    # Only Streamlit itself imports Streamlit before this file runs. Checking
+    # that first keeps a plain interpreter run from importing the package at
+    # all, which would emit a "missing ScriptRunContext" warning over the menu.
+    if "streamlit" not in sys.modules:
         return False
     try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
         return get_script_run_ctx() is not None
     except Exception:  # noqa: BLE001 - defensive across Streamlit versions
         return False
@@ -2573,12 +2600,18 @@ def render_review_page(db_path: Path) -> None:
         "shown here."
     )
 
-    status_filter = st.selectbox("Filter by status", ["all", *REVIEW_STATUSES])
+    filter_column, page_size_column = st.columns([2, 1])
+    status_filter = filter_column.selectbox("Filter by status", ["all", *REVIEW_STATUSES])
+    page_size = page_size_column.number_input(
+        "Cases to show", min_value=5, max_value=200, value=25, step=5
+    )
 
     with review_database(db_path) as connection:
-        cases = list_review_cases(
-            connection, status=None if status_filter == "all" else status_filter
-        )
+        status = None if status_filter == "all" else status_filter
+        total = count_review_cases(connection, status=status)
+        # A whole queue is thousands of cases; a reviewer works the strongest
+        # candidates first, so the page shows a bounded, ordered slice of them.
+        cases = list_review_cases(connection, status=status, limit=int(page_size))
 
         if not cases:
             st.info(
@@ -2586,6 +2619,12 @@ def render_review_page(db_path: Path) -> None:
                 "(`python ACP_arden.py --mode full`) to populate the local review database."
             )
             return
+
+        st.caption(
+            f"Showing the {len(cases)} highest-similarity case(s) of {total} matching this "
+            f"filter, ordered by descending similarity. Each one is a prompt for a human "
+            f"decision, not a finding."
+        )
 
         for case in cases:
             with st.container(border=True):
@@ -3759,4 +3798,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Streamlit re-executes this file for every interaction and owns the
+    # process lifecycle itself. Raising SystemExit there aborts the script run
+    # before Streamlit can mark it finished, which leaves the page hanging, so
+    # the review path returns normally and only a plain interpreter run exits
+    # with a status code.
+    if running_under_streamlit():
+        main()
+    else:
+        raise SystemExit(main())

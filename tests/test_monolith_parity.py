@@ -700,6 +700,63 @@ def test_the_review_database_stores_only_opaque_fields(tmp_path: Path) -> None:
             acp.set_review_status(connection, case_id="sample:candidate", status="banned")
 
 
+def test_the_review_queue_is_ordered_and_bounded(tmp_path: Path) -> None:
+    # A real queue holds thousands of cases. Rendering all of them at once made
+    # the page unusable, so the query is bounded and ordered by descending
+    # similarity: a reviewer sees the strongest candidates first.
+    db_path = tmp_path / "queue.sqlite"
+    with acp.review_database(db_path) as connection:
+        for index in range(50):
+            acp.upsert_review_case(
+                connection,
+                case_id=f"case{index:03d}",
+                probe_sample_id=f"{index:016x}",
+                candidate_identity_hash=f"{index + 1:016x}",
+                similarity=index / 100.0,
+                threshold=0.363,
+            )
+
+        assert acp.count_review_cases(connection) == 50
+
+        page = acp.list_review_cases(connection, limit=10)
+        assert len(page) == 10
+        similarities = [case.similarity for case in page]
+        assert similarities == sorted(similarities, reverse=True)
+        assert similarities[0] == pytest.approx(0.49)
+
+        assert len(acp.list_review_cases(connection)) == 50
+        assert acp.list_review_cases(connection, limit=0) == []
+        with pytest.raises(ValueError):
+            acp.list_review_cases(connection, limit=-1)
+
+        acp.set_review_status(connection, case_id="case000", status="dismissed")
+        assert acp.count_review_cases(connection, status="dismissed") == 1
+        assert acp.count_review_cases(connection, status="open") == 49
+
+
+def test_a_streamlit_child_process_is_detected_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACP_ARDEN_REVIEW_CHILD", "1")
+    assert acp.running_under_streamlit() is True
+    monkeypatch.delenv("ACP_ARDEN_REVIEW_CHILD")
+    # Outside a script run there is no Streamlit context, so the review mode
+    # launches a server rather than trying to render into a bare interpreter.
+    assert acp.running_under_streamlit() is False
+
+
+def test_the_entrypoint_does_not_raise_system_exit_under_streamlit() -> None:
+    # Regression guard: SystemExit raised inside a Streamlit script run aborts
+    # it before Streamlit marks the run finished, which hangs the review page.
+    source = Path(acp.__file__).read_text(encoding="utf-8")
+    entrypoint = source.split('if __name__ == "__main__":')[-1]
+    assert "running_under_streamlit()" in entrypoint
+    assert "raise SystemExit(main())" in entrypoint
+    guarded = entrypoint.index("running_under_streamlit()")
+    unguarded = entrypoint.index("raise SystemExit(main())")
+    assert guarded < unguarded, "the Streamlit guard must precede the exiting branch"
+
+
 def test_the_policy_note_rules_out_automatic_sanctions() -> None:
     note = acp.POLICY_NOTE.lower()
     assert "human review only" in note

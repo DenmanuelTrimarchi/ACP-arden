@@ -209,6 +209,10 @@ identifiers, a similarity score and the threshold that opened the case — never
 a name, a file path or an embedding. It states plainly that similarity does not
 prove misuse, and it applies no sanction of any kind.
 
+A complete run opens roughly 2,500 cases, so the page is filterable by status
+and shows a bounded slice — the highest-similarity cases first, 25 by default.
+Each row is a prompt for a human decision, not a finding.
+
 ## Testing
 
 ```bash
