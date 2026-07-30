@@ -33,6 +33,10 @@ project. Their locations are read from a local, git-ignored ``.env``.
 # 1. Imports and programme metadata
 # =============================================================================
 
+# ``from __future__ import annotations`` stores every type annotation in this
+# file as a string rather than evaluating it at definition time. Two practical
+# consequences: a class may be named in a signature before it is defined, and
+# the annotations impose no runtime cost.
 from __future__ import annotations
 
 import argparse
@@ -90,12 +94,17 @@ DEFAULT_GALLERY_MANIFEST = RAW_ROOT / "gallery_manifest.json"
 
 # Attribution. Every line of this file is original project code: the OpenCV,
 # NumPy, Pillow and Streamlit calls below use those libraries' documented
-# public APIs, which is use rather than adaptation of their source. The two
-# pretrained ONNX files are external artefacts, not code; they are published
-# in the OpenCV Zoo repository (github.com/opencv/opencv_zoo) under the MIT
-# licence (YuNet) and the Apache-2.0 licence (SFace), and are pinned by the
-# SHA-256 digests in section 2. LFW and CPLFW are external datasets used under
-# their authors' published terms; neither is redistributed here.
+# public APIs, which is use rather than adaptation of their source. Wherever an
+# external model, dataset, API or published method enters the pipeline, a
+# four-field attribution header records its origin immediately above the code
+# concerned. The complete register, with licences and digests, is REFERENCES.md.
+# Neither benchmark dataset nor either model file is redistributed here.
+#
+# Reading order. The eighteen numbered sections run from configuration through
+# to the launcher, so the file may be read from top to bottom in roughly the
+# order the pipeline executes. Comments that explain a language construct are
+# addressed to a reader following the method rather than the syntax, and appear
+# at the first use of each construct.
 
 
 # =============================================================================
@@ -110,6 +119,27 @@ EMBEDDING_DIMENSIONS = 128
 MODEL_VERSION = "opencv-sface-2021dec-yunet-2023mar"
 PREPROCESSING_REVISION = "opencv-yunet-sface-exif-bgr-l2-v1"
 
+# The detection and embedding stages are external pretrained artefacts, not
+# code adapted into this file. Both are consumed through OpenCV's documented
+# public API; the two blocks below record where each originates.
+##############
+# Title: YuNet: A Tiny Millisecond-level Face Detector
+# Author: Wu, W., Peng, H. and Yu, S., Machine Intelligence Research, 20(5), pp. 656-665
+# Date: 2023
+# Availability: https://doi.org/10.1007/s11633-023-1423-y
+##############
+##############
+# Title: SFace: Sigmoid-Constrained Hypersphere Loss for Robust Face Recognition
+# Author: Zhong, Y., Deng, W., Hu, J., Zhao, D., Li, X. and Wen, D.
+# Date: 2021
+# Availability: https://doi.org/10.1109/TIP.2020.3048632
+##############
+##############
+# Title: OpenCV Zoo, distributor of the two pinned ONNX weight files
+# Author: OpenCV team; YuNet weights MIT, SFace weights Apache-2.0
+# Date: 2023 (YuNet 2023mar release), 2021 (SFace 2021dec release)
+# Availability: https://github.com/opencv/opencv_zoo
+##############
 YUNET_FILENAME = "face_detection_yunet_2023mar.onnx"
 SFACE_FILENAME = "face_recognition_sface_2021dec.onnx"
 
@@ -140,8 +170,32 @@ DEFAULT_RANDOM_SEED = 20260727
 # Archive checksums recorded for this project's own dataset acquisition. They
 # describe the copies evaluated here; the CPLFW authors do not publish an
 # official archive checksum of their own.
+# The benchmark datasets are external inputs used under their authors'
+# published terms. Neither is redistributed here; only these checksums, which
+# identify the exact copies this project evaluated, are recorded.
+##############
+# Title: Labeled Faces in the Wild (LFW) benchmark database
+# Author: Huang, G.B., Ramesh, M., Berg, T. and Learned-Miller, E. (UMass Amherst TR 07-49)
+# Date: October 2007
+# Availability: http://vis-www.cs.umass.edu/lfw/lfw.pdf
+##############
+# The alignment procedure that produced the funnelled image set evaluated here
+# is a separate publication, and a distinct image set from the unaligned
+# distribution, so it is cited in its own right.
+##############
+# Title: Unsupervised Joint Alignment of Complex Images
+# Author: Huang, G.B., Jain, V. and Learned-Miller, E. (ICCV)
+# Date: 2007
+# Availability: http://vis-www.cs.umass.edu/lfw/
+##############
 LFW_ARCHIVE_FILENAME = "lfwfunneled.tgz"
 LFW_ARCHIVE_MD5 = "1b42dfed7d15c9b2dd63d5e5840c86ad"
+##############
+# Title: Cross-Pose LFW (CPLFW) benchmark database
+# Author: Zheng, T. and Deng, W. (Beijing Univ. of Posts and Telecommunications, TR 18-01)
+# Date: February 2018
+# Availability: http://www.whdeng.cn/cplfw/
+##############
 CPLFW_ARCHIVE_FILENAME = "CPLFW.zip"
 CPLFW_ARCHIVE_SHA256 = "9a09dd1ebe1a000c52f69f365f5d564cd529f1fcf4f0479510231856f358f416"
 
@@ -269,6 +323,10 @@ class EnvironmentConfig:
     cplfw_raw_root: Optional[Path]
     cache_root: Optional[Path]
 
+    # A ``@classmethod`` receives the class itself as its first argument rather
+    # than an instance, which is the idiomatic way to offer an alternative
+    # constructor: ``EnvironmentConfig.load()`` builds and returns an instance.
+    # ``Optional[X]`` is shorthand for "an X or None".
     @classmethod
     def load(cls, env: Optional[Mapping[str, str]] = None) -> "EnvironmentConfig":
         """Process environment first, then the local ``.env`` as a fallback, so
@@ -396,6 +454,10 @@ OPAQUE_ID_SALT = "face-verification-opaque-id-v1"
 def sha256_of_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
+        # ``iter(callable, sentinel)`` repeatedly calls the first argument until
+        # it returns the second. Here that reads the file a megabyte at a time
+        # and stops at the empty bytestring marking end-of-file, so a large
+        # model binary is never held in memory in full.
         for chunk in iter(lambda: handle.read(chunk_size), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -489,6 +551,11 @@ class ImageLoadError(RuntimeError):
     """Raised for any image that cannot be safely and strictly loaded."""
 
 
+# ``@dataclass`` generates __init__, __repr__ and __eq__ from the annotated
+# attributes below, so the class body declares data rather than boilerplate.
+# ``frozen=True`` additionally makes instances immutable: assigning to a field
+# after construction raises, which is what stops a loaded image being mutated
+# in place halfway through the pipeline.
 @dataclass(frozen=True)
 class LoadedImage:
     bgr: np.ndarray  # HxWx3 uint8, OpenCV's BGR channel order
@@ -497,6 +564,10 @@ class LoadedImage:
     source_path: Path
 
 
+# The bare ``*`` in the signature marks every parameter after it as
+# keyword-only: a caller must write ``max_bytes=...`` rather than passing a
+# bare number positionally. For two same-typed limits that is the difference
+# between a readable call and a silently transposed pair of bounds.
 def load_image_bgr(
     path: Path,
     *,
@@ -538,8 +609,16 @@ def load_image_bgr(
     except ImageLoadError:
         raise
     except Exception as exc:  # noqa: BLE001 - normalise every decode failure
+        # ``raise ... from exc`` records the original decode error as the new
+        # exception's cause, so the traceback keeps both the library's message
+        # and this project's failure taxonomy.
         raise ImageLoadError(f"Could not decode image {path}: {exc}") from exc
 
+    # ``array[:, :, ::-1]`` keeps every row and column but walks the third axis
+    # (colour) backwards, converting Pillow's RGB order to the BGR order OpenCV
+    # expects. Negative-step slicing only produces a view, so
+    # ``ascontiguousarray`` copies it into a contiguous buffer that OpenCV's C++
+    # layer can read directly.
     bgr = np.ascontiguousarray(array[:, :, ::-1])
     return LoadedImage(bgr=bgr, width=width, height=height, source_path=path)
 
@@ -553,6 +632,12 @@ def load_image_bgr(
 # are counted as explicit outcomes in section 12, never silently dropped.
 
 
+# A ``Protocol`` describes a shape rather than an ancestry: any object with a
+# matching ``detect_single_face`` method satisfies this type without inheriting
+# from it. That is what lets the evaluators accept either the real OpenCV
+# wrapper or a deterministic synthetic stand-in. ``@runtime_checkable``
+# additionally permits ``isinstance`` against the protocol, which checks only
+# that the named methods exist.
 @runtime_checkable
 class FaceDetector(Protocol):
     """Returns one detected face's row, or raises ``FaceCountError``."""
@@ -575,6 +660,15 @@ class DetectorSettings:
     top_k: int = DETECTOR_TOP_K
 
 
+##############
+# Title: The OpenCV Library (cv2.FaceDetectorYN and cv2.FaceRecognizerSF APIs)
+# Author: Bradski, G., Dr. Dobb's Journal of Software Tools, 25(11), pp. 120-125
+# Date: 2000 (library); APIs used as documented in the OpenCV 4.x release series
+# Availability: https://docs.opencv.org/4.x/df/d20/classcv_1_1FaceDetectorYN.html
+##############
+# The wrapper below is original code. It calls OpenCV's documented public API,
+# which is use of the library rather than adaptation of its source; the header
+# records the API's origin, not a borrowed implementation.
 class YuNetDetector:
     def __init__(
         self,
@@ -601,9 +695,12 @@ class YuNetDetector:
         height, width = bgr.shape[:2]
         self._detector.setInputSize((width, height))
         _, faces = self._detector.detect(bgr)
-        count = 0 if faces is None else len(faces)
-        if count != 1:
-            raise FaceCountError(count)
+        # YuNet returns None rather than an empty matrix when it finds nothing,
+        # so the None case and the wrong-count case are tested together. Testing
+        # them in one expression is also what lets a type checker prove the
+        # subscript below is safe.
+        if faces is None or len(faces) != 1:
+            raise FaceCountError(0 if faces is None else len(faces))
         return faces[0]
 
 
@@ -710,6 +807,11 @@ def cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
 #   under the dataset root.
 
 
+# The two file *formats* parsed below are defined by the respective dataset
+# authors and are documented in the references recorded in section 2 (LFW:
+# Huang et al., 2007; CPLFW: Zheng and Deng, 2018). The parsers themselves are
+# original code, written against the authors' distributed files rather than
+# adapted from any other implementation.
 class ProtocolError(RuntimeError):
     """Raised for any malformed, inconsistent, or unsafe protocol file."""
 
@@ -831,6 +933,10 @@ def parse_lfw_pairs(protocol_path: Path, dataset_root: Path) -> List[Pair]:
 
 def _cplfw_identity_from_filename(filename: str) -> str:
     stem = Path(filename).stem
+    # ``rpartition`` splits once at the *last* separator and always returns
+    # three parts, so this cannot raise on a name without an underscore. The
+    # middle value is the separator itself; ``_`` is the conventional name for a
+    # value that is deliberately discarded.
     prefix, _, suffix = stem.rpartition("_")
     return prefix if prefix and suffix.isdigit() else stem
 
@@ -930,6 +1036,10 @@ def parse_cplfw_pairs(protocol_path: Path, dataset_root: Path) -> List[Pair]:
 # "score >= threshold implies a predicted match". Implemented in plain NumPy so
 # the dependency contract stays small and fully pinned.
 
+# Type aliases: a name bound to a type expression, used purely to keep the
+# signatures below readable. ``Union[A, B]`` means "either an A or a B", so
+# every entry point accepts a plain Python sequence or a NumPy array and
+# internal calls need not convert back and forth.
 ScoreInput = Union[Sequence[float], np.ndarray]
 LabelInput = Union[Sequence[int], np.ndarray]
 
@@ -975,6 +1085,9 @@ class ConfusionMatrix:
         }
 
 
+# A single leading underscore marks a helper as internal by convention: it is
+# not part of the surface this file offers to its tests or to a reader, and may
+# change without notice. Python does not enforce this; it is a signal.
 def _validate_inputs(scores: ScoreInput, labels: LabelInput) -> Tuple[np.ndarray, np.ndarray]:
     scores_arr = np.asarray(scores, dtype=np.float64)
     labels_arr = np.asarray(labels, dtype=np.int64)
@@ -1064,11 +1177,26 @@ def roc_points(scores: ScoreInput, labels: LabelInput) -> List[Dict[str, float]]
     return points
 
 
+##############
+# Title: The Meaning and Use of the Area under a Receiver Operating Characteristic (ROC) Curve
+# Author: Hanley, J.A. and McNeil, B.J., Radiology, 143(1), pp. 29-36
+# Date: 1982
+# Availability: https://doi.org/10.1148/radiology.143.1.7063747
+##############
+# The equivalence this function relies on -- that the area under the ROC curve
+# equals the probability that a randomly chosen positive outranks a randomly
+# chosen negative, the quantity estimated by the Wilcoxon/Mann-Whitney rank
+# statistic -- is the standard result established in the reference above. The
+# implementation below is original and deliberately avoids a machine-learning
+# dependency for one statistic.
 def roc_auc(scores: ScoreInput, labels: LabelInput) -> float:
     """Rank-based ROC-AUC (the Mann-Whitney U identity), ties resolved with
     average ranks. Equivalent to the trapezoidal-rule area, without pulling in
     a machine-learning framework for one statistic."""
     scores_arr, labels_arr = _validate_inputs(scores, labels)
+    # ``kind="mergesort"`` requests a stable sort: equal scores keep their
+    # original relative order. Stability makes the tie handling below
+    # reproducible run to run rather than dependent on the sort's internals.
     order = np.argsort(scores_arr, kind="mergesort")
     sorted_scores = scores_arr[order]
     ranks = np.empty(len(scores_arr), dtype=np.float64)
@@ -1314,6 +1442,12 @@ def select_final_threshold(
             "balanced_accuracy": balanced_accuracy,
         }
 
+    # Returning a tuple gives a lexicographic ordering: Python compares the
+    # first element, and only consults the second when those are equal, then
+    # the third. Negating balanced accuracy turns "highest is best" into
+    # "smallest sorts first", so a single ``min`` expresses the whole published
+    # selection rule -- and the final element being the candidate's name
+    # guarantees a total order, leaving no tie for chance to break.
     def sort_key(name: str) -> Tuple[float, float, str]:
         metrics = per_candidate_dev_metrics[name]
         return (-metrics["balanced_accuracy"], metrics["false_match_rate"], name)
@@ -1370,6 +1504,10 @@ class EvaluationResult:
     failures: Dict[str, int] = field(default_factory=dict)
     embedding_times_seconds: List[float] = field(default_factory=list)
 
+    # ``@property`` exposes a method as though it were an attribute, so callers
+    # write ``result.valid_scores`` rather than ``result.valid_scores()``. Each
+    # one below is derived from the stored pairs on every access, which means
+    # the counts can never drift out of step with the data they describe.
     @property
     def valid_scores(self) -> List[float]:
         return [s.similarity for s in self.scored_pairs if s.similarity is not None]
@@ -1706,6 +1844,9 @@ def evaluate_gallery(
                 (candidate_entry, cosine_similarity(probe_embedding, candidate_embedding))
                 for candidate_entry, candidate_embedding in gallery_embeddings
             ),
+            # Same lexicographic device as the threshold selection: rank by
+            # descending similarity, and break an exact tie on the opaque
+            # sample identifier so the winner is deterministic.
             key=lambda item: (-item[1], item[0].sample_id),
         )
         search_times.append(time.perf_counter() - search_start)
@@ -1858,6 +1999,10 @@ def _atomic_write(path: Path, content: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
+        # ``os.replace`` is atomic within a filesystem: the destination either
+        # holds the whole old file or the whole new one, never a partial write.
+        # Writing to a temporary neighbour and renaming is therefore what stops
+        # an interrupted run leaving a half-written result behind.
         os.replace(tmp_path, path)
     except Exception:
         if os.path.exists(tmp_path):
@@ -1922,6 +2067,9 @@ def format_percentage(value: Any) -> str:
 
 def format_number(value: Any, digits: int = 4) -> str:
     try:
+        # The inner ``{digits}`` is substituted into the format specification
+        # itself, so the number of decimal places is chosen by the caller
+        # rather than fixed in the literal.
         return f"{float(value):.{digits}f}"
     except (TypeError, ValueError):
         return "n/a"
@@ -2298,6 +2446,10 @@ def assert_no_leakage(record: Mapping[str, Any], *, context: str = "") -> None:
         if isinstance(value, str) and (value.startswith("/") or value.startswith("~")):
             raise PrivacyLeakError(f"{label}: value looks like an absolute path: {value}")
 
+        # ``all(... for ...)`` is a generator expression: it tests each item in
+        # turn and stops at the first failure rather than building an
+        # intermediate list. A long, purely numeric sequence is the shape of a
+        # raw embedding, which must never reach a published artefact.
         if (
             isinstance(value, (list, tuple))
             and len(value) >= 32
@@ -2446,6 +2598,10 @@ class ReviewCase:
     decided_at: Optional[str]
 
 
+# ``@contextmanager`` turns a generator into something usable with ``with``:
+# everything before ``yield`` runs on entry, the yielded value is bound to the
+# ``as`` name, and the ``finally`` clause runs on exit however the block ends.
+# That is what guarantees the connection closes even if the caller raises.
 @contextmanager
 def review_database(db_path: Path) -> Iterator[sqlite3.Connection]:
     db_path = Path(db_path)
@@ -3304,6 +3460,10 @@ def experiment_calibrate(
             "failure_breakdown": dict(result.failures),
             "model_version": MODEL_VERSION,
             "preprocessing_revision": PREPROCESSING_REVISION,
+            # ``getattr(obj, name, default)`` returns the attribute if present
+            # and the default otherwise. The evaluators are typed structurally,
+            # so a stand-in stage need not carry a digest; the real wrappers
+            # always do, and it is their verified value that is recorded.
             "model_sha256": {
                 "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
                 "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
@@ -3399,6 +3559,9 @@ def experiment_evaluate_lfw(
             "threshold_source": project_relative(threshold_artifact),
             "threshold_artifact_sha256": threshold_artifact_sha256,
             "threshold_status": FROZEN_STATUS,
+            # ``**`` unpacks a dictionary's items into the one being built. Order
+            # matters: later keys overwrite earlier ones, and ``extra_fields`` is
+            # empty unless this is the selection stage.
             **extra_fields,
             **summary,
             "model_version": MODEL_VERSION,

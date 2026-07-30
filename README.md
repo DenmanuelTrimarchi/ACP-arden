@@ -219,6 +219,7 @@ Each row is a prompt for a human decision, not a finding.
 python -m py_compile ACP_arden.py
 python ACP_arden.py --mode self-test
 pytest -v
+pyright                 # configuration is pinned in pyrightconfig.json
 ```
 
 The self-tests cover cosine similarity, L2 normalisation, confusion-matrix
@@ -235,7 +236,9 @@ selection rule.
 ```text
 ACP_arden.py        the entire programme
 CONVERSION_MAP.md   component-to-section map
+REFERENCES.md       code attribution and reference register
 requirements.txt    pinned dependencies
+pyrightconfig.json  type-checker configuration
 .env.example        template for local storage paths
 .vscode/            run configuration for the play button
 results/aggregate/  published, privacy-scanned results
@@ -255,14 +258,22 @@ investigative finding about any person.
 
 ## Attribution and licence
 
-All code in this repository is original. The OpenCV, NumPy, Pillow and
-Streamlit calls use those libraries' documented public APIs, which is use
-rather than adaptation of their source. The two pretrained ONNX files are
-external artefacts, not code: they are published in the OpenCV Zoo repository
-(`github.com/opencv/opencv_zoo`) under the MIT licence (YuNet) and the
-Apache-2.0 licence (SFace), and are pinned here by digest. LFW and CPLFW are
-external datasets used under their authors' published terms; neither is
-redistributed here.
+All code in this repository is original — no file contains code copied or
+materially adapted from an external source. What *is* external is recorded in
+full in [REFERENCES.md](REFERENCES.md), and marked in the source itself with a
+four-field attribution header at each point where an external model, dataset,
+API or published method enters the pipeline:
+
+| What | Source |
+|---|---|
+| Face detection | Wu, Peng and Yu (2023), *YuNet: A Tiny Millisecond-level Face Detector*, Machine Intelligence Research 20(5) — weights MIT |
+| Face embedding | Zhong, Deng, Hu, Zhao, Li and Wen (2021), *SFace: Sigmoid-Constrained Hypersphere Loss for Robust Face Recognition*, IEEE TIP 30 — weights Apache-2.0 |
+| Primary dataset | Huang, Ramesh, Berg and Learned-Miller (2007), *Labeled Faces in the Wild*, UMass Amherst TR 07-49; funnelled images per Huang, Jain and Learned-Miller (2007), ICCV |
+| Secondary dataset | Zheng and Deng (2018), *Cross-Pose LFW*, BUPT TR 18-01 |
+| ROC-AUC identity | Hanley and McNeil (1982), Radiology 143(1) |
+| Libraries | OpenCV, NumPy, Pillow, Streamlit — used through their documented public APIs |
+
+Neither dataset nor either model file is redistributed here.
 
 Made available for academic assessment and review — see [LICENSE](LICENSE) for
 the terms, which reserve all other rights.

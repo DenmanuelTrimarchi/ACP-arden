@@ -62,6 +62,26 @@ Excluding them changes no reported metric: every figure in
 `results/aggregate/` is produced by the pipeline in sections 11 to 15, and the
 evidence tooling only re-renders those numbers for presentation.
 
+## Attribution headers
+
+Where an external model, dataset, API or published method enters the pipeline,
+a four-field attribution header sits immediately above the code concerned:
+
+| External source | Section |
+|---|---|
+| YuNet detector (Wu, Peng and Yu, 2023) | Section 2 |
+| SFace embedding (Zhong *et al.*, 2021) | Section 2 |
+| OpenCV Zoo, distributor of both weight files | Section 2 |
+| LFW dataset (Huang *et al.*, 2007) | Section 2 |
+| Funnelled LFW alignment (Huang, Jain and Learned-Miller, 2007) | Section 2 |
+| CPLFW dataset (Zheng and Deng, 2018) | Section 2 |
+| OpenCV `FaceDetectorYN` / `FaceRecognizerSF` APIs (Bradski, 2000) | Section 6 |
+| ROC-AUC rank identity (Hanley and McNeil, 1982) | Section 10 |
+
+No header claims adapted code: each records the origin of an external artefact,
+API or standard definition that original code here consumes or implements. The
+full register, with licences and digests, is `REFERENCES.md`.
+
 ## Notes on the two "Added" rows
 
 - **Private-path redaction (section 3)** is new. The single-file artefact
