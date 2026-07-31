@@ -181,9 +181,12 @@ Raw CPLFW false-match rate: 1.95%
 Raw CPLFW false-non-match rate: 17.46%
 Raw CPLFW EER: 9.77%
 
-Gallery size: 986
-Duplicate detection rate: 96.58%
-Rank-1 identification rate: 92.76%
+Intended gallery entries: 1,047, enrolled 986
+Gallery enrolment-failure rate: 5.83% (61 references never enrolled)
+Duplicate detection rate (conditional): 99.36%
+Duplicate detection rate (end-to-end): 89.40%
+Mated probes with no enrolled reference: 61
+Rank-1 identification rate: 97.98%
 False duplicate-review rate: 52.56%
 ```
 
@@ -197,7 +200,15 @@ Two figures must never be quoted alone:
   better than it is. Cross-pose *detection*, not comparison, is the dominant
   finding, and it is present in the authors' raw images rather than being an
   artefact of pre-cropping.
-- The **gallery duplicate detection rate is inseparable from the 52.56% false
+- The **gallery detection rate is meaningless without its denominator**. 61 of
+  1,047 gallery references never enrolled — 52 images yielded multiple faces
+  and 9 yielded none — so the mated probes pointing at them had nothing to
+  match against. Counting those as detection misses (as the pre-revision
+  artefact did) understates the conditional rate; ignoring them overstates the
+  real one. Both are now published: **99.36% conditional** over probes that
+  were actually scored, **89.40% end-to-end** over every intended probe. The
+  code refuses to print either alone.
+- The **gallery detection rate is also inseparable from the 52.56% false
   duplicate-review rate**. A 0.11% single-comparison false-match rate compounds
   across 986 gallery comparisons per probe. That is direct, quantified evidence
   that a threshold calibrated for 1:1 verification is not fit for 1:N search at
