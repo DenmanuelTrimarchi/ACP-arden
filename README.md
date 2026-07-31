@@ -10,9 +10,25 @@ Everything lives in one executable Python file, [ACP_arden.py](ACP_arden.py).
 
 ## Research question
 
+> To what extent can gallery-specific threshold calibration and multi-image
+> profile enrolment reduce false duplicate-profile reviews while retaining
+> duplicate-detection performance in an open-set face-verification proof of
+> concept evaluated on real public benchmark datasets?
+
+The five baseline experiments below answer the original, narrower question and
+are retained unchanged as the **baseline study**:
+
 > How effectively can a pretrained face-embedding model verify whether two
 > unconstrained facial images belong to the same person and identify potential
 > duplicate profiles under a human-review decision policy?
+
+The baseline study establishes the problem the revised question addresses: a
+threshold calibrated for 1:1 verification transfers badly to 1:N search,
+referring a large share of genuinely new identities for review. The
+supplementary experiment evaluates whether gallery-specific calibration and
+multi-image enrolment can reduce false human-review referrals while retaining
+sensitivity to same-identity duplicate profiles. It does **not** claim that
+duplicate-profile detection is solved.
 
 This is not a dating application, not a fraud detector, and not a new
 face-recognition model. Nothing here is trained or fine-tuned, no website is
@@ -85,7 +101,14 @@ python ACP_arden.py --mode full       # the complete five-experiment evaluation
 python ACP_arden.py --mode summary    # headline figures from the existing results
 python ACP_arden.py --mode review     # the local human-review interface
 python ACP_arden.py --mode self-test  # deterministic synthetic tests, no data needed
+
+# Supplementary Experiment 6 (needs the official BFW dataset)
+python ACP_arden.py --mode open-set          # development, freezing, held-out test
+python ACP_arden.py --mode open-set-summary  # headline open-set figures
 ```
+
+`--mode full` continues to mean exactly the original five-experiment
+evaluation. The open-set experiment is separate and never alters it.
 
 `--mode self-test` and the pytest suite need no dataset, no model file and no
 network, so the code can be checked before any biometric data is touched.
@@ -246,6 +269,146 @@ results/raw/        local, git-ignored working files
 tests/              contract tests, no dataset or model required
 ```
 
+## Supplementary experiment 6 — BFW open-set duplicate-profile evaluation
+
+The baseline gallery experiment reuses the LFW 1:1 threshold for 1:N search.
+That is a *control*, and it fails in an informative way: a threshold chosen to
+compare exactly two images refers a large share of people with no gallery match
+for human review, because one non-mated search performs as many comparisons as
+there are enrolled identities. Experiment 6 asks whether calibrating for the
+gallery, and enrolling more than one image per profile, fixes that.
+
+### What is new
+
+1. **Corrected gallery accounting.** A reference image that fails to enrol is
+   recorded, not dropped. Mated probes whose reference never enrolled are
+   reported as `gallery_reference_unavailable`, never as similarity misses.
+   Both a `conditional` and an `end_to_end` rate are always published.
+2. **Identity-disjoint open-set protocol** built from official BFW data,
+   stratified by the eight demographic subgroups, seeded at 20260727.
+3. **Two enrolment methods** over the same identity partition.
+4. **Open-set calibration** at target FPIRs, frozen before the held-out test.
+5. **Cluster-bootstrap confidence intervals** and subgroup reporting.
+
+### Metric definitions, and why they are not the pairwise ones
+
+| Open-set (1:N) | Pairwise (1:1) | Difference |
+| --- | --- | --- |
+| **FPIR** — a search against the whole gallery returns at least one candidate above threshold when the person is *not* enrolled | **FMR** — one comparison between two images exceeds threshold | FPIR aggregates over every gallery identity, so it compounds with gallery size; FMR does not |
+| **FNIR@k** — a mated search fails to place the correct identity within rank *k* above threshold | **FNMR** — one genuine comparison falls below threshold | FNIR involves ranking against competing candidates; FNMR has no competitors |
+| **TPIR@k** (= DIR) — `1 − FNIR@k` | **TMR** — `1 − FNMR` | — |
+
+An FPIR is never comparable with an FMR, and the artefacts keep them in
+separate files to make substitution difficult.
+
+### The two methods
+
+| | Method A (control) | Method B (proposed) |
+| --- | --- | --- |
+| Name | `single_image_pairwise_threshold` | `three_image_open_set_calibrated` |
+| Gallery images per identity | 1 | up to 3, minimum 2 |
+| Representation | one normalised embedding | mean of L2-normalised embeddings, re-normalised |
+| Threshold | the LFW 1:1 frozen threshold, unchanged | calibrated on the BFW development partition at a target FPIR |
+
+Method A exists to quantify threshold transfer failure. Its threshold is a
+**control only and is never described as a valid open-set operating point.**
+
+### Operating points
+
+Candidate thresholds are every distinct development top score plus two
+bracketing sentinels. For each target FPIR (0.001, **0.003 primary**, 0.01) the
+rule is: keep candidates whose development FPIR is at or below the target, then
+take the highest development TPIR@1; ties break by lower development FPIR, then
+higher threshold, then candidate name.
+
+The policy is written with status `open_set_frozen`, and
+`require_frozen_open_set_policy` refuses to score the held-out test partition
+with anything else.
+
+### Confidence intervals
+
+Several probes can belong to one identity, so images are **not** resampled
+independently — that would treat correlated observations as independent and
+produce intervals that are far too narrow. Identities are resampled with
+replacement instead (cluster bootstrap), 2,000 replicates at seed 20260727,
+subgroup stratification preserved, reported as 2.5/97.5 percentiles. A
+replicate in which a metric is undefined is excluded and counted; it is never
+replaced by zero.
+
+### Subgroup analysis
+
+Per-subgroup FPIR, FNIR@1, TPIR@1 and coverage, using the dataset's own
+aggregate annotations. No attribute is inferred with another model, and no
+subgroup label is published beside anything identifying a person. One global
+threshold is used for the primary result; subgroup-specific thresholds are not
+applied to the held-out test. The max/min FPIR ratio is reported only when the
+denominator is non-zero — otherwise the absolute range is given instead.
+
+### Setup
+
+```bash
+FACE_BFW_ROOT=/path/to/bfw-images            # extracted <subgroup>/<identity>/<image>.jpg
+FACE_BFW_METADATA_ROOT=/path/to/bfw-metadata # optional; defaults to FACE_BFW_ROOT
+FACE_ID_HMAC_KEY=...                         # required; see below
+```
+
+BFW must be obtained from the [official project](https://github.com/visionjo/facerec-bias-bfw)
+under its own terms. Nothing here downloads it, and no mirror is used. The
+adapter pins the official datatable schema and stops with an explicit message
+rather than guessing at a variant.
+
+**This project defines its own open-set protocol from the official BFW data.
+BFW publishes verification and bias-analysis protocols; it does not publish an
+open-set identification protocol, and none is implied.**
+
+### Optional extensions
+
+- **AgeDB** cross-dataset transfer (`FACE_AGEDB_ROOT`). Distributed for
+  non-commercial research on request from its authors. When unset, the run
+  prints a skipped-with-reason line and fabricates nothing.
+- **Higher-capacity pipeline comparison** (SCRFD/RetinaFace + ArcFace
+  `buffalo_l`). Reported as **not run**: the pretrained recognition models are
+  licensed for non-commercial research and their terms are unresolved for this
+  project. No substitute model is used. Any such comparison would be a
+  complete-pipeline comparison, not an embedding-only one, because the detector
+  and preprocessing differ too.
+
+### Pre-declared success criteria
+
+Declared in source before the held-out test was run, and reported as achieved,
+not achieved, or not measurable:
+
+| Criterion | Target |
+| --- | --- |
+| Held-out FPIR | ≤ 0.01, target 0.003 |
+| TPIR@1 | ≥ 0.90 |
+| TPIR@5 | ≥ 0.95 |
+| Gallery enrolment coverage | ≥ 0.90 |
+| Probe extraction coverage | ≥ 0.90 |
+
+These are research targets, not results, and are not revised after seeing test
+outcomes.
+
+## Opaque identifiers and the required key
+
+Public identifiers are HMAC-SHA-256 over the identity or sample name, keyed by
+a secret `FACE_ID_HMAC_KEY`. A published fixed salt would leave the mapping
+back to a dataset identity recoverable by hashing a candidate name list, which
+for a public benchmark is a short list.
+
+```bash
+python -c "import secrets;print(secrets.token_urlsafe(32))"
+```
+
+At least 32 decoded bytes, URL-safe base64 or hexadecimal. The key is held in
+memory only: never printed, never stored in a result, and no digest of it
+appears in any artefact. Rotating it changes every identifier, so an existing
+local review database is refused with instructions to delete it.
+
+Partitioning deliberately does **not** depend on the key — only on the seed and
+the protocol — so published metrics stay reproducible by someone who does not
+hold it.
+
 ## Limitations
 
 LFW and CPLFW carry their own demographic skew, which limits how
@@ -255,6 +418,21 @@ as their own rate, never silently dropped. The gallery experiment is
 research-scale rather than production-scale. And "duplicate profile" here
 means "the same face was detected in the gallery" — not a legal or
 investigative finding about any person.
+
+For the supplementary open-set experiment specifically:
+
+- It remains a proof of concept. No result proves fraud, misuse or
+  misrepresentation by anyone, and no automatic sanction is ever applied.
+- The BFW open-set protocol is defined by this project, not by BFW's authors.
+- Confidence intervals describe sampling uncertainty over these benchmark
+  identities only; they do not extend to any other population.
+- Benchmark demographics do not represent a real dating-application user
+  population, so subgroup figures are not deployment estimates.
+- Every rate is conditional on the coverage figures printed beside it. An FPIR
+  measured over a small surviving fraction of the protocol is not comparable
+  with one measured over nearly all of it, which is why the code refuses to
+  print one without the other.
+- Duplicate-profile detection is **not** solved by anything here.
 
 ## Attribution and licence
 

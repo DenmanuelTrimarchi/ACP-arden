@@ -1,0 +1,119 @@
+{
+  "artifact_type": "bfw_open_set_protocol_summary",
+  "created_at": "2026-07-31T02:44:51.122819+00:00",
+  "development": {
+    "by_subgroup": {
+      "asian_females": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "asian_males": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "black_females": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "black_males": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "indian_females": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "indian_males": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "white_females": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "white_males": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      }
+    },
+    "identities": 400,
+    "images": 4600,
+    "mated_identities": 200,
+    "non_mated_identities": 200,
+    "roles": {
+      "gallery_enrolment": 600,
+      "mated_probe": 1000,
+      "non_mated_probe": 3000
+    }
+  },
+  "development_identities": 400,
+  "odd_count_rule": "When a subgroup holds an odd number of identities the extra identity is assigned to the development partition, and within a partition to the mated group, so the held-out test set is never enlarged by a tie.",
+  "opaque_id_version": "hmac-sha256-v1",
+  "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
+  "protocol_version": "acp-arden-bfw-open-set-v1",
+  "public_manifest_sha256": "549790b77cfc7abaf1a90748a7ebda86be9e988cb4aaf56af04136566b8191b1",
+  "schema_version": 1,
+  "seed": 20260727,
+  "test": {
+    "by_subgroup": {
+      "asian_females": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "asian_males": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "black_females": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "black_males": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "indian_females": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "indian_males": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "white_females": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      },
+      "white_males": {
+        "gallery_enrolment": 75,
+        "mated_probe": 125,
+        "non_mated_probe": 375
+      }
+    },
+    "identities": 400,
+    "images": 4600,
+    "mated_identities": 200,
+    "non_mated_identities": 200,
+    "roles": {
+      "gallery_enrolment": 600,
+      "mated_probe": 1000,
+      "non_mated_probe": 3000
+    }
+  },
+  "test_identities": 400
+}

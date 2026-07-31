@@ -513,14 +513,20 @@ def test_opaque_ids_are_deterministic_one_way_and_truncated() -> None:
     first = acp.opaque_id("Example_Identity")
     assert first == acp.opaque_id("Example_Identity")
     assert first != acp.opaque_id("Example_Identity_2")
-    assert len(first) == 16
+    assert len(first) == 32
     assert all(character in "0123456789abcdef" for character in first)
     assert "Example" not in first
 
 
-def test_the_salt_participates_in_the_digest() -> None:
-    assert acp.opaque_id("value", salt="one") != acp.opaque_id("value", salt="two")
-    assert acp.OPAQUE_ID_SALT == "face-verification-opaque-id-v1"
+def test_the_secret_key_participates_in_the_digest() -> None:
+    """Two different keys must not agree on an identifier; a fixed published
+    salt is exactly what this replaces."""
+    with acp.temporary_id_hmac_key("a" * 63 + "b"):
+        under_first_key = acp.opaque_id("value")
+    with acp.temporary_id_hmac_key("c" * 63 + "d"):
+        under_second_key = acp.opaque_id("value")
+    assert under_first_key != under_second_key
+    assert acp.OPAQUE_ID_VERSION == "hmac-sha256-v1"
 
 
 def test_a_manifest_records_no_real_identity_name() -> None:
@@ -528,7 +534,7 @@ def test_a_manifest_records_no_real_identity_name() -> None:
     for entry in manifest.entries:
         assert "anchor" not in entry.sample_id
         assert "anchor" not in entry.identity_hash
-        assert len(entry.identity_hash) == 16
+        assert len(entry.identity_hash) == 32
 
 
 def test_filenames_are_scrubbed_to_their_final_component() -> None:
@@ -793,6 +799,10 @@ def test_the_summary_never_quotes_a_conditional_figure_alone(tmp_path: Path) -> 
     summary = acp.render_results_summary(tmp_path)
     assert "Raw CPLFW conditional accuracy: 90.24%" in summary
     assert "Raw CPLFW extraction-failure rate: 41.42%" in summary
-    assert "Duplicate detection rate: 96.58%" in summary
+    assert "Duplicate detection rate (conditional): 96.58%" in summary
     assert "False duplicate-review rate: 52.56%" in summary
     assert summary.count("LIMITATION") == 2
+    # A legacy artefact carries no end-to-end figure, so the summary must say
+    # so rather than let the conditional rate stand unqualified.
+    assert "Duplicate detection rate (end-to-end): not recorded" in summary
+    assert "Gallery enrolment coverage: not recorded" in summary

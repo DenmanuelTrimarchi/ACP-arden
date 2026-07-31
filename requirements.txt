@@ -1,8 +1,15 @@
+# Runtime dependencies, pinned to the exact versions the published results were
+# produced under. The programme refuses to report an evaluation as evidence if
+# an installed version differs (see check_dependency_contract).
+#
+# PyYAML and matplotlib were removed at the open-set revision: neither is
+# imported by the programme or by any test, so pinning them would have
+# overstated what a result actually depends on. Test-only packages moved to
+# requirements-dev.txt.
 numpy==2.5.1
 opencv-python-headless==4.13.0.92
 Pillow==12.3.0
-PyYAML>=6.0
-pytest>=8.0
-pytest-cov>=7.0
-streamlit>=1.38
-matplotlib>=3.9
+
+# Used only by the optional local human-review interface (--mode review). The
+# five-experiment evaluation and the self-tests never import it.
+streamlit==1.60.0

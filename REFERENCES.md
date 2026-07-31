@@ -116,6 +116,41 @@ results here use the authors' raw, unconstrained images (`images.rar`), never
 the separately pre-cropped copy (`cp-aligned.zip`), and every CPLFW artefact
 records which variant it scored.
 
+BFW is an optional external benchmark used by the supplementary open-set
+experiment. It is not redistributed here and is obtained by the researcher from
+the official project under its own terms.
+
+```text
+Title: Face Recognition: Too Bias, or Not Too Bias?
+Author: Robinson, J.P., Livitz, G., Henon, Y., Qin, C., Fu, Y. and Timoner, S., Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops (CVPRW)
+Date: 2020
+Availability: https://doi.org/10.1109/CVPRW50498.2020.00008
+```
+
+```text
+Title: Balanced Faces in the Wild (BFW), source data, metadata table and benchmarks
+Author: Robinson, J.P. and contributors, visionjo/facerec-bias-bfw
+Date: 2020
+Availability: https://github.com/visionjo/facerec-bias-bfw
+```
+
+BFW is published with verification and bias-analysis protocols. It does **not**
+publish an open-set identification protocol. The identity-disjoint open-set
+partition used by Experiment 6 is constructed by this project from the official
+data and metadata, and is identified in every artefact by its own protocol
+version string so it can never be mistaken for an upstream standard.
+
+AgeDB is referenced as an optional cross-dataset transfer test. It is
+distributed for non-commercial research by its authors on request; it is not
+configured in this checkout and no AgeDB result is reported.
+
+```text
+Title: AgeDB: The First Manually Collected, In-the-Wild Age Database
+Author: Moschoglou, S., Papaioannou, A., Sagonas, C., Deng, J., Kotsia, I. and Zafeiriou, S., Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition Workshops (CVPRW)
+Date: 2017
+Availability: https://ibug.doc.ic.ac.uk/resources/agedb/
+```
+
 ## Published methods implemented independently
 
 ```text
@@ -130,6 +165,43 @@ randomly chosen positive is ranked above a randomly chosen negative — the
 quantity estimated by the Wilcoxon rank-sum statistic. `roc_auc` in section 10
 computes the area through that rank identity rather than by integrating the
 curve, which is exact under ties and needs no additional dependency.
+
+The open-set identification metrics follow the definitions used by NIST's 1:N
+evaluation: FPIR as the proportion of non-mated searches returning at least one
+candidate above threshold, and FNIR at rank *k* as the proportion of mated
+searches that fail to return the correct mate within rank *k* above threshold.
+The definitions are implemented independently in section 20; no NIST code is
+used or adapted.
+
+```text
+Title: Face Recognition Technology Evaluation (FRTE) 1:N Identification
+Author: National Institute of Standards and Technology (NIST)
+Date: 2025
+Availability: https://pages.nist.gov/frvt/html/frvt1N.html
+```
+
+The reporting framework — separating the decision policy from the error rates,
+quoting every rate with the coverage it was measured over, and declaring
+operating points before testing — follows the principles of the international
+biometric performance-testing standard.
+
+```text
+Title: ISO/IEC 19795-1:2021 Information technology — Biometric performance testing and reporting — Part 1: Principles and framework
+Author: International Organization for Standardization
+Date: 2021
+Availability: https://www.iso.org/standard/73515.html
+```
+
+The cluster bootstrap used for the confidence intervals resamples identities
+rather than images, because multiple probes can belong to one identity and
+resampling images independently would understate the intervals.
+
+```text
+Title: Bootstrap Methods: Another Look at the Jackknife
+Author: Efron, B., The Annals of Statistics, 7(1), pp. 1-26
+Date: 1979
+Availability: https://doi.org/10.1214/aos/1176344552
+```
 
 ## Libraries
 
@@ -162,6 +234,24 @@ Title: Streamlit
 Author: Snowflake Inc. and contributors
 Date: 2019 onwards
 Availability: https://streamlit.io/
+```
+
+Keyed opaque identifiers use HMAC as specified in RFC 2104, through Python's
+documented standard-library API. No third-party implementation is used and no
+code is adapted.
+
+```text
+Title: HMAC: Keyed-Hashing for Message Authentication (RFC 2104)
+Author: Krawczyk, H., Bellare, M. and Canetti, R., Internet Engineering Task Force
+Date: February 1997
+Availability: https://www.rfc-editor.org/rfc/rfc2104
+```
+
+```text
+Title: hmac — Keyed-Hashing for Message Authentication (Python standard library documentation)
+Author: Python Software Foundation
+Date: 2025
+Availability: https://docs.python.org/3/library/hmac.html
 ```
 
 ## A note on spelling

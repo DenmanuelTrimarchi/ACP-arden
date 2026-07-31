@@ -39,11 +39,11 @@ package of small modules.
 | Record-level leakage assertions | Section 15 | Preserved |
 | Local review database (SQLite, opaque identifiers only) | Section 16 | Preserved |
 | Streamlit human-review page and its launcher | Section 16 | Preserved |
-| Deterministic synthetic self-tests and their fakes | Section 17 | Preserved |
-| Environment check action | Section 18 | Preserved |
-| Model and dataset verification action | Section 18 | Preserved |
-| Five-experiment orchestration in required order | Section 18 | Preserved |
-| Interactive menu, `--mode` command line, entry point | Section 18 | Added |
+| Deterministic synthetic self-tests and their fakes | Section 25 | Preserved |
+| Environment check action | Section 26 | Preserved |
+| Model and dataset verification action | Section 26 | Preserved |
+| Five-experiment orchestration in required order | Section 26 | Preserved |
+| Interactive menu, `--mode` command line, entry point | Section 26 | Added |
 
 ## Reference-only
 
@@ -81,15 +81,39 @@ a four-field attribution header sits immediately above the code concerned:
 No header claims adapted code: each records the origin of an external artefact,
 API or standard definition that original code here consumes or implements. The
 full register, with licences and digests, is `REFERENCES.md`.
+| Keyed HMAC opaque identifiers, key validation, constant-time comparison | Section 4 | Revised |
+| Corrected gallery enrolment accounting, conditional vs end-to-end rates | Section 13 | Revised |
+| Identifier-version guard for the local review database | Section 16 | Added |
+| BFW adapter: pinned schema, containment and consistency validation, provenance | Section 17 | Added |
+| Identity-disjoint open-set protocol, subgroup stratification, role assignment | Section 18 | Added |
+| Single-image and three-image enrolment methods, template averaging | Section 19 | Added |
+| Open-set metrics: FPIR, FNIR, TPIR, CMC, coverage | Section 20 | Added |
+| Open-set threshold development, target FPIR selection, freezing guard | Section 21 | Added |
+| Cluster-bootstrap confidence intervals over identities | Section 22 | Added |
+| Demographic subgroup metrics and disparity summary | Section 23 | Added |
+| Experiment 6 orchestration, artefacts, success criteria, open-set report | Section 24 | Added |
 
-## Notes on the two "Added" rows
+## Notes on the added and revised rows
 
 - **Private-path redaction (section 3)** is new. The single-file artefact
   prints directly to a terminal rather than through separate scripts, so every
   message it emits is passed through a redactor that replaces a configured
   storage root with its variable name. No storage location can reach the
   screen, a log, or a published artefact.
-- **Interactive menu (section 18)** is new. It replaces a set of separate
+- **Interactive menu (section 26)** is new. It replaces a set of separate
   command-line entry points with one launcher that requires no arguments, so
   the VS Code play button is safe to press: it shows the menu rather than
   starting a multi-minute benchmark.
+
+- **Keyed identifiers (section 4)** replace a published fixed salt. A salt that
+  ships in the source leaves the mapping from a public identifier back to a
+  benchmark identity recoverable by hashing a candidate name list. The
+  replacement is HMAC-SHA-256 under a secret key supplied through the
+  environment, widened from 16 to 32 hexadecimal characters.
+- **Gallery accounting (section 13)** corrects a defect rather than adding a
+  feature. Reference images that failed to embed were previously dropped, which
+  removed the identity from the gallery while its mated probe was still scored
+  as an ordinary miss. Both denominators are now reported.
+- **Sections 17-24** are the supplementary open-set experiment. They are
+  additive: `--mode full` still runs exactly the original five experiments, and
+  none of the baseline artefacts changed.

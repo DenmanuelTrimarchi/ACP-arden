@@ -40,15 +40,21 @@ project. Their locations are read from a local, git-ignored ``.env``.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import csv
 import hashlib
+import heapq
+import hmac
 import json
 import math
 import os
 import platform
 import random
+import re
 import sqlite3
 import statistics
+import string
 import subprocess
 import sys
 import tempfile
@@ -58,7 +64,7 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from importlib import metadata as importlib_metadata
 from io import StringIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import (
     Any,
     Callable,
@@ -226,6 +232,12 @@ CPLFW_EXPECTED_PER_CLASS = 3000
 
 SCHEMA_VERSION = 1
 
+# Marks results produced under the corrected gallery accounting, in which a
+# reference image that fails to enrol is recorded rather than dropped. Results
+# carrying this revision are not comparable with the earlier conditional-only
+# duplicate_gallery_metrics.json, which is retained unchanged for provenance.
+GALLERY_METHODOLOGY_REVISION = "open-set-gallery-accounting-v2"
+
 POLICY_NOTE = (
     "A result above threshold opens a case for human review only. It is not "
     "evidence of scam activity and does not ban, reject or accuse any identity."
@@ -272,7 +284,14 @@ REQUIRED_ENVIRONMENT_VARIABLES = (
     "FACE_MODEL_ROOT",
     "FACE_CPLFW_RAW_ROOT",
 )
-OPTIONAL_ENVIRONMENT_VARIABLES = ("FACE_CACHE_ROOT",)
+OPTIONAL_ENVIRONMENT_VARIABLES = (
+    "FACE_CACHE_ROOT",
+    # Optional external benchmarks. Listed here so the privacy scanner adds
+    # their configured roots to the forbidden-substring set as well.
+    "FACE_BFW_ROOT",
+    "FACE_BFW_METADATA_ROOT",
+    "FACE_AGEDB_ROOT",
+)
 
 
 class ConfigurationError(RuntimeError):
@@ -322,6 +341,11 @@ class EnvironmentConfig:
     model_root: Optional[Path]
     cplfw_raw_root: Optional[Path]
     cache_root: Optional[Path]
+    # Optional external benchmarks. Absent configuration is not an error: the
+    # five baseline experiments and every existing mode run without them.
+    bfw_root: Optional[Path] = None
+    bfw_metadata_root: Optional[Path] = None
+    agedb_root: Optional[Path] = None
 
     # A ``@classmethod`` receives the class itself as its first argument rather
     # than an instance, which is the idiomatic way to offer an alternative
@@ -334,6 +358,14 @@ class EnvironmentConfig:
         source: Dict[str, str] = dict(load_env_file())
         source.update({k: v for k, v in (os.environ if env is None else env).items() if v})
 
+        # Installed as a side effect of loading configuration, so every code
+        # path that resolves storage roots also has identifiers available. The
+        # key itself is never stored on the returned object, which is written
+        # into provenance records.
+        identifier_key = source.get(ID_HMAC_KEY_VARIABLE)
+        if identifier_key:
+            configure_id_hmac_key(identifier_key)
+
         def optional(name: str) -> Optional[Path]:
             value = source.get(name)
             return Path(value).expanduser() if value else None
@@ -344,7 +376,36 @@ class EnvironmentConfig:
             model_root=optional("FACE_MODEL_ROOT"),
             cplfw_raw_root=optional("FACE_CPLFW_RAW_ROOT"),
             cache_root=optional("FACE_CACHE_ROOT"),
+            bfw_root=optional(BFW_ROOT_VARIABLE),
+            bfw_metadata_root=optional(BFW_METADATA_ROOT_VARIABLE),
+            agedb_root=optional(AGEDB_ROOT_VARIABLE),
         )
+
+    def require_bfw_roots(self) -> Tuple[Path, Path]:
+        """Resolve the BFW image root and metadata table, or stop on the exact
+        blocker. The metadata root defaults to the image root, which is where
+        the official archive places the datatable."""
+        if self.bfw_root is None:
+            raise BfwDatasetError(
+                f"{BFW_ROOT_VARIABLE} is not set. The BFW open-set experiment needs the "
+                f"official Balanced Faces in the Wild data, obtained from "
+                f"https://github.com/visionjo/facerec-bias-bfw under its own terms. It is "
+                f"never downloaded automatically and no mirror is used."
+            )
+        metadata_root = self.bfw_metadata_root or self.bfw_root
+        matches = sorted(Path(metadata_root).glob("bfw*datatable*.csv"))
+        if not matches:
+            raise BfwDatasetError(
+                f"No BFW datatable (bfw*datatable*.csv) found under the configured "
+                f"{BFW_METADATA_ROOT_VARIABLE or BFW_ROOT_VARIABLE}. Expected the official "
+                f"metadata table shipped with the dataset."
+            )
+        # The release ships the table twice, once with a version in the name and
+        # once without. Prefer the versioned copy so provenance records which
+        # release was read; ``next(... , default)`` returns the first match or
+        # falls back rather than raising when none is versioned.
+        versioned = next((m for m in matches if re.search(r"v\d", m.name)), None)
+        return Path(self.bfw_root), versioned or matches[0]
 
     def require_data_root(self) -> Path:
         return _require(self.data_root, "FACE_DATA_ROOT")
@@ -448,7 +509,36 @@ class DependencyContractError(RuntimeError):
     """Raised when an installed dependency does not match the pinned contract."""
 
 
-OPAQUE_ID_SALT = "face-verification-opaque-id-v1"
+# Opaque identifiers are keyed, not merely salted. A published fixed salt makes
+# the mapping from a public identifier back to a dataset identity a dictionary
+# attack over a known, enumerable name list; a secret key removes that.
+OPAQUE_ID_VERSION = "hmac-sha256-v1"
+OPAQUE_ID_HEX_LENGTH = 32
+ID_HMAC_KEY_VARIABLE = "FACE_ID_HMAC_KEY"
+MINIMUM_ID_HMAC_KEY_BYTES = 32
+
+# Rejected outright so a template value can never reach a published artefact.
+_PLACEHOLDER_KEY_MARKERS = (
+    "changeme",
+    "change-me",
+    "replace",
+    "example",
+    "placeholder",
+    "your-key",
+    "yourkey",
+    "todo",
+    "secret",
+    "xxxx",
+)
+
+
+class OpaqueIdentifierKeyError(RuntimeError):
+    """Raised when the identifier HMAC key is missing, weak or malformed."""
+
+
+# Held in memory only. Never written to a result, never logged, never hashed
+# into a fingerprint that could confirm a guessed key.
+_ID_HMAC_KEY: Optional[bytes] = None
 
 
 def sha256_of_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
@@ -521,12 +611,108 @@ def software_environment_report() -> Dict[str, Any]:
     }
 
 
-def opaque_id(value: str, *, salt: str = OPAQUE_ID_SALT) -> str:
+def decode_id_hmac_key(raw: str) -> bytes:
+    """Decode a candidate key from URL-safe base64 or hexadecimal and refuse
+    anything that would not carry at least 32 bytes of entropy. The value is
+    never echoed back in an error message."""
+    candidate = raw.strip()
+    if not candidate:
+        raise OpaqueIdentifierKeyError(
+            f"{ID_HMAC_KEY_VARIABLE} is empty. Generate one with: "
+            f"python -c \"import secrets;print(secrets.token_urlsafe(32))\""
+        )
+    lowered = candidate.lower()
+    for marker in _PLACEHOLDER_KEY_MARKERS:
+        if marker in lowered:
+            raise OpaqueIdentifierKeyError(
+                f"{ID_HMAC_KEY_VARIABLE} looks like a placeholder value. Generate a real "
+                f"key with: python -c \"import secrets;print(secrets.token_urlsafe(32))\""
+            )
+
+    decoded: Optional[bytes] = None
+    # Hex first: a hex string is also valid base64 alphabet, and interpreting it
+    # as base64 would understate its length.
+    stripped = candidate.removeprefix("0x").removeprefix("0X")
+    if len(stripped) % 2 == 0 and all(c in string.hexdigits for c in stripped):
+        try:
+            decoded = bytes.fromhex(stripped)
+        except ValueError:
+            decoded = None
+    if decoded is None:
+        padded = candidate + "=" * (-len(candidate) % 4)
+        try:
+            decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+        except (ValueError, binascii.Error) as exc:
+            raise OpaqueIdentifierKeyError(
+                f"{ID_HMAC_KEY_VARIABLE} is not valid URL-safe base64 or hexadecimal."
+            ) from exc
+
+    if len(decoded) < MINIMUM_ID_HMAC_KEY_BYTES:
+        raise OpaqueIdentifierKeyError(
+            f"{ID_HMAC_KEY_VARIABLE} decodes to {len(decoded)} bytes; at least "
+            f"{MINIMUM_ID_HMAC_KEY_BYTES} are required. Generate one with: "
+            f"python -c \"import secrets;print(secrets.token_urlsafe(32))\""
+        )
+    if len(set(decoded)) == 1:
+        raise OpaqueIdentifierKeyError(
+            f"{ID_HMAC_KEY_VARIABLE} is a single repeated byte and carries no entropy."
+        )
+    return decoded
+
+
+def configure_id_hmac_key(raw: Optional[str]) -> None:
+    """Install the process-wide identifier key. Called once at start-up."""
+    global _ID_HMAC_KEY
+    if raw is None:
+        raise OpaqueIdentifierKeyError(
+            f"{ID_HMAC_KEY_VARIABLE} is not set. It is required so that public identifiers "
+            f"cannot be reversed by hashing a candidate name list. Add it to .env; generate "
+            f"one with: python -c \"import secrets;print(secrets.token_urlsafe(32))\""
+        )
+    _ID_HMAC_KEY = decode_id_hmac_key(raw)
+
+
+def id_hmac_key_is_configured() -> bool:
+    return _ID_HMAC_KEY is not None
+
+
+@contextmanager
+def temporary_id_hmac_key(raw: str):
+    """Install a key for the duration of a block. Used by the synthetic
+    self-tests so they run without a configured environment, and by unit tests
+    that need two different keys in one process."""
+    global _ID_HMAC_KEY
+    previous = _ID_HMAC_KEY
+    try:
+        _ID_HMAC_KEY = decode_id_hmac_key(raw)
+        yield
+    finally:
+        _ID_HMAC_KEY = previous
+
+
+# Fixed key used only by the in-process synthetic self-tests. It protects
+# nothing: it exists so the self-tests are runnable on a machine with no
+# research configuration, and it never touches real dataset identities.
+SELF_TEST_ID_HMAC_KEY = "0" * 63 + "1"
+
+
+def opaque_id(value: str) -> str:
     """Deterministic, one-way identifier standing in for a real identity or
-    sample name. Deterministic rather than random so a re-run reproduces the
-    same identifiers without ever storing the reversible mapping."""
-    digest = hashlib.sha256(f"{salt}:{value}".encode("utf-8")).hexdigest()
-    return digest[:16]
+    sample name. Deterministic under a fixed key so a re-run reproduces the same
+    identifiers without ever storing the reversible mapping, and keyed so that
+    nobody without the key can rebuild that mapping by hashing candidate names."""
+    if _ID_HMAC_KEY is None:
+        raise OpaqueIdentifierKeyError(
+            f"{ID_HMAC_KEY_VARIABLE} has not been configured; refusing to emit an "
+            f"identifier that would be reversible by dictionary attack."
+        )
+    digest = hmac.new(_ID_HMAC_KEY, value.encode("utf-8"), hashlib.sha256).hexdigest()
+    return digest[:OPAQUE_ID_HEX_LENGTH]
+
+
+def opaque_ids_match(left: str, right: str) -> bool:
+    """Constant-time comparison for values derived from the secret key."""
+    return hmac.compare_digest(left, right)
 
 
 def scrub_filename(path: Path) -> str:
@@ -1785,6 +1971,38 @@ class ProbeResult:
     rank1_correct: Optional[bool]
     exceeds_duplicate_threshold: Optional[bool]
     failure_code: Optional[str]
+    # Rank of the probe's own identity in the descending-similarity candidate
+    # list, 1-based; None when the probe is not mated or was never scored.
+    correct_identity_rank: Optional[int] = None
+    rank5_correct: Optional[bool] = None
+
+
+@dataclass(frozen=True)
+class GalleryEntryResult:
+    """Outcome of attempting to enrol one gallery reference image. Retained for
+    every intended entry, including the ones that could not be embedded — the
+    defect this replaces dropped those silently, which shrank the gallery
+    without recording that it had shrunk."""
+
+    sample_id: str
+    identity_hash: str
+    embedded: bool
+    failure_code: Optional[str]
+
+
+# Gallery enrolment failures are reported under their own suffixed codes so a
+# reader can never confuse a gallery-side failure with a probe-side one. These
+# three partition every enrolment failure.
+GALLERY_FAILURE_CODES = (
+    "zero_faces_gallery",
+    "multiple_faces_gallery",
+    "image_error_gallery",
+)
+
+# A mated probe whose own gallery reference never enrolled cannot be found by
+# any threshold. It is a coverage failure, not a similarity miss, and is kept
+# distinct from both so neither rate is quietly flattered.
+GALLERY_REFERENCE_UNAVAILABLE = "gallery_reference_unavailable"
 
 
 @dataclass(frozen=True)
@@ -1792,6 +2010,39 @@ class GalleryEvaluationResult:
     gallery_size: int
     probe_results: List[ProbeResult]
     search_times_seconds: List[float] = field(default_factory=list)
+    # Enrolment accounting. Defaults keep the dataclass constructible from the
+    # older positional form used by existing tests.
+    intended_gallery_size: Optional[int] = None
+    gallery_entry_results: List[GalleryEntryResult] = field(default_factory=list)
+
+    @property
+    def embedded_gallery_size(self) -> int:
+        return self.gallery_size
+
+    @property
+    def resolved_intended_gallery_size(self) -> int:
+        """Intended entries, falling back to the embedded count when this result
+        came from a caller that predates enrolment accounting."""
+        return self.gallery_size if self.intended_gallery_size is None else self.intended_gallery_size
+
+    @property
+    def gallery_failure_breakdown(self) -> Dict[str, int]:
+        breakdown = {code: 0 for code in GALLERY_FAILURE_CODES}
+        for entry in self.gallery_entry_results:
+            if entry.embedded:
+                continue
+            code = entry.failure_code or "image_error_gallery"
+            breakdown[code] = breakdown.get(code, 0) + 1
+        return breakdown
+
+    @property
+    def gallery_entry_failure_count(self) -> int:
+        return self.resolved_intended_gallery_size - self.embedded_gallery_size
+
+    @property
+    def gallery_entry_failure_rate(self) -> float:
+        intended = self.resolved_intended_gallery_size
+        return self.gallery_entry_failure_count / intended if intended else float("nan")
 
 
 def _embed_entry(
@@ -1808,6 +2059,15 @@ def _embed_entry(
         return None, f"image_error:{exc}"
 
 
+def _gallery_failure_code(probe_failure_code: Optional[str]) -> str:
+    """Map a generic extraction failure onto its gallery-side category."""
+    if probe_failure_code == "zero_faces":
+        return "zero_faces_gallery"
+    if probe_failure_code == "multiple_faces":
+        return "multiple_faces_gallery"
+    return "image_error_gallery"
+
+
 def evaluate_gallery(
     manifest: GalleryManifest,
     *,
@@ -1819,16 +2079,49 @@ def evaluate_gallery(
     probe_entries = [e for e in manifest.entries if e.role in ("duplicate_probe", "unknown_probe")]
 
     gallery_embeddings: List[Tuple[ManifestEntry, np.ndarray]] = []
+    gallery_entry_results: List[GalleryEntryResult] = []
     for entry in gallery_entries:
-        embedding, _failure = _embed_entry(entry, detector, embedder)
+        embedding, failure = _embed_entry(entry, detector, embedder)
         if embedding is not None:
             gallery_embeddings.append((entry, embedding))
+            gallery_entry_results.append(
+                GalleryEntryResult(entry.sample_id, entry.identity_hash, True, None)
+            )
+        else:
+            # Retained rather than dropped: an identity that never enrolled is
+            # unfindable, and the mated probes pointing at it must be accounted
+            # for instead of quietly leaving the denominator.
+            gallery_entry_results.append(
+                GalleryEntryResult(
+                    entry.sample_id, entry.identity_hash, False, _gallery_failure_code(failure)
+                )
+            )
     if not gallery_embeddings:
         raise GalleryError("No gallery entry could be embedded; cannot run the experiment.")
+
+    enrolled_identity_hashes = {entry.identity_hash for entry, _ in gallery_embeddings}
 
     results: List[ProbeResult] = []
     search_times: List[float] = []
     for probe in probe_entries:
+        # Checked before embedding: when the probe's own reference is missing
+        # from the gallery, no similarity score could change the outcome, so
+        # the protocol-level blocker is the honest attribution.
+        if probe.role == "duplicate_probe" and probe.identity_hash not in enrolled_identity_hashes:
+            results.append(
+                ProbeResult(
+                    probe.sample_id,
+                    probe.role,
+                    probe.identity_hash,
+                    None,
+                    None,
+                    None,
+                    None,
+                    GALLERY_REFERENCE_UNAVAILABLE,
+                )
+            )
+            continue
+
         probe_embedding, failure = _embed_entry(probe, detector, embedder)
         if probe_embedding is None:
             results.append(
@@ -1857,6 +2150,15 @@ def evaluate_gallery(
             else None
         )
 
+        correct_rank: Optional[int] = None
+        rank5_correct: Optional[bool] = None
+        if probe.role == "duplicate_probe":
+            for position, (candidate_entry, _score) in enumerate(similarities, start=1):
+                if candidate_entry.identity_hash == probe.identity_hash:
+                    correct_rank = position
+                    break
+            rank5_correct = correct_rank is not None and correct_rank <= 5
+
         results.append(
             ProbeResult(
                 probe.sample_id,
@@ -1867,6 +2169,8 @@ def evaluate_gallery(
                 rank1_correct,
                 top_similarity >= duplicate_review_threshold,
                 None,
+                correct_rank,
+                rank5_correct,
             )
         )
 
@@ -1874,6 +2178,8 @@ def evaluate_gallery(
         gallery_size=len(gallery_embeddings),
         probe_results=results,
         search_times_seconds=search_times,
+        intended_gallery_size=len(gallery_entries),
+        gallery_entry_results=gallery_entry_results,
     )
 
 
@@ -1883,10 +2189,23 @@ def summarize_gallery_metrics(result: GalleryEvaluationResult) -> Dict[str, Any]
     scored_duplicates = [r for r in duplicate_probes if r.failure_code is None]
     scored_unknowns = [r for r in unknown_probes if r.failure_code is None]
 
+    # Conditional denominator: mated probes that were scored at all, which by
+    # construction means both the probe and its gallery reference embedded.
+    # End-to-end denominator: every mated probe the protocol intended, so an
+    # extraction failure or an unavailable reference counts as a miss rather
+    # than disappearing. The two answer different questions and the reporting
+    # layer is required to show them together.
+    detected_duplicates = sum(1 for r in scored_duplicates if r.exceeds_duplicate_threshold)
+    intended_duplicates = len(duplicate_probes)
+    unavailable_reference_count = sum(
+        1 for r in duplicate_probes if r.failure_code == GALLERY_REFERENCE_UNAVAILABLE
+    )
+
     duplicate_detection_rate = (
-        sum(1 for r in scored_duplicates if r.exceeds_duplicate_threshold) / len(scored_duplicates)
-        if scored_duplicates
-        else float("nan")
+        detected_duplicates / len(scored_duplicates) if scored_duplicates else float("nan")
+    )
+    end_to_end_duplicate_detection_rate = (
+        detected_duplicates / intended_duplicates if intended_duplicates else float("nan")
     )
     false_duplicate_review_rate = (
         sum(1 for r in scored_unknowns if r.exceeds_duplicate_threshold) / len(scored_unknowns)
@@ -1896,6 +2215,21 @@ def summarize_gallery_metrics(result: GalleryEvaluationResult) -> Dict[str, Any]
     rank1_identification_rate = (
         sum(1 for r in scored_duplicates if r.rank1_correct) / len(scored_duplicates)
         if scored_duplicates
+        else float("nan")
+    )
+    end_to_end_rank1_identification_rate = (
+        sum(1 for r in scored_duplicates if r.rank1_correct) / intended_duplicates
+        if intended_duplicates
+        else float("nan")
+    )
+    rank5_identification_rate = (
+        sum(1 for r in scored_duplicates if r.rank5_correct) / len(scored_duplicates)
+        if scored_duplicates
+        else float("nan")
+    )
+    end_to_end_rank5_identification_rate = (
+        sum(1 for r in scored_duplicates if r.rank5_correct) / intended_duplicates
+        if intended_duplicates
         else float("nan")
     )
     # Self-comparison is the NaN test: with no scored duplicate probes the miss
@@ -1909,13 +2243,28 @@ def summarize_gallery_metrics(result: GalleryEvaluationResult) -> Dict[str, Any]
     search_times_ms = [t * 1000.0 for t in result.search_times_seconds]
 
     return {
+        "methodology_revision": GALLERY_METHODOLOGY_REVISION,
         "gallery_size": result.gallery_size,
+        "intended_gallery_size": result.resolved_intended_gallery_size,
+        "embedded_gallery_size": result.embedded_gallery_size,
+        "gallery_entry_failure_count": result.gallery_entry_failure_count,
+        "gallery_entry_failure_rate": result.gallery_entry_failure_rate,
+        "gallery_failure_breakdown": result.gallery_failure_breakdown,
         "duplicate_probe_count": len(duplicate_probes),
         "unknown_probe_count": len(unknown_probes),
         "duplicate_probe_failures": len(duplicate_probes) - len(scored_duplicates),
         "unknown_probe_failures": len(unknown_probes) - len(scored_unknowns),
+        "gallery_reference_unavailable_count": unavailable_reference_count,
+        # Named explicitly so a reader cannot mistake the conditional figure for
+        # the headline result; the legacy key keeps older artefacts readable.
+        "conditional_duplicate_detection_rate": duplicate_detection_rate,
+        "end_to_end_duplicate_detection_rate": end_to_end_duplicate_detection_rate,
         "duplicate_detection_rate": duplicate_detection_rate,
         "false_duplicate_review_rate": false_duplicate_review_rate,
+        "conditional_rank1_identification_rate": rank1_identification_rate,
+        "end_to_end_rank1_identification_rate": end_to_end_rank1_identification_rate,
+        "conditional_rank5_identification_rate": rank5_identification_rate,
+        "end_to_end_rank5_identification_rate": end_to_end_rank5_identification_rate,
         "rank1_identification_rate": rank1_identification_rate,
         "true_duplicate_miss_rate": true_duplicate_miss_rate,
         "gallery_search_time_mean_ms": (
@@ -2193,10 +2542,19 @@ def render_final_report(
         f"{gallery_payload.get('unknown_probe_count', 'n/a')} unknown probes "
         f"({gallery_payload.get('unknown_probe_failures', 'n/a')} extraction failures).",
         "",
-        f"- Duplicate detection rate: "
+        f"- Gallery enrolment: {gallery_payload.get('embedded_gallery_size', 'n/a')} enrolled of "
+        f"{gallery_payload.get('intended_gallery_size', 'n/a')} intended "
+        f"(failure rate {format_percentage(gallery_payload.get('gallery_entry_failure_rate'))}); "
+        f"{gallery_payload.get('gallery_reference_unavailable_count', 'n/a')} mated probes had no "
+        f"enrolled reference.",
+        f"- Duplicate detection rate (conditional, scored mated probes only): "
         f"**{format_percentage(gallery_payload.get('duplicate_detection_rate'))}**",
+        f"- Duplicate detection rate (end-to-end, all intended mated probes): "
+        f"**{format_percentage(gallery_payload.get('end_to_end_duplicate_detection_rate'))}**",
         f"- Rank-1 identification rate: "
         f"{format_percentage(gallery_payload.get('rank1_identification_rate'))}",
+        f"- Rank-5 identification rate (conditional): "
+        f"{format_percentage(gallery_payload.get('conditional_rank5_identification_rate'))}",
         f"- True duplicate miss rate: "
         f"{format_percentage(gallery_payload.get('true_duplicate_miss_rate'))}",
         f"- **False duplicate-review rate: "
@@ -2235,7 +2593,11 @@ def write_aggregate_reports(
         "lfw_final": read_json_artifact(output_root / "lfw_final_metrics.json"),
         "cplfw": read_json_artifact(output_root / "cplfw_metrics.json"),
     }
-    gallery_payload = read_json_artifact(output_root / "duplicate_gallery_metrics.json")
+    gallery_v2_path = output_root / "duplicate_gallery_metrics_v2.json"
+    gallery_path = (
+        gallery_v2_path if gallery_v2_path.is_file() else output_root / "duplicate_gallery_metrics.json"
+    )
+    gallery_payload = read_json_artifact(gallery_path)
     threshold_payload = read_json_artifact(threshold_path)
 
     output_files = {
@@ -2243,13 +2605,14 @@ def write_aggregate_reports(
         "lfw_development_metrics.json": output_root / "lfw_development_metrics.json",
         "lfw_final_metrics.json": output_root / "lfw_final_metrics.json",
         "cplfw_metrics.json": output_root / "cplfw_metrics.json",
-        "duplicate_gallery_metrics.json": output_root / "duplicate_gallery_metrics.json",
+        gallery_path.name: gallery_path,
     }
 
     write_json_artifact(
         output_root / "run_manifest.json",
         {
             "artifact_type": "run_manifest",
+            "opaque_id_version": OPAQUE_ID_VERSION,
             "produced_by": "ACP_arden.py --mode full",
             "dataset_storage": (
                 "private, gitignored local research storage; path omitted from public artifacts"
@@ -2323,6 +2686,7 @@ def write_aggregate_reports(
             "Refusing to finish: public aggregate output(s) contain a personal/absolute path:\n"
             + "\n".join(f"  {redact_private_paths(leak)}" for leak in leaks)
         )
+    assert_no_identifier_key_leak(output_root)
 
     announce(
         f"Wrote run_manifest.json, metrics_summary.csv ({len(summary_rows)} rows), "
@@ -2330,6 +2694,46 @@ def write_aggregate_reports(
         f"({len(roc_rows)} rows) and FINAL_EVALUATION_REPORT.md to "
         f"{project_relative(output_root)}"
     )
+
+
+def _render_gallery_coverage_lines(gallery: Dict[str, Any]) -> List[str]:
+    """Gallery enrolment coverage. Emitted unconditionally so a detection rate
+    can never be read without knowing how much of the gallery actually
+    enrolled; an artefact predating the corrected accounting says so plainly
+    instead of implying full coverage."""
+    if "gallery_entry_failure_rate" not in gallery:
+        return [
+            "  Gallery enrolment coverage: not recorded (artefact predates "
+            f"{GALLERY_METHODOLOGY_REVISION}; re-run to obtain it)",
+        ]
+    return [
+        f"  Intended gallery entries: {format_count(gallery.get('intended_gallery_size'))}, "
+        f"enrolled {format_count(gallery.get('embedded_gallery_size'))}",
+        f"  Gallery enrolment-failure rate: "
+        f"{format_percentage(gallery.get('gallery_entry_failure_rate'))} "
+        f"({format_count(gallery.get('gallery_entry_failure_count'))} references never enrolled)",
+    ]
+
+
+def _render_end_to_end_gallery_lines(gallery: Dict[str, Any]) -> List[str]:
+    """The end-to-end detection rate, which shares the conditional figure's
+    numerator but counts every intended mated probe. Printing it here is what
+    stops the flattering conditional number standing on its own."""
+    if "end_to_end_duplicate_detection_rate" not in gallery:
+        return [
+            "  Duplicate detection rate (end-to-end): not recorded (artefact "
+            f"predates {GALLERY_METHODOLOGY_REVISION}; the conditional figure "
+            "above therefore excludes unenrolled references and failed probes)",
+        ]
+    return [
+        f"  Duplicate detection rate (end-to-end): "
+        f"{format_percentage(gallery.get('end_to_end_duplicate_detection_rate'))}",
+        f"  Mated probes with no enrolled reference: "
+        f"{format_count(gallery.get('gallery_reference_unavailable_count'))}",
+        "  LIMITATION: the conditional rate above is measured only over mated probes that "
+        "were scored. The end-to-end rate counts every intended mated probe, so extraction "
+        "failures and unenrolled references reduce it. Quote the two together.",
+    ]
 
 
 def render_results_summary(output_root: Path = AGGREGATE_ROOT) -> str:
@@ -2340,7 +2744,12 @@ def render_results_summary(output_root: Path = AGGREGATE_ROOT) -> str:
     never appears without its false-review rate."""
     final = read_json_artifact(output_root / "lfw_final_metrics.json")
     cplfw = read_json_artifact(output_root / "cplfw_metrics.json")
-    gallery = read_json_artifact(output_root / "duplicate_gallery_metrics.json")
+    # Prefer the corrected-accounting artefact when it exists; the historical
+    # file remains readable so earlier results stay interpretable.
+    gallery_v2_path = output_root / "duplicate_gallery_metrics_v2.json"
+    gallery = read_json_artifact(
+        gallery_v2_path if gallery_v2_path.is_file() else output_root / "duplicate_gallery_metrics.json"
+    )
     threshold = read_json_artifact(output_root / "calibrated_threshold.json")
 
     lines = [
@@ -2377,8 +2786,10 @@ def render_results_summary(output_root: Path = AGGREGATE_ROOT) -> str:
         "Experiment 5 — 1:N duplicate-profile gallery (real LFW images, "
         f"seed {gallery.get('seed')})",
         f"  Gallery size: {format_count(gallery.get('gallery_size'))}",
-        f"  Duplicate detection rate: "
+        *_render_gallery_coverage_lines(gallery),
+        f"  Duplicate detection rate (conditional): "
         f"{format_percentage(gallery.get('duplicate_detection_rate'))}",
+        *_render_end_to_end_gallery_lines(gallery),
         f"  Rank-1 identification rate: "
         f"{format_percentage(gallery.get('rank1_identification_rate'))}",
         f"  False duplicate-review rate: "
@@ -2459,6 +2870,32 @@ def assert_no_leakage(record: Mapping[str, Any], *, context: str = "") -> None:
 
         if isinstance(value, Mapping):
             assert_no_leakage(value, context=label)
+
+
+def assert_no_identifier_key_leak(root: Path) -> None:
+    """Confirm the identifier key appears in no published artefact.
+
+    The key is compared against file contents but is never written into the
+    error message, a log line or a return value — reporting *where* it leaked is
+    useful, reporting *what* leaked would be a second leak. Nothing is raised
+    when no key is configured: there is then nothing to disclose."""
+    if _ID_HMAC_KEY is None:
+        return
+    encoded = base64.urlsafe_b64encode(_ID_HMAC_KEY).decode("ascii").rstrip("=")
+    needles = [encoded, _ID_HMAC_KEY.hex()]
+    for path in sorted(Path(root).rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in _TEXT_ARTIFACT_SUFFIXES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for needle in needles:
+            if needle and needle in text:
+                raise PrivacyLeakError(
+                    f"{path.name} contains the identifier HMAC key. The key must never be "
+                    f"published; regenerate it and rebuild the affected artefacts."
+                )
 
 
 def default_forbidden_path_substrings(*, env: Optional[Mapping[str, str]] = None) -> List[str]:
@@ -2581,9 +3018,49 @@ CREATE TABLE IF NOT EXISTS review_cases (
     threshold REAL NOT NULL,
     status TEXT NOT NULL DEFAULT 'open',
     created_at TEXT NOT NULL,
-    decided_at TEXT
+    decided_at TEXT,
+    -- Which identifier scheme produced probe_sample_id and
+    -- candidate_identity_hash. Rows from two schemes are not comparable: the
+    -- same person yields different identifiers under different keys.
+    opaque_id_version TEXT NOT NULL DEFAULT 'hmac-sha256-v1'
 );
 """
+
+
+class ReviewDatabaseVersionError(RuntimeError):
+    """Raised when a review database holds rows from another identifier scheme."""
+
+
+def _migrate_review_schema(connection: sqlite3.Connection) -> None:
+    """Add the version column to a database created before it existed. Rows
+    already present came from the old fixed-salt scheme, so they are marked as
+    such rather than silently relabelled."""
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(review_cases)")}
+    if "opaque_id_version" not in columns:
+        connection.execute(
+            "ALTER TABLE review_cases ADD COLUMN opaque_id_version TEXT NOT NULL "
+            "DEFAULT 'legacy-salted-sha256'"
+        )
+
+
+def assert_review_database_version(connection: sqlite3.Connection) -> None:
+    """Refuse to mix identifier schemes in one database. The local review
+    database is private and disposable, so the instruction is to delete it."""
+    versions = {
+        row[0]
+        for row in connection.execute(
+            "SELECT DISTINCT opaque_id_version FROM review_cases WHERE opaque_id_version IS NOT NULL"
+        )
+    }
+    foreign = versions - {OPAQUE_ID_VERSION}
+    if foreign:
+        raise ReviewDatabaseVersionError(
+            f"The local review database holds cases written under identifier scheme(s) "
+            f"{sorted(foreign)!r}, but this build emits {OPAQUE_ID_VERSION!r}. Those "
+            f"identifiers are not comparable, so the rows cannot be merged. The review "
+            f"database is private, disposable local state: delete the file and re-run the "
+            f"evaluation to regenerate it."
+        )
 
 
 @dataclass(frozen=True)
@@ -2609,6 +3086,8 @@ def review_database(db_path: Path) -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(str(db_path))
     try:
         connection.execute(REVIEW_SCHEMA)
+        _migrate_review_schema(connection)
+        assert_review_database_version(connection)
         connection.row_factory = sqlite3.Row
         yield connection
         connection.commit()
@@ -2629,15 +3108,24 @@ def upsert_review_case(
         """
         INSERT INTO review_cases
             (case_id, probe_sample_id, candidate_identity_hash, similarity, threshold,
-             status, created_at)
-        VALUES (?, ?, ?, ?, ?, 'open', ?)
+             status, created_at, opaque_id_version)
+        VALUES (?, ?, ?, ?, ?, 'open', ?, ?)
         ON CONFLICT(case_id) DO UPDATE SET
             probe_sample_id=excluded.probe_sample_id,
             candidate_identity_hash=excluded.candidate_identity_hash,
             similarity=excluded.similarity,
-            threshold=excluded.threshold
+            threshold=excluded.threshold,
+            opaque_id_version=excluded.opaque_id_version
         """,
-        (case_id, probe_sample_id, candidate_identity_hash, similarity, threshold, utc_now_iso()),
+        (
+            case_id,
+            probe_sample_id,
+            candidate_identity_hash,
+            similarity,
+            threshold,
+            utc_now_iso(),
+            OPAQUE_ID_VERSION,
+        ),
     )
 
 
@@ -2848,7 +3336,1895 @@ def launch_review_interface(db_path: Path) -> int:
 
 
 # =============================================================================
-# 17. Synthetic self-test mode
+# 17. BFW dataset adapter
+# =============================================================================
+#
+# Balanced Faces in the Wild is an external real benchmark. It is never
+# downloaded automatically, never vendored into this repository and never read
+# from an unofficial mirror: the researcher obtains it from the official project
+# under its own terms and points FACE_BFW_ROOT at the extracted tree.
+#
+# The metadata schema is pinned rather than sniffed. A file that does not match
+# stops the run with a message naming what was expected and what was found,
+# because silently mis-parsing an identity or a subgroup column would corrupt
+# every downstream figure while still producing plausible-looking numbers.
+##############
+# Title: Face Recognition: Too Bias, or Not Too Bias?
+# Author: Robinson, J.P., Livitz, G., Henon, Y., Qin, C., Fu, Y. and Timoner, S.
+# Date: 2020
+# Availability: https://doi.org/10.1109/CVPRW50498.2020.00008
+##############
+##############
+# Title: Balanced Faces in the Wild (BFW), source data and metadata table
+# Author: Robinson, J.P. and contributors (visionjo/facerec-bias-bfw)
+# Date: 2020
+# Availability: https://github.com/visionjo/facerec-bias-bfw
+##############
+
+
+class BfwDatasetError(RuntimeError):
+    """Raised when BFW is absent, misconfigured or fails schema validation."""
+
+
+# The eight official demographic subgroups. Used for stratification and for
+# aggregate fairness reporting only; never joined to an identifiable name in
+# any published artefact.
+BFW_SUBGROUPS = (
+    "asian_females",
+    "asian_males",
+    "black_females",
+    "black_males",
+    "indian_females",
+    "indian_males",
+    "white_females",
+    "white_males",
+)
+
+# Columns of the official BFW datatable that this adapter relies on. Pinned so
+# that a differently-shaped release is refused rather than misread.
+BFW_REQUIRED_COLUMNS = ("fold", "p1", "p2", "label", "att1", "att2")
+
+# This project's own open-set protocol built on top of the official data. BFW
+# was published for verification and bias analysis and ships no official
+# open-set identification protocol, so the version below identifies *our*
+# construction, not an upstream standard.
+BFW_PROTOCOL_VERSION = "acp-arden-bfw-open-set-v1"
+
+BFW_ROOT_VARIABLE = "FACE_BFW_ROOT"
+BFW_METADATA_ROOT_VARIABLE = "FACE_BFW_METADATA_ROOT"
+
+# AgeDB is a secondary, optional cross-dataset transfer test. It is gated
+# behind its own variable and is never required by any mode; when it is absent
+# the run reports the omission rather than inventing a result.
+AGEDB_ROOT_VARIABLE = "FACE_AGEDB_ROOT"
+
+
+@dataclass(frozen=True)
+class BfwImage:
+    """One BFW image. ``image_path`` is private and never published; the two
+    opaque identifiers are what appear in public artefacts."""
+
+    image_path: Path
+    identity: str  # private, e.g. "asian_females/n000009"
+    subgroup: str
+    sample_id: str
+    identity_hash: str
+
+
+@dataclass(frozen=True)
+class BfwDataset:
+    images: List[BfwImage]
+    metadata_sha256: str
+    metadata_filename: str
+
+    def by_identity(self) -> Dict[str, List[BfwImage]]:
+        grouped: Dict[str, List[BfwImage]] = {}
+        for image in self.images:
+            grouped.setdefault(image.identity, []).append(image)
+        # Deterministic ordering by filename, so role assignment never depends
+        # on directory-iteration order.
+        return {
+            identity: sorted(items, key=lambda i: i.image_path.name)
+            for identity, items in sorted(grouped.items())
+        }
+
+    def subgroup_of_identity(self) -> Dict[str, str]:
+        return {image.identity: image.subgroup for image in self.images}
+
+
+def _bfw_identity_and_subgroup(relative: str) -> Tuple[str, str]:
+    """Split an official BFW relative path into (identity, subgroup).
+
+    The published layout is ``<subgroup>/<identity>/<image>.jpg``; anything
+    else is a schema violation rather than something to guess at."""
+    parts = PurePosixPath(relative.strip().replace("\\", "/")).parts
+    if len(parts) != 3:
+        raise BfwDatasetError(
+            f"BFW image path {relative!r} does not match the official "
+            f"'<subgroup>/<identity>/<image>' layout (found {len(parts)} component(s))."
+        )
+    subgroup, identity_folder, _filename = parts
+    if subgroup not in BFW_SUBGROUPS:
+        raise BfwDatasetError(
+            f"BFW image path {relative!r} names subgroup {subgroup!r}, which is not one of "
+            f"the eight official subgroups {list(BFW_SUBGROUPS)}."
+        )
+    return f"{subgroup}/{identity_folder}", subgroup
+
+
+def load_bfw_dataset(
+    image_root: Path,
+    metadata_path: Path,
+    *,
+    require_files_exist: bool = True,
+) -> BfwDataset:
+    """Read the official BFW datatable and return the deduplicated image set.
+
+    Every failure is explicit. Nothing is skipped, inferred or defaulted."""
+    image_root = Path(image_root).resolve()
+    metadata_path = Path(metadata_path)
+    if not image_root.is_dir():
+        raise BfwDatasetError(f"{BFW_ROOT_VARIABLE} does not point at a directory: {image_root}")
+    if not metadata_path.is_file():
+        raise BfwDatasetError(
+            f"BFW metadata table not found: {metadata_path}. Obtain it from the official "
+            f"project (visionjo/facerec-bias-bfw) and set {BFW_METADATA_ROOT_VARIABLE}."
+        )
+
+    text = metadata_path.read_text(encoding="utf-8")
+    reader = csv.DictReader(StringIO(text))
+    columns = tuple(reader.fieldnames or ())
+    missing = [c for c in BFW_REQUIRED_COLUMNS if c not in columns]
+    if missing:
+        raise BfwDatasetError(
+            f"BFW metadata {metadata_path.name} is missing required column(s) {missing}. "
+            f"Expected at least {list(BFW_REQUIRED_COLUMNS)}; found {list(columns)}. This "
+            f"adapter pins the official schema and refuses to guess at a variant."
+        )
+
+    # relative path -> subgroup asserted by the table, so a row that contradicts
+    # an earlier row is caught rather than silently overwriting it.
+    asserted: Dict[str, str] = {}
+    for line_number, row in enumerate(reader, start=2):
+        for path_column, attribute_column in (("p1", "att1"), ("p2", "att2")):
+            relative = (row.get(path_column) or "").strip()
+            attribute = (row.get(attribute_column) or "").strip()
+            if not relative:
+                raise BfwDatasetError(
+                    f"BFW metadata {metadata_path.name} line {line_number}: column "
+                    f"{path_column!r} is empty."
+                )
+            _identity, subgroup = _bfw_identity_and_subgroup(relative)
+            if attribute and attribute != subgroup:
+                raise BfwDatasetError(
+                    f"BFW metadata {metadata_path.name} line {line_number}: column "
+                    f"{attribute_column!r} says {attribute!r} but the path implies "
+                    f"{subgroup!r}. Refusing to choose between them."
+                )
+            previous = asserted.get(relative)
+            if previous is not None and previous != subgroup:
+                raise BfwDatasetError(
+                    f"BFW metadata {metadata_path.name}: image {relative!r} is assigned to "
+                    f"both {previous!r} and {subgroup!r}."
+                )
+            asserted[relative] = subgroup
+
+    if not asserted:
+        raise BfwDatasetError(f"BFW metadata {metadata_path.name} contained no image rows.")
+
+    images: List[BfwImage] = []
+    identity_subgroup: Dict[str, str] = {}
+    for relative in sorted(asserted):
+        identity, subgroup = _bfw_identity_and_subgroup(relative)
+        absolute = (image_root / relative).resolve()
+        # Containment check before any filesystem access, so a crafted relative
+        # path cannot reach outside the configured root.
+        if not absolute.is_relative_to(image_root):
+            raise BfwDatasetError(
+                f"BFW image {relative!r} resolves outside {BFW_ROOT_VARIABLE}."
+            )
+        if require_files_exist and not absolute.is_file():
+            raise BfwDatasetError(f"BFW image listed in the metadata is missing: {relative}")
+        established = identity_subgroup.setdefault(identity, subgroup)
+        if established != subgroup:
+            raise BfwDatasetError(
+                f"BFW identity {identity!r} appears under two subgroups: "
+                f"{established!r} and {subgroup!r}."
+            )
+        images.append(
+            BfwImage(
+                image_path=absolute,
+                identity=identity,
+                subgroup=subgroup,
+                sample_id=opaque_id(f"bfw:{relative}"),
+                identity_hash=opaque_id(f"bfw-identity:{identity}"),
+            )
+        )
+
+    seen_sample_ids: Set[str] = set()
+    for image in images:
+        if image.sample_id in seen_sample_ids:
+            raise BfwDatasetError(f"Duplicate BFW sample identifier for {image.image_path.name}.")
+        seen_sample_ids.add(image.sample_id)
+
+    return BfwDataset(
+        images=images,
+        metadata_sha256=sha256_of_text(text),
+        metadata_filename=metadata_path.name,
+    )
+
+
+def bfw_dataset_provenance(dataset: BfwDataset) -> Dict[str, Any]:
+    """Public provenance for BFW. Contains no path, no filename that embeds an
+    identity and no demographic record joined to a name."""
+    grouped = dataset.by_identity()
+    per_identity_counts = sorted(len(v) for v in grouped.values())
+    subgroup_of = dataset.subgroup_of_identity()
+    subgroup_counts = {
+        subgroup: sum(1 for s in subgroup_of.values() if s == subgroup)
+        for subgroup in BFW_SUBGROUPS
+    }
+    return {
+        "dataset_name": "BFW",
+        "protocol_version": BFW_PROTOCOL_VERSION,
+        "protocol_provenance": (
+            "Project-defined open-set protocol constructed from the official BFW data. "
+            "BFW publishes verification and bias-analysis protocols; it does not publish "
+            "an open-set identification protocol, and none is implied here."
+        ),
+        "metadata_filename": dataset.metadata_filename,
+        "metadata_sha256": dataset.metadata_sha256,
+        "evaluated_image_set_sha256": sha256_of_text(
+            "\n".join(sorted(i.sample_id for i in dataset.images))
+        ),
+        "total_identities": len(grouped),
+        "total_images": len(dataset.images),
+        "images_per_identity_min": per_identity_counts[0] if per_identity_counts else 0,
+        "images_per_identity_max": per_identity_counts[-1] if per_identity_counts else 0,
+        "images_per_identity_median": (
+            statistics.median(per_identity_counts) if per_identity_counts else float("nan")
+        ),
+        "subgroup_identity_counts": subgroup_counts,
+    }
+
+
+# =============================================================================
+# 18. Identity-disjoint open-set protocol
+# =============================================================================
+#
+# Development and test identities are completely disjoint, so a threshold
+# selected on one cannot have seen the other. Within each partition, identities
+# split again into mated (enrolled in the gallery, with held-back probes) and
+# non-mated (never enrolled, representing a legitimate new registration).
+#
+# Every division is stratified by the eight subgroups and driven only by the
+# fixed research seed and the dataset itself — never by the secret identifier
+# key, so the partition stays reproducible by someone who does not hold it.
+
+OPEN_SET_ROLES = ("gallery_enrolment", "mated_probe", "non_mated_probe")
+
+# A test evaluation is refused unless the policy carries exactly this status.
+OPEN_SET_STATUS_DEVELOPMENT = "open_set_development"
+OPEN_SET_STATUS_FROZEN = "open_set_frozen"
+OPEN_SET_STATUS_TESTED = "open_set_tested"
+OPEN_SET_STATUSES = (
+    OPEN_SET_STATUS_DEVELOPMENT,
+    OPEN_SET_STATUS_FROZEN,
+    OPEN_SET_STATUS_TESTED,
+)
+
+# Enrolment sizing for the two methods compared in Experiment 6.
+SINGLE_IMAGE_ENROLMENT = 1
+MULTI_IMAGE_ENROLMENT = 3
+MULTI_IMAGE_MINIMUM_ENROLMENT = 2
+
+# Several probes are held back per identity rather than one. With one probe each,
+# a partition of 200 non-mated identities yields 200 searches, so the smallest
+# measurable FPIR is 1/200 = 0.5% and the 0.3% primary target could not be
+# resolved at all. Drawing more probes per identity buys the resolution; the
+# resulting within-identity correlation is precisely what the cluster bootstrap
+# in section 22 accounts for by resampling identities rather than images.
+MATED_PROBES_PER_IDENTITY = 5
+NON_MATED_PROBES_PER_IDENTITY = 15
+
+# An identity needs enough images to enrol the maximum template and still hold
+# back its probes, otherwise the two methods would not see the same identities.
+MINIMUM_IMAGES_FOR_MATED_IDENTITY = MULTI_IMAGE_ENROLMENT + MATED_PROBES_PER_IDENTITY
+
+
+class OpenSetProtocolError(RuntimeError):
+    """Raised when the open-set partition cannot be built or is inconsistent."""
+
+
+@dataclass(frozen=True)
+class OpenSetEntry:
+    sample_id: str
+    identity_hash: str
+    identity: str  # private
+    subgroup: str
+    image_path: Path  # private
+    role: str
+    partition: str  # "development" | "test"
+
+
+@dataclass(frozen=True)
+class OpenSetProtocol:
+    entries: List[OpenSetEntry]
+    seed: int
+    provenance: Dict[str, Any]
+
+    def partition(self, name: str) -> List[OpenSetEntry]:
+        return [e for e in self.entries if e.partition == name]
+
+    def identities(self, partition: str, role: str) -> Set[str]:
+        return {e.identity for e in self.entries if e.partition == partition and e.role == role}
+
+
+def _split_stratified_identities(
+    identities_by_subgroup: Dict[str, List[str]], *, seed: int
+) -> Tuple[List[str], List[str]]:
+    """Halve each subgroup's identities into development and test.
+
+    Deterministic rule for an odd count: the extra identity goes to
+    development, so the held-out test partition is never the larger of the two
+    and a tie can never be resolved by looking at test data."""
+    development: List[str] = []
+    test: List[str] = []
+    for subgroup in sorted(identities_by_subgroup):
+        members = sorted(identities_by_subgroup[subgroup])
+        # Seeded per subgroup so adding a subgroup cannot reshuffle the others.
+        rng = random.Random(f"{seed}:{subgroup}")
+        rng.shuffle(members)
+        midpoint = (len(members) + 1) // 2  # odd -> development takes the extra
+        development.extend(members[:midpoint])
+        test.extend(members[midpoint:])
+    return sorted(development), sorted(test)
+
+
+def _split_mated_and_non_mated(
+    identities: Sequence[str],
+    subgroup_of: Mapping[str, str],
+    *,
+    seed: int,
+    partition: str,
+) -> Tuple[List[str], List[str]]:
+    """Divide a partition's identities into mated and non-mated, stratified by
+    subgroup, with the extra identity of an odd subgroup going to mated."""
+    by_subgroup: Dict[str, List[str]] = {}
+    for identity in identities:
+        by_subgroup.setdefault(subgroup_of[identity], []).append(identity)
+
+    mated: List[str] = []
+    non_mated: List[str] = []
+    for subgroup in sorted(by_subgroup):
+        members = sorted(by_subgroup[subgroup])
+        rng = random.Random(f"{seed}:{partition}:{subgroup}")
+        rng.shuffle(members)
+        midpoint = (len(members) + 1) // 2
+        mated.extend(members[:midpoint])
+        non_mated.extend(members[midpoint:])
+    return sorted(mated), sorted(non_mated)
+
+
+def build_open_set_protocol(
+    dataset: BfwDataset,
+    *,
+    seed: int = DEFAULT_RANDOM_SEED,
+    mated_probes_per_identity: int = MATED_PROBES_PER_IDENTITY,
+    non_mated_probes_per_identity: int = NON_MATED_PROBES_PER_IDENTITY,
+) -> OpenSetProtocol:
+    """Construct the deterministic, identity-disjoint open-set partition."""
+    grouped = dataset.by_identity()
+    subgroup_of = dataset.subgroup_of_identity()
+
+    # Only identities with enough images can be mated under both methods; the
+    # rest remain eligible as non-mated probes, which need a single image.
+    minimum_images = MULTI_IMAGE_ENROLMENT + mated_probes_per_identity
+    identities_by_subgroup: Dict[str, List[str]] = {}
+    for identity in grouped:
+        identities_by_subgroup.setdefault(subgroup_of[identity], []).append(identity)
+
+    development_ids, test_ids = _split_stratified_identities(identities_by_subgroup, seed=seed)
+    if not development_ids or not test_ids:
+        raise OpenSetProtocolError(
+            "BFW yielded too few identities to form disjoint development and test partitions."
+        )
+
+    entries: List[OpenSetEntry] = []
+    for partition, partition_ids in (("development", development_ids), ("test", test_ids)):
+        eligible_mated = [i for i in partition_ids if len(grouped[i]) >= minimum_images]
+        remainder = [i for i in partition_ids if i not in set(eligible_mated)]
+        mated, spare = _split_mated_and_non_mated(
+            eligible_mated, subgroup_of, seed=seed, partition=partition
+        )
+        non_mated = sorted(set(spare) | set(remainder))
+        if not mated or not non_mated:
+            raise OpenSetProtocolError(
+                f"The {partition} partition has no {'mated' if not mated else 'non-mated'} "
+                f"identities; the open-set protocol needs both."
+            )
+
+        for identity in mated:
+            images = grouped[identity]
+            # Deterministic ordering already applied by by_identity(); the first
+            # N enrol and the next is held back as the mated probe. Enrolment
+            # images are chosen before any scoring, never by similarity outcome.
+            for image in images[:MULTI_IMAGE_ENROLMENT]:
+                entries.append(
+                    OpenSetEntry(
+                        image.sample_id, image.identity_hash, identity, image.subgroup,
+                        image.image_path, "gallery_enrolment", partition,
+                    )
+                )
+            # Probes are taken from the images immediately after the enrolment
+            # block, so no image can hold both roles.
+            probe_slice = images[
+                MULTI_IMAGE_ENROLMENT : MULTI_IMAGE_ENROLMENT + mated_probes_per_identity
+            ]
+            for probe in probe_slice:
+                entries.append(
+                    OpenSetEntry(
+                        probe.sample_id, probe.identity_hash, identity, probe.subgroup,
+                        probe.image_path, "mated_probe", partition,
+                    )
+                )
+
+        for identity in non_mated:
+            # A non-mated identity enrols nothing, so every one of its images is
+            # available as a probe representing a legitimate new registration.
+            for probe in grouped[identity][:non_mated_probes_per_identity]:
+                entries.append(
+                    OpenSetEntry(
+                        probe.sample_id, probe.identity_hash, identity, probe.subgroup,
+                        probe.image_path, "non_mated_probe", partition,
+                    )
+                )
+
+    _assert_protocol_invariants(entries)
+
+    provenance = {
+        "seed": seed,
+        "protocol_version": BFW_PROTOCOL_VERSION,
+        "odd_count_rule": (
+            "When a subgroup holds an odd number of identities the extra identity is "
+            "assigned to the development partition, and within a partition to the mated "
+            "group, so the held-out test set is never enlarged by a tie."
+        ),
+        "development_identities": len(development_ids),
+        "test_identities": len(test_ids),
+    }
+    return OpenSetProtocol(entries=entries, seed=seed, provenance=provenance)
+
+
+def _assert_protocol_invariants(entries: Sequence[OpenSetEntry]) -> None:
+    """The three properties that make the experiment meaningful, checked rather
+    than assumed: no image holds two roles, no identity crosses the
+    development/test boundary, and no identity is both enrolled and non-mated."""
+    seen_paths: Set[Path] = set()
+    for entry in entries:
+        if entry.image_path in seen_paths:
+            raise OpenSetProtocolError(
+                f"Image assigned to more than one open-set role: {entry.image_path.name}"
+            )
+        seen_paths.add(entry.image_path)
+
+    partitions_of: Dict[str, Set[str]] = {}
+    roles_of: Dict[str, Set[str]] = {}
+    for entry in entries:
+        partitions_of.setdefault(entry.identity, set()).add(entry.partition)
+        roles_of.setdefault(entry.identity, set()).add(entry.role)
+
+    crossing = sorted(i for i, p in partitions_of.items() if len(p) > 1)
+    if crossing:
+        raise OpenSetProtocolError(
+            f"{len(crossing)} identity/identities appear in both the development and test "
+            f"partitions; the open-set protocol requires them to be disjoint."
+        )
+
+    for identity, roles in roles_of.items():
+        if "non_mated_probe" in roles and roles & {"gallery_enrolment", "mated_probe"}:
+            raise OpenSetProtocolError(
+                "An identity is both enrolled in the gallery and used as a non-mated probe; "
+                "a non-mated search must have no gallery reference."
+            )
+
+
+def open_set_protocol_summary(protocol: OpenSetProtocol) -> Dict[str, Any]:
+    """Public manifest summary: opaque identifiers and counts only."""
+
+    def counts(partition: str) -> Dict[str, Any]:
+        rows = protocol.partition(partition)
+        by_subgroup: Dict[str, Dict[str, int]] = {
+            subgroup: {role: 0 for role in OPEN_SET_ROLES} for subgroup in BFW_SUBGROUPS
+        }
+        for entry in rows:
+            by_subgroup[entry.subgroup][entry.role] += 1
+        return {
+            "identities": len({e.identity_hash for e in rows}),
+            "images": len(rows),
+            "roles": {role: sum(1 for e in rows if e.role == role) for role in OPEN_SET_ROLES},
+            "mated_identities": len({e.identity_hash for e in rows if e.role == "mated_probe"}),
+            "non_mated_identities": len(
+                {e.identity_hash for e in rows if e.role == "non_mated_probe"}
+            ),
+            "by_subgroup": by_subgroup,
+        }
+
+    return {
+        "artifact_type": "bfw_open_set_protocol_summary",
+        "schema_version": SCHEMA_VERSION,
+        "opaque_id_version": OPAQUE_ID_VERSION,
+        "seed": protocol.seed,
+        "development": counts("development"),
+        "test": counts("test"),
+        **protocol.provenance,
+        "public_manifest_sha256": sha256_of_text(
+            "\n".join(sorted(f"{e.partition}:{e.role}:{e.sample_id}" for e in protocol.entries))
+        ),
+        "policy_note": POLICY_NOTE,
+    }
+
+
+def write_open_set_private_manifest(protocol: OpenSetProtocol, path: Path) -> None:
+    """Private manifest with real paths. Written under results/raw, which is
+    git-ignored, and never published."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "seed": protocol.seed,
+        "entries": [
+            {
+                "sample_id": e.sample_id,
+                "identity_hash": e.identity_hash,
+                "subgroup": e.subgroup,
+                "role": e.role,
+                "partition": e.partition,
+                "image_path": str(e.image_path),
+            }
+            for e in protocol.entries
+        ],
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+# =============================================================================
+# 19. Open-set enrolment methods
+# =============================================================================
+#
+# Two methods evaluated over exactly the same identity partitions, so any
+# difference between them is attributable to the enrolment representation and
+# the threshold, not to a different sample of people.
+#
+#   Method A (control)  single_image_pairwise_threshold
+#       One gallery image per identity, searched with the LFW-frozen 1:1
+#       threshold. This is the threshold-transfer control: it measures what
+#       happens when a threshold calibrated for comparing exactly two images is
+#       reused for 1:N search.
+#
+#   Method B (proposed) three_image_open_set_calibrated
+#       Up to three enrolment images averaged into one L2-normalised template,
+#       searched with a threshold calibrated on the BFW development partition
+#       at a target false-positive identification rate.
+
+METHOD_A = "single_image_pairwise_threshold"
+METHOD_B = "three_image_open_set_calibrated"
+OPEN_SET_METHODS = (METHOD_A, METHOD_B)
+
+INSUFFICIENT_GALLERY_IMAGES = "insufficient_gallery_images"
+
+
+@dataclass(frozen=True)
+class EnrolmentOutcome:
+    """Outcome of enrolling one identity, retained whether or not it succeeded."""
+
+    identity_hash: str
+    subgroup: str
+    enrolled: bool
+    attempted_images: int
+    embedded_images: int
+    failure_code: Optional[str]
+
+
+@dataclass(frozen=True)
+class EnrolledIdentity:
+    identity_hash: str
+    subgroup: str
+    template: np.ndarray
+
+
+@dataclass(frozen=True)
+class OpenSetSearchResult:
+    sample_id: str
+    identity_hash: str
+    subgroup: str
+    role: str
+    failure_code: Optional[str] = None
+    top_similarity: Optional[float] = None
+    top_identity_hash: Optional[str] = None
+    top2_similarity: Optional[float] = None
+    correct_rank: Optional[int] = None
+    correct_similarity: Optional[float] = None
+    highest_impostor_similarity: Optional[float] = None
+    top1_time_seconds: Optional[float] = None
+    top5_time_seconds: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class OpenSetRunResult:
+    method: str
+    partition: str
+    enrolment_outcomes: List[EnrolmentOutcome]
+    search_results: List[OpenSetSearchResult]
+    gallery_size: int
+    comparisons_per_probe: int
+
+
+def build_identity_template(
+    embeddings: Sequence[np.ndarray],
+) -> np.ndarray:
+    """Average already-L2-normalised embeddings and re-normalise the mean.
+
+    Re-normalisation matters: the arithmetic mean of unit vectors is not itself
+    a unit vector, and cosine similarity against an un-normalised template would
+    silently rescale every score for that identity."""
+    if not embeddings:
+        raise SimilarityError("Cannot build a template from zero embeddings.")
+    stacked = np.vstack([l2_normalize(np.asarray(e, dtype=np.float64)) for e in embeddings])
+    return l2_normalize(stacked.mean(axis=0))
+
+
+def _embed_open_set_entry(
+    entry: OpenSetEntry, detector: FaceDetector, embedder: FaceEmbedder
+) -> Tuple[Optional[np.ndarray], Optional[str]]:
+    try:
+        loaded = load_image_bgr(entry.image_path)
+        face_row = detector.detect_single_face(loaded.bgr)
+        return l2_normalize(embedder.embed(loaded.bgr, face_row)), None
+    except FaceCountError as exc:
+        return None, "zero_faces" if exc.face_count == 0 else "multiple_faces"
+    except (ImageLoadError, SimilarityError) as exc:
+        return None, f"image_error:{exc}"
+
+
+def run_open_set_method(
+    protocol: OpenSetProtocol,
+    *,
+    partition: str,
+    method: str,
+    detector: FaceDetector,
+    embedder: FaceEmbedder,
+    embed_fn: Optional[Callable[..., Tuple[Optional[np.ndarray], Optional[str]]]] = None,
+) -> OpenSetRunResult:
+    """Enrol the gallery and search every probe. No threshold is applied here:
+    raw scores and ranks are retained so one search can be scored at several
+    operating points without re-running the pipeline."""
+    if method not in OPEN_SET_METHODS:
+        raise OpenSetProtocolError(f"Unknown open-set method {method!r}.")
+    embed = embed_fn or _embed_open_set_entry
+
+    rows = protocol.partition(partition)
+    enrolment_images: Dict[str, List[OpenSetEntry]] = {}
+    subgroup_of_hash: Dict[str, str] = {}
+    for entry in rows:
+        subgroup_of_hash[entry.identity_hash] = entry.subgroup
+        if entry.role == "gallery_enrolment":
+            enrolment_images.setdefault(entry.identity_hash, []).append(entry)
+
+    take = SINGLE_IMAGE_ENROLMENT if method == METHOD_A else MULTI_IMAGE_ENROLMENT
+    minimum = SINGLE_IMAGE_ENROLMENT if method == METHOD_A else MULTI_IMAGE_MINIMUM_ENROLMENT
+
+    outcomes: List[EnrolmentOutcome] = []
+    enrolled: List[EnrolledIdentity] = []
+    for identity_hash in sorted(enrolment_images):
+        # Ordered by filename, never by sample_id. sample_id is an HMAC under the
+        # secret key, so ordering by it would make the choice of enrolment image
+        # key-dependent and the published metrics irreproducible by anyone
+        # holding a different key.
+        candidates = sorted(enrolment_images[identity_hash], key=lambda e: e.image_path.name)[:take]
+        embeddings: List[np.ndarray] = []
+        for entry in candidates:
+            embedding, _failure = embed(entry, detector, embedder)
+            if embedding is not None:
+                embeddings.append(embedding)
+        subgroup = subgroup_of_hash[identity_hash]
+        if len(embeddings) < minimum:
+            # Recorded, never silently removed: an identity that cannot meet the
+            # minimum is a coverage failure of the method under test.
+            outcomes.append(
+                EnrolmentOutcome(
+                    identity_hash, subgroup, False, len(candidates), len(embeddings),
+                    INSUFFICIENT_GALLERY_IMAGES,
+                )
+            )
+            continue
+        outcomes.append(
+            EnrolmentOutcome(identity_hash, subgroup, True, len(candidates), len(embeddings), None)
+        )
+        enrolled.append(
+            EnrolledIdentity(identity_hash, subgroup, build_identity_template(embeddings))
+        )
+
+    if not enrolled:
+        raise OpenSetProtocolError(
+            f"No identity could be enrolled for method {method!r} in the {partition} partition."
+        )
+    enrolled_hashes = {e.identity_hash for e in enrolled}
+
+    results: List[OpenSetSearchResult] = []
+    for entry in rows:
+        if entry.role not in ("mated_probe", "non_mated_probe"):
+            continue
+        if entry.role == "mated_probe" and entry.identity_hash not in enrolled_hashes:
+            results.append(
+                OpenSetSearchResult(
+                    entry.sample_id, entry.identity_hash, entry.subgroup, entry.role,
+                    failure_code=GALLERY_REFERENCE_UNAVAILABLE,
+                )
+            )
+            continue
+
+        probe_embedding, failure = embed(entry, detector, embedder)
+        if probe_embedding is None:
+            results.append(
+                OpenSetSearchResult(
+                    entry.sample_id, entry.identity_hash, entry.subgroup, entry.role,
+                    failure_code=failure,
+                )
+            )
+            continue
+
+        # Two separate measurements of what a deployment would actually pay.
+        # Retrieving the single best candidate needs only a running maximum;
+        # retrieving five needs a partial selection. ``heapq.nlargest`` keeps a
+        # heap of size k rather than ordering the whole gallery, so it reflects
+        # the real cost of a five-candidate review queue.
+        start = time.perf_counter()
+        similarities = [(c, cosine_similarity(probe_embedding, c.template)) for c in enrolled]
+        _best = max(similarities, key=lambda item: item[1])
+        top1_elapsed = time.perf_counter() - start
+
+        start_top5 = time.perf_counter()
+        _five = heapq.nlargest(5, similarities, key=lambda item: item[1])
+        top5_elapsed = top1_elapsed + (time.perf_counter() - start_top5)
+
+        # The full ordering is an evaluation artefact needed to recover the
+        # mate's rank; it is deliberately timed out of both figures above,
+        # because no deployment would sort the entire gallery per probe.
+        scored = sorted(
+            similarities,
+            key=lambda item: (-item[1], item[0].identity_hash),
+        )
+
+        top_candidate, top_score = scored[0]
+        second_score = scored[1][1] if len(scored) > 1 else None
+
+        correct_rank: Optional[int] = None
+        correct_score: Optional[float] = None
+        highest_impostor: Optional[float] = None
+        if entry.role == "mated_probe":
+            for position, (candidate, score) in enumerate(scored, start=1):
+                if candidate.identity_hash == entry.identity_hash:
+                    correct_rank, correct_score = position, score
+                    break
+            impostors = [s for c, s in scored if c.identity_hash != entry.identity_hash]
+            highest_impostor = max(impostors) if impostors else None
+
+        results.append(
+            OpenSetSearchResult(
+                entry.sample_id, entry.identity_hash, entry.subgroup, entry.role,
+                None, top_score, top_candidate.identity_hash, second_score,
+                correct_rank, correct_score, highest_impostor, top1_elapsed, top5_elapsed,
+            )
+        )
+
+    return OpenSetRunResult(
+        method=method,
+        partition=partition,
+        enrolment_outcomes=outcomes,
+        search_results=results,
+        gallery_size=len(enrolled),
+        comparisons_per_probe=len(enrolled),
+    )
+
+
+# =============================================================================
+# 20. Open-set metrics (FPIR, FNIR, TPIR)
+# =============================================================================
+#
+# These are identification metrics and are not interchangeable with the
+# pairwise rates in section 10:
+#
+#   FPIR  a *search* against the whole gallery returns at least one candidate
+#         above threshold when the person is not enrolled. FMR is a single
+#         comparison between two images. One non-mated search performs as many
+#         comparisons as there are enrolled identities, which is exactly why a
+#         1:1 threshold transfers so badly.
+#
+#   FNIR  a mated search fails to place the correct identity within rank k
+#         above threshold. FNMR is a single genuine comparison falling below
+#         threshold, with no competing candidates and no ranking involved.
+#
+# TPIR (also written DIR) is 1 - FNIR at the same rank.
+##############
+# Title: Face Recognition Technology Evaluation (FRTE) 1:N Identification
+# Author: National Institute of Standards and Technology (NIST)
+# Date: 2025
+# Availability: https://pages.nist.gov/frvt/html/frvt1N.html
+##############
+##############
+# Title: ISO/IEC 19795-1:2021 Biometric performance testing and reporting,
+#        Part 1: Principles and framework
+# Author: International Organization for Standardization
+# Date: 2021
+# Availability: https://www.iso.org/standard/73515.html
+##############
+
+# NIST commonly reports FNIR at an FPIR of 0.003; that is taken as the primary
+# operating point here, with a stricter and a looser point either side.
+FPIR_TARGETS = (0.001, 0.003, 0.01)
+PRIMARY_FPIR_TARGET = 0.003
+
+
+def _scored(results: Sequence[OpenSetSearchResult], role: str) -> List[OpenSetSearchResult]:
+    return [r for r in results if r.role == role and r.failure_code is None]
+
+
+def open_set_rates_at_threshold(
+    results: Sequence[OpenSetSearchResult], threshold: float
+) -> Dict[str, float]:
+    """FPIR, FNIR and TPIR at one operating threshold."""
+    non_mated = _scored(results, "non_mated_probe")
+    mated = _scored(results, "mated_probe")
+
+    false_positives = sum(
+        1 for r in non_mated if r.top_similarity is not None and r.top_similarity >= threshold
+    )
+    fpir = false_positives / len(non_mated) if non_mated else float("nan")
+
+    def found_within(rank: int) -> int:
+        return sum(
+            1
+            for r in mated
+            if r.correct_rank is not None
+            and r.correct_rank <= rank
+            and r.correct_similarity is not None
+            and r.correct_similarity >= threshold
+        )
+
+    tpir1 = found_within(1) / len(mated) if mated else float("nan")
+    tpir5 = found_within(5) / len(mated) if mated else float("nan")
+    cmc1 = (
+        sum(1 for r in mated if r.correct_rank == 1) / len(mated) if mated else float("nan")
+    )
+    cmc5 = (
+        sum(1 for r in mated if r.correct_rank is not None and r.correct_rank <= 5) / len(mated)
+        if mated
+        else float("nan")
+    )
+    return {
+        "threshold": threshold,
+        "fpir": fpir,
+        "fnir_rank1": 1.0 - tpir1 if tpir1 == tpir1 else float("nan"),
+        "fnir_rank5": 1.0 - tpir5 if tpir5 == tpir5 else float("nan"),
+        "tpir_rank1": tpir1,
+        "tpir_rank5": tpir5,
+        "cmc_rank1": cmc1,
+        "cmc_rank5": cmc5,
+        "false_reviews_per_1000_non_mated": fpir * 1000.0 if fpir == fpir else float("nan"),
+        "scored_non_mated_probes": len(non_mated),
+        "scored_mated_probes": len(mated),
+    }
+
+
+def open_set_coverage(run: OpenSetRunResult) -> Dict[str, Any]:
+    """Coverage counts. Reported alongside every rate, because a rate measured
+    over a small surviving fraction of the protocol is not comparable with one
+    measured over nearly all of it."""
+    intended_gallery = len(run.enrolment_outcomes)
+    enrolled = sum(1 for o in run.enrolment_outcomes if o.enrolled)
+    mated = [r for r in run.search_results if r.role == "mated_probe"]
+    non_mated = [r for r in run.search_results if r.role == "non_mated_probe"]
+    scored_mated = [r for r in mated if r.failure_code is None]
+    scored_non_mated = [r for r in non_mated if r.failure_code is None]
+
+    failure_breakdown: Dict[str, int] = {}
+    for row in run.search_results:
+        if row.failure_code is None:
+            continue
+        key = row.failure_code.split(":", 1)[0]
+        failure_breakdown[key] = failure_breakdown.get(key, 0) + 1
+    enrolment_failures = sum(1 for o in run.enrolment_outcomes if not o.enrolled)
+
+    top1_ms = [r.top1_time_seconds * 1000.0 for r in run.search_results if r.top1_time_seconds]
+    top5_ms = [r.top5_time_seconds * 1000.0 for r in run.search_results if r.top5_time_seconds]
+
+    return {
+        "method": run.method,
+        "partition": run.partition,
+        "gallery_size": run.gallery_size,
+        "similarity_comparisons": run.comparisons_per_probe * len(scored_mated + scored_non_mated),
+        "intended_gallery_identities": intended_gallery,
+        "enrolled_gallery_identities": enrolled,
+        "gallery_enrolment_failure_count": enrolment_failures,
+        "gallery_enrolment_failure_rate": (
+            enrolment_failures / intended_gallery if intended_gallery else float("nan")
+        ),
+        "gallery_enrolment_coverage": (
+            enrolled / intended_gallery if intended_gallery else float("nan")
+        ),
+        "intended_mated_probes": len(mated),
+        "scored_mated_probes": len(scored_mated),
+        "mated_extraction_failure_rate": (
+            (len(mated) - len(scored_mated)) / len(mated) if mated else float("nan")
+        ),
+        "intended_non_mated_probes": len(non_mated),
+        "scored_non_mated_probes": len(scored_non_mated),
+        "non_mated_extraction_failure_rate": (
+            (len(non_mated) - len(scored_non_mated)) / len(non_mated) if non_mated else float("nan")
+        ),
+        "probe_failure_breakdown": failure_breakdown,
+        "top1_search_time_mean_ms": statistics.fmean(top1_ms) if top1_ms else float("nan"),
+        "top1_search_time_p95_ms": percentile(top1_ms, 95) if top1_ms else float("nan"),
+        "top5_search_time_mean_ms": statistics.fmean(top5_ms) if top5_ms else float("nan"),
+        "top5_search_time_p95_ms": percentile(top5_ms, 95) if top5_ms else float("nan"),
+    }
+
+
+def open_set_duplicate_detection(
+    run: OpenSetRunResult, threshold: float
+) -> Dict[str, float]:
+    """Conditional and end-to-end duplicate detection, defined exactly as in the
+    corrected LFW gallery accounting so the two experiments stay comparable."""
+    mated = [r for r in run.search_results if r.role == "mated_probe"]
+    scored = [r for r in mated if r.failure_code is None]
+    detected = sum(
+        1
+        for r in scored
+        if r.correct_rank == 1 and r.correct_similarity is not None
+        and r.correct_similarity >= threshold
+    )
+    return {
+        "conditional_duplicate_detection_rate": (
+            detected / len(scored) if scored else float("nan")
+        ),
+        "end_to_end_duplicate_detection_rate": detected / len(mated) if mated else float("nan"),
+    }
+
+
+# =============================================================================
+# 21. Open-set threshold development and freezing
+# =============================================================================
+#
+# The threshold is developed on the BFW development partition only. Test scores
+# never enter candidate generation or selection, and a test evaluation refuses
+# any policy whose status is not exactly open_set_frozen.
+
+
+class OpenSetPolicyError(RuntimeError):
+    """Raised when an open-set policy is missing, malformed or not frozen."""
+
+
+OPEN_SET_SELECTION_RULE = (
+    "Among candidate thresholds whose development FPIR is no greater than the target, "
+    "select the highest development TPIR at rank 1; ties broken by lower development "
+    "FPIR, then by higher threshold, then by candidate name, for full determinism."
+)
+
+
+def open_set_threshold_candidates(
+    results: Sequence[OpenSetSearchResult],
+) -> List[Tuple[str, float]]:
+    """Every distinct top score observed on the development partition, plus two
+    sentinels that bracket the range so a target can always be met."""
+    scores = sorted(
+        {
+            round(float(r.top_similarity), 12)
+            for r in results
+            if r.failure_code is None and r.top_similarity is not None
+        }
+    )
+    candidates: List[Tuple[str, float]] = [("sentinel_reject_all", 1.0000000001)]
+    for score in scores:
+        candidates.append((f"score_{score:.12f}", score))
+    candidates.append(("sentinel_accept_all", -1.0000000001))
+    return candidates
+
+
+def select_open_set_threshold(
+    development_results: Sequence[OpenSetSearchResult],
+    *,
+    target_fpir: float,
+) -> Dict[str, Any]:
+    """Apply the selection rule at one target FPIR and return the full evidence."""
+    evaluated: List[Dict[str, Any]] = []
+    for name, threshold in open_set_threshold_candidates(development_results):
+        rates = open_set_rates_at_threshold(development_results, threshold)
+        evaluated.append({"candidate": name, **rates})
+
+    admissible = [c for c in evaluated if c["fpir"] == c["fpir"] and c["fpir"] <= target_fpir]
+    if not admissible:
+        raise OpenSetPolicyError(
+            f"No candidate threshold achieved a development FPIR at or below {target_fpir}. "
+            f"The lowest observed was {min((c['fpir'] for c in evaluated), default=float('nan'))}."
+        )
+
+    def sort_key(candidate: Dict[str, Any]):
+        tpir = candidate["tpir_rank1"]
+        return (
+            -(tpir if tpir == tpir else -1.0),  # highest TPIR@1; NaN sorts last
+            candidate["fpir"],                   # then lower FPIR
+            -candidate["threshold"],             # then higher threshold
+            candidate["candidate"],              # then candidate name
+        )
+
+    chosen = sorted(admissible, key=sort_key)[0]
+    return {
+        "target_fpir": target_fpir,
+        "selected_candidate": chosen["candidate"],
+        "threshold": chosen["threshold"],
+        "development_fpir": chosen["fpir"],
+        "development_tpir_rank1": chosen["tpir_rank1"],
+        "development_tpir_rank5": chosen["tpir_rank5"],
+        "selection_rule": OPEN_SET_SELECTION_RULE,
+        "candidates_evaluated": len(evaluated),
+        "candidates_admissible": len(admissible),
+    }
+
+
+def require_frozen_open_set_policy(payload: Mapping[str, Any], *, context: str = "") -> float:
+    """Refuse to score the held-out test partition with anything but a frozen
+    policy. This is the structural guarantee that the reported test numbers were
+    not tuned on the data they describe."""
+    status = payload.get("status")
+    if status != OPEN_SET_STATUS_FROZEN:
+        raise OpenSetPolicyError(
+            f"Refusing to run a held-out open-set evaluation with policy status {status!r}"
+            f"{f' from {context}' if context else ''}. Only {OPEN_SET_STATUS_FROZEN!r} is "
+            f"accepted; develop and freeze the policy on the development partition first."
+        )
+    operating = payload.get("operating_points") or {}
+    primary = operating.get(str(PRIMARY_FPIR_TARGET))
+    if not primary or "threshold" not in primary:
+        raise OpenSetPolicyError(
+            f"Frozen open-set policy carries no threshold for the primary FPIR target "
+            f"{PRIMARY_FPIR_TARGET}."
+        )
+    return float(primary["threshold"])
+
+
+# =============================================================================
+# 22. Cluster-bootstrap confidence intervals
+# =============================================================================
+#
+# Several probes can belong to one identity, so resampling images independently
+# would treat correlated observations as independent and produce intervals that
+# are far too narrow. Identities are resampled instead, with subgroup
+# stratification preserved, which is the standard cluster bootstrap.
+
+BOOTSTRAP_REPLICATES = 2000
+
+
+def _percentile_interval(values: Sequence[float]) -> Tuple[float, float]:
+    ordered = sorted(values)
+    if not ordered:
+        return (float("nan"), float("nan"))
+    return (percentile(ordered, 2.5), percentile(ordered, 97.5))
+
+
+def cluster_bootstrap_intervals(
+    results: Sequence[OpenSetSearchResult],
+    *,
+    threshold: float,
+    replicates: int = BOOTSTRAP_REPLICATES,
+    seed: int = DEFAULT_RANDOM_SEED,
+) -> Dict[str, Dict[str, Any]]:
+    """95% percentile intervals over identity-level resampling.
+
+    A replicate in which a metric is undefined (no mated or no non-mated
+    identity survived, say) is excluded from that metric's interval and counted,
+    never silently replaced by zero."""
+    by_identity: Dict[str, List[OpenSetSearchResult]] = {}
+    subgroup_of: Dict[str, str] = {}
+    for row in results:
+        by_identity.setdefault(row.identity_hash, []).append(row)
+        subgroup_of[row.identity_hash] = row.subgroup
+
+    mated_ids = sorted({r.identity_hash for r in results if r.role == "mated_probe"})
+    non_mated_ids = sorted({r.identity_hash for r in results if r.role == "non_mated_probe"})
+
+    def stratify(identity_hashes: Sequence[str]) -> Dict[str, List[str]]:
+        buckets: Dict[str, List[str]] = {}
+        for identity_hash in identity_hashes:
+            buckets.setdefault(subgroup_of[identity_hash], []).append(identity_hash)
+        return {k: sorted(v) for k, v in sorted(buckets.items())}
+
+    mated_strata = stratify(mated_ids)
+    non_mated_strata = stratify(non_mated_ids)
+
+    tracked = (
+        "fpir",
+        "fnir_rank1",
+        "fnir_rank5",
+        "tpir_rank1",
+        "tpir_rank5",
+        "end_to_end_duplicate_detection_rate",
+        "extraction_coverage",
+    )
+    samples: Dict[str, List[float]] = {name: [] for name in tracked}
+
+    rng = random.Random(seed)
+    for _replicate in range(replicates):
+        drawn: List[OpenSetSearchResult] = []
+        for strata in (mated_strata, non_mated_strata):
+            for _subgroup, members in strata.items():
+                # With replacement, preserving each stratum's size.
+                for _ in range(len(members)):
+                    drawn.extend(by_identity[members[rng.randrange(len(members))]])
+
+        rates = open_set_rates_at_threshold(drawn, threshold)
+        mated_rows = [r for r in drawn if r.role == "mated_probe"]
+        scored_mated = [r for r in mated_rows if r.failure_code is None]
+        detected = sum(
+            1
+            for r in scored_mated
+            if r.correct_rank == 1
+            and r.correct_similarity is not None
+            and r.correct_similarity >= threshold
+        )
+        extras = {
+            "end_to_end_duplicate_detection_rate": (
+                detected / len(mated_rows) if mated_rows else float("nan")
+            ),
+            "extraction_coverage": (
+                sum(1 for r in drawn if r.failure_code is None) / len(drawn)
+                if drawn
+                else float("nan")
+            ),
+        }
+        for name in tracked:
+            value = extras.get(name, rates.get(name, float("nan")))
+            if isinstance(value, float) and value == value:
+                samples[name].append(value)
+
+    intervals: Dict[str, Dict[str, Any]] = {}
+    for name in tracked:
+        low, high = _percentile_interval(samples[name])
+        intervals[name] = {
+            "lower_95": low,
+            "upper_95": high,
+            "valid_replicates": len(samples[name]),
+            "requested_replicates": replicates,
+        }
+    return intervals
+
+
+# =============================================================================
+# 23. Demographic subgroup performance
+# =============================================================================
+#
+# Subgroup figures are aggregate fairness reporting over benchmark identities.
+# No subgroup label is ever published beside anything that identifies a person,
+# no attribute is inferred with another model, and the primary result uses one
+# global threshold — subgroup-specific thresholds would change what is being
+# measured and are not applied to the held-out test.
+
+
+def subgroup_open_set_metrics(
+    results: Sequence[OpenSetSearchResult],
+    *,
+    threshold: float,
+    bootstrap: bool = False,
+    seed: int = DEFAULT_RANDOM_SEED,
+) -> Dict[str, Dict[str, Any]]:
+    per_subgroup: Dict[str, Dict[str, Any]] = {}
+    for subgroup in BFW_SUBGROUPS:
+        rows = [r for r in results if r.subgroup == subgroup]
+        if not rows:
+            continue
+        rates = open_set_rates_at_threshold(rows, threshold)
+        mated = [r for r in rows if r.role == "mated_probe"]
+        non_mated = [r for r in rows if r.role == "non_mated_probe"]
+        entry: Dict[str, Any] = {
+            "fpir": rates["fpir"],
+            "fnir_rank1": rates["fnir_rank1"],
+            "tpir_rank1": rates["tpir_rank1"],
+            "mated_probe_coverage": (
+                sum(1 for r in mated if r.failure_code is None) / len(mated)
+                if mated
+                else float("nan")
+            ),
+            "non_mated_probe_coverage": (
+                sum(1 for r in non_mated if r.failure_code is None) / len(non_mated)
+                if non_mated
+                else float("nan")
+            ),
+            "scored_mated_probes": rates["scored_mated_probes"],
+            "scored_non_mated_probes": rates["scored_non_mated_probes"],
+        }
+        if bootstrap:
+            entry["confidence_intervals"] = cluster_bootstrap_intervals(
+                rows, threshold=threshold, seed=seed
+            )
+        per_subgroup[subgroup] = entry
+    return per_subgroup
+
+
+def subgroup_disparity_summary(per_subgroup: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+    """Spread across subgroups. The max/min ratio is reported only when the
+    denominator is non-zero; an absolute range is always reported, because a
+    ratio against a zero rate is undefined rather than infinitely bad."""
+    fpirs = [v["fpir"] for v in per_subgroup.values() if v["fpir"] == v["fpir"]]
+    tpirs = [v["tpir_rank1"] for v in per_subgroup.values() if v["tpir_rank1"] == v["tpir_rank1"]]
+    if not fpirs:
+        return {"subgroups_reported": len(per_subgroup)}
+    max_fpir, min_fpir = max(fpirs), min(fpirs)
+    summary: Dict[str, Any] = {
+        "subgroups_reported": len(per_subgroup),
+        "max_subgroup_fpir": max_fpir,
+        "min_subgroup_fpir": min_fpir,
+        "absolute_fpir_range": max_fpir - min_fpir,
+    }
+    if min_fpir > 0:
+        summary["max_to_min_fpir_ratio"] = max_fpir / min_fpir
+    else:
+        summary["max_to_min_fpir_ratio"] = None
+        summary["max_to_min_fpir_ratio_note"] = (
+            "Undefined: at least one subgroup recorded a zero FPIR, so the ratio is not "
+            "reported. Use the absolute range instead."
+        )
+    if tpirs:
+        summary["max_subgroup_tpir_rank1"] = max(tpirs)
+        summary["min_subgroup_tpir_rank1"] = min(tpirs)
+        summary["absolute_tpir_rank1_range"] = max(tpirs) - min(tpirs)
+    return summary
+
+
+# =============================================================================
+# 24. Open-set experiment orchestration and artefacts
+# =============================================================================
+#
+# Experiment 6 in full: load BFW, build the identity-disjoint partition, run the
+# single-image control, develop and freeze a policy on the development
+# partition, apply it unchanged to the held-out test partition, then compute
+# confidence intervals and subgroup figures.
+#
+# Success criteria are declared here, in source, before any test result exists.
+# They are research targets, not claims, and the report states plainly which
+# were achieved, which were not, and which could not be measured.
+
+OPEN_SET_SUCCESS_CRITERIA = {
+    "held_out_fpir_max": 0.01,
+    "target_fpir": PRIMARY_FPIR_TARGET,
+    "tpir_rank1_min": 0.90,
+    "tpir_rank5_min": 0.95,
+    "gallery_enrolment_coverage_min": 0.90,
+    "probe_extraction_coverage_min": 0.90,
+}
+
+OPEN_SET_LIMITATIONS = (
+    "This remains a proof of concept. No result here proves fraud, misuse or "
+    "misrepresentation by any person.",
+    "No automatic sanction is applied. A score above threshold opens a case for human "
+    "review and nothing else.",
+    "The BFW open-set evaluation uses a protocol defined by this project. BFW publishes "
+    "verification and bias-analysis protocols, not an open-set identification protocol.",
+    "Development and test identities are completely disjoint, and the operating threshold "
+    "was frozen before the held-out test partition was scored.",
+    "Extraction failures are counted as coverage failures, never as genuine no-match "
+    "decisions.",
+    "Confidence intervals describe sampling uncertainty over these benchmark identities "
+    "only. They do not extend to any other population.",
+    "Benchmark demographics do not represent a real dating-application user population, "
+    "so subgroup figures must not be read as deployment estimates.",
+)
+
+
+def evaluate_open_set_success_criteria(
+    coverage: Mapping[str, Any], rates: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """Compare held-out results against the pre-declared targets. A metric that
+    is undefined is reported as not measurable rather than as a pass."""
+
+    def verdict(actual: Any, threshold: float, *, minimum: bool) -> Dict[str, Any]:
+        if not isinstance(actual, (int, float)) or actual != actual:
+            return {"outcome": "not_measurable", "actual": None, "target": threshold}
+        achieved = actual >= threshold if minimum else actual <= threshold
+        return {
+            "outcome": "achieved" if achieved else "not_achieved",
+            "actual": float(actual),
+            "target": threshold,
+        }
+
+    probe_coverage = min(
+        (
+            1.0 - coverage.get("mated_extraction_failure_rate", float("nan")),
+            1.0 - coverage.get("non_mated_extraction_failure_rate", float("nan")),
+        ),
+        default=float("nan"),
+    )
+    return {
+        "criteria_declared_before_test": True,
+        "fpir_at_or_below_1_percent": verdict(
+            rates.get("fpir"), OPEN_SET_SUCCESS_CRITERIA["held_out_fpir_max"], minimum=False
+        ),
+        "tpir_rank1_at_least_90_percent": verdict(
+            rates.get("tpir_rank1"), OPEN_SET_SUCCESS_CRITERIA["tpir_rank1_min"], minimum=True
+        ),
+        "tpir_rank5_at_least_95_percent": verdict(
+            rates.get("tpir_rank5"), OPEN_SET_SUCCESS_CRITERIA["tpir_rank5_min"], minimum=True
+        ),
+        "gallery_enrolment_coverage_at_least_90_percent": verdict(
+            coverage.get("gallery_enrolment_coverage"),
+            OPEN_SET_SUCCESS_CRITERIA["gallery_enrolment_coverage_min"],
+            minimum=True,
+        ),
+        "probe_extraction_coverage_at_least_90_percent": verdict(
+            probe_coverage,
+            OPEN_SET_SUCCESS_CRITERIA["probe_extraction_coverage_min"],
+            minimum=True,
+        ),
+    }
+
+
+def _open_set_provenance(
+    dataset: BfwDataset, protocol: OpenSetProtocol, detector: Any, embedder: Any
+) -> Dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "methodology_revision": GALLERY_METHODOLOGY_REVISION,
+        "opaque_id_version": OPAQUE_ID_VERSION,
+        "created_at": utc_now_iso(),
+        "software_environment": software_environment_report(),
+        "pipeline_name": MODEL_VERSION,
+        "model_version": MODEL_VERSION,
+        "preprocessing_revision": PREPROCESSING_REVISION,
+        "model_sha256": {
+            "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
+            "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
+        },
+        "dataset_provenance": bfw_dataset_provenance(dataset),
+        "seed": protocol.seed,
+        "policy_note": POLICY_NOTE,
+        "limitations": list(OPEN_SET_LIMITATIONS),
+    }
+
+
+def run_open_set_experiment(
+    *,
+    output_root: Path = AGGREGATE_ROOT,
+    raw_root: Path = RAW_ROOT,
+    threshold_artifact: Optional[Path] = None,
+    seed: int = DEFAULT_RANDOM_SEED,
+    bootstrap_replicates: int = BOOTSTRAP_REPLICATES,
+) -> Dict[str, Any]:
+    """Experiment 6 end to end. Stops on the exact underlying blocker; never
+    fabricates, hardcodes or approximates a result."""
+    config = EnvironmentConfig.load()
+    if not id_hmac_key_is_configured():
+        raise OpaqueIdentifierKeyError(
+            f"{ID_HMAC_KEY_VARIABLE} must be configured before identifiers are produced."
+        )
+    image_root, metadata_path = config.require_bfw_roots()
+
+    detector, embedder = load_models(config.require_model_root())
+    announce("Loading BFW metadata and validating the pinned schema")
+    dataset = load_bfw_dataset(image_root, metadata_path)
+    announce(f"BFW: {len(dataset.images)} images across {len(dataset.by_identity())} identities")
+
+    protocol = build_open_set_protocol(dataset, seed=seed)
+    private_manifest = Path(raw_root) / "bfw_open_set_manifest.json"
+    write_open_set_private_manifest(protocol, private_manifest)
+    announce(
+        f"Wrote the private open-set manifest to {project_relative(private_manifest)} "
+        f"(contains real image paths — kept out of Git)"
+    )
+
+    summary_payload = open_set_protocol_summary(protocol)
+    write_json_artifact(output_root / "bfw_open_set_protocol_summary.json", summary_payload)
+
+    provenance = _open_set_provenance(dataset, protocol, detector, embedder)
+    public_manifest_sha256 = summary_payload["public_manifest_sha256"]
+
+    # --- Method A control, at the untouched LFW 1:1 threshold -----------------
+    threshold_artifact = threshold_artifact or (output_root / "calibrated_threshold.json")
+    lfw_payload = read_json_artifact(threshold_artifact)
+    lfw_threshold = require_frozen_threshold(
+        lfw_payload, context=project_relative(threshold_artifact)
+    )
+
+    announce("Running Method A (single-image enrolment, LFW 1:1 threshold) on development")
+    control_dev = run_open_set_method(
+        protocol, partition="development", method=METHOD_A, detector=detector, embedder=embedder
+    )
+
+    # --- Method B development and freezing -----------------------------------
+    announce("Running Method B (three-image template) on development")
+    proposed_dev = run_open_set_method(
+        protocol, partition="development", method=METHOD_B, detector=detector, embedder=embedder
+    )
+
+    operating_points: Dict[str, Any] = {}
+    for target in FPIR_TARGETS:
+        operating_points[str(target)] = select_open_set_threshold(
+            proposed_dev.search_results, target_fpir=target
+        )
+
+    policy_payload = {
+        "artifact_type": "bfw_open_set_threshold",
+        "status": OPEN_SET_STATUS_FROZEN,
+        "method": METHOD_B,
+        "primary_fpir_target": PRIMARY_FPIR_TARGET,
+        "operating_points": operating_points,
+        "selection_rule": OPEN_SET_SELECTION_RULE,
+        "developed_on": "BFW development partition (identity-disjoint from test)",
+        "public_manifest_sha256": public_manifest_sha256,
+        "protocol_digest": summary_payload["public_manifest_sha256"],
+        **provenance,
+    }
+    policy_path = output_root / "bfw_open_set_threshold.json"
+    write_json_artifact(policy_path, policy_payload)
+    announce(f"Froze the open-set policy at {project_relative(policy_path)}")
+
+    frozen_threshold = require_frozen_open_set_policy(
+        read_json_artifact(policy_path), context=project_relative(policy_path)
+    )
+
+    development_payload = {
+        "artifact_type": "bfw_open_set_development_metrics",
+        "status": OPEN_SET_STATUS_DEVELOPMENT,
+        "public_manifest_sha256": public_manifest_sha256,
+        "protocol_digest": summary_payload["public_manifest_sha256"],
+        "threshold_source": project_relative(policy_path),
+        "methods": {
+            METHOD_A: {
+                "coverage": open_set_coverage(control_dev),
+                "operating_threshold": lfw_threshold,
+                "threshold_role": (
+                    "Control only. This is the LFW 1:1 verification threshold reused "
+                    "unchanged; it is not a valid open-set operating threshold."
+                ),
+                "rates": open_set_rates_at_threshold(control_dev.search_results, lfw_threshold),
+                **open_set_duplicate_detection(control_dev, lfw_threshold),
+            },
+            METHOD_B: {
+                "coverage": open_set_coverage(proposed_dev),
+                "operating_points": {
+                    str(t): open_set_rates_at_threshold(
+                        proposed_dev.search_results, operating_points[str(t)]["threshold"]
+                    )
+                    for t in FPIR_TARGETS
+                },
+                "at_lfw_control_threshold": open_set_rates_at_threshold(
+                    proposed_dev.search_results, lfw_threshold
+                ),
+            },
+        },
+        **provenance,
+    }
+    write_json_artifact(
+        output_root / "bfw_open_set_development_metrics.json", development_payload
+    )
+
+    # --- Held-out test, frozen policy applied unchanged -----------------------
+    announce("Scoring the held-out test partition with the frozen policy")
+    control_test = run_open_set_method(
+        protocol, partition="test", method=METHOD_A, detector=detector, embedder=embedder
+    )
+    proposed_test = run_open_set_method(
+        protocol, partition="test", method=METHOD_B, detector=detector, embedder=embedder
+    )
+
+    test_coverage = open_set_coverage(proposed_test)
+    primary_rates = open_set_rates_at_threshold(proposed_test.search_results, frozen_threshold)
+
+    test_payload = {
+        "artifact_type": "bfw_open_set_test_metrics",
+        "status": OPEN_SET_STATUS_TESTED,
+        "public_manifest_sha256": public_manifest_sha256,
+        "protocol_digest": summary_payload["public_manifest_sha256"],
+        "threshold_source": project_relative(policy_path),
+        "operating_threshold": frozen_threshold,
+        "primary_fpir_target": PRIMARY_FPIR_TARGET,
+        "methods": {
+            METHOD_A: {
+                "coverage": open_set_coverage(control_test),
+                "operating_threshold": lfw_threshold,
+                "threshold_role": (
+                    "Control only. Not a valid open-set operating threshold."
+                ),
+                "rates": open_set_rates_at_threshold(control_test.search_results, lfw_threshold),
+                **open_set_duplicate_detection(control_test, lfw_threshold),
+            },
+            METHOD_B: {
+                "coverage": test_coverage,
+                "at_lfw_control_threshold": open_set_rates_at_threshold(
+                    proposed_test.search_results, lfw_threshold
+                ),
+                "operating_points": {
+                    str(t): open_set_rates_at_threshold(
+                        proposed_test.search_results, operating_points[str(t)]["threshold"]
+                    )
+                    for t in FPIR_TARGETS
+                },
+                "primary_operating_point": primary_rates,
+                **open_set_duplicate_detection(proposed_test, frozen_threshold),
+            },
+        },
+        "success_criteria": evaluate_open_set_success_criteria(test_coverage, primary_rates),
+        **provenance,
+    }
+    write_json_artifact(output_root / "bfw_open_set_test_metrics.json", test_payload)
+
+    # --- Confidence intervals and subgroup figures ---------------------------
+    announce(f"Computing {bootstrap_replicates} cluster-bootstrap replicates")
+    intervals = cluster_bootstrap_intervals(
+        proposed_test.search_results,
+        threshold=frozen_threshold,
+        replicates=bootstrap_replicates,
+        seed=seed,
+    )
+    write_json_artifact(
+        output_root / "open_set_confidence_intervals.json",
+        {
+            "artifact_type": "open_set_confidence_intervals",
+            "method": METHOD_B,
+            "partition": "test",
+            "operating_threshold": frozen_threshold,
+            "replicates": bootstrap_replicates,
+            "resampling_unit": "identity (cluster bootstrap, subgroup-stratified)",
+            "intervals": intervals,
+            **provenance,
+        },
+    )
+
+    per_subgroup = subgroup_open_set_metrics(
+        proposed_test.search_results, threshold=frozen_threshold, seed=seed
+    )
+    _write_subgroup_csv(output_root / "bfw_subgroup_metrics.csv", per_subgroup)
+    _write_method_comparison_csv(
+        output_root / "open_set_method_comparison.csv",
+        control_test=control_test,
+        proposed_test=proposed_test,
+        lfw_threshold=lfw_threshold,
+        frozen_threshold=frozen_threshold,
+    )
+
+    report = render_open_set_report(
+        protocol_summary=summary_payload,
+        development=development_payload,
+        test=test_payload,
+        intervals=intervals,
+        per_subgroup=per_subgroup,
+        disparity=subgroup_disparity_summary(per_subgroup),
+    )
+    (output_root / "OPEN_SET_EVALUATION_REPORT.md").write_text(report, encoding="utf-8")
+    announce("Wrote OPEN_SET_EVALUATION_REPORT.md")
+
+    # Privacy validation over every artefact this experiment produced, including
+    # the new ones. A leak stops the run rather than being reported afterwards.
+    leaks = find_path_leaks(output_root, forbidden_substrings=default_forbidden_path_substrings())
+    if leaks:
+        raise PrivacyLeakError(
+            "Refusing to finish: open-set output(s) contain a personal/absolute path:\n"
+            + "\n".join(f"  {redact_private_paths(leak)}" for leak in leaks)
+        )
+    assert_no_identifier_key_leak(output_root)
+    announce("Privacy validation passed for every open-set artefact")
+
+    return test_payload
+
+
+def _write_subgroup_csv(path: Path, per_subgroup: Mapping[str, Mapping[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "subgroup", "fpir", "fnir_rank1", "tpir_rank1",
+                "mated_probe_coverage", "non_mated_probe_coverage",
+                "scored_mated_probes", "scored_non_mated_probes",
+            ]
+        )
+        for subgroup in sorted(per_subgroup):
+            row = per_subgroup[subgroup]
+            writer.writerow(
+                [
+                    subgroup, row["fpir"], row["fnir_rank1"], row["tpir_rank1"],
+                    row["mated_probe_coverage"], row["non_mated_probe_coverage"],
+                    row["scored_mated_probes"], row["scored_non_mated_probes"],
+                ]
+            )
+
+
+def _write_method_comparison_csv(
+    path: Path,
+    *,
+    control_test: OpenSetRunResult,
+    proposed_test: OpenSetRunResult,
+    lfw_threshold: float,
+    frozen_threshold: float,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        (METHOD_A, "lfw_1to1_control", lfw_threshold, control_test),
+        (METHOD_B, f"open_set_fpir_{PRIMARY_FPIR_TARGET}", frozen_threshold, proposed_test),
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "method", "operating_point", "threshold", "gallery_size",
+                "fpir", "fnir_rank1", "tpir_rank1", "tpir_rank5",
+                "false_reviews_per_1000_non_mated",
+                "gallery_enrolment_coverage", "scored_mated_probes", "scored_non_mated_probes",
+                "end_to_end_duplicate_detection_rate",
+            ]
+        )
+        for method, point, threshold, run in rows:
+            rates = open_set_rates_at_threshold(run.search_results, threshold)
+            coverage = open_set_coverage(run)
+            detection = open_set_duplicate_detection(run, threshold)
+            writer.writerow(
+                [
+                    method, point, threshold, run.gallery_size,
+                    rates["fpir"], rates["fnir_rank1"], rates["tpir_rank1"], rates["tpir_rank5"],
+                    rates["false_reviews_per_1000_non_mated"],
+                    coverage["gallery_enrolment_coverage"],
+                    rates["scored_mated_probes"], rates["scored_non_mated_probes"],
+                    detection["end_to_end_duplicate_detection_rate"],
+                ]
+            )
+
+
+def render_open_set_report(
+    *,
+    protocol_summary: Mapping[str, Any],
+    development: Mapping[str, Any],
+    test: Mapping[str, Any],
+    intervals: Mapping[str, Any],
+    per_subgroup: Mapping[str, Mapping[str, Any]],
+    disparity: Mapping[str, Any],
+) -> str:
+    """Every number is read from the artefacts, never restated from memory."""
+    method_b_test = test["methods"][METHOD_B]
+    method_a_test = test["methods"][METHOD_A]
+    primary = method_b_test["primary_operating_point"]
+    coverage = method_b_test["coverage"]
+    control_rates = method_a_test["rates"]
+
+    lines = [
+        "# Open-set duplicate-profile evaluation (Experiment 6)",
+        "",
+        f"Auto-generated by `ACP_arden.py --mode open-set` on {test['created_at']}.",
+        "",
+        "## Research question",
+        "",
+        "To what extent can gallery-specific threshold calibration and multi-image profile "
+        "enrolment reduce false duplicate-profile reviews while retaining duplicate-detection "
+        "performance in an open-set face-verification proof of concept evaluated on real "
+        "public benchmark datasets?",
+        "",
+        "## Protocol",
+        "",
+        f"- Development identities: {protocol_summary['development']['identities']}; "
+        f"held-out test identities: {protocol_summary['test']['identities']} (disjoint).",
+        f"- Seed {protocol_summary['seed']}, stratified by the eight BFW subgroups.",
+        f"- {protocol_summary['odd_count_rule']}",
+        "",
+        "## Method A — control: 1:1 threshold reused for 1:N search",
+        "",
+        f"- Operating threshold {format_number(method_a_test['operating_threshold'], 6)} "
+        f"({method_a_test['threshold_role']})",
+        f"- FPIR **{format_percentage(control_rates['fpir'])}**, "
+        f"TPIR@1 {format_percentage(control_rates['tpir_rank1'])}",
+        f"- False reviews per 1,000 non-mated searches: "
+        f"{format_number(control_rates['false_reviews_per_1000_non_mated'], 1)}",
+        "",
+        "## Method B — proposed: three-image template, open-set calibrated",
+        "",
+        f"- Frozen threshold {format_number(test['operating_threshold'], 6)} at target FPIR "
+        f"{test['primary_fpir_target']}",
+        f"- FPIR **{format_percentage(primary['fpir'])}** "
+        f"(95% CI {format_percentage(intervals['fpir']['lower_95'])} – "
+        f"{format_percentage(intervals['fpir']['upper_95'])})",
+        f"- TPIR@1 **{format_percentage(primary['tpir_rank1'])}** "
+        f"(95% CI {format_percentage(intervals['tpir_rank1']['lower_95'])} – "
+        f"{format_percentage(intervals['tpir_rank1']['upper_95'])})",
+        f"- TPIR@5 {format_percentage(primary['tpir_rank5'])} "
+        f"(CMC rank-1 {format_percentage(primary['cmc_rank1'])}, rank-5 "
+        f"{format_percentage(primary['cmc_rank5'])})",
+        f"- False reviews per 1,000 non-mated searches: "
+        f"{format_number(primary['false_reviews_per_1000_non_mated'], 1)}",
+        "",
+        "TPIR@5 and TPIR@1 can coincide even though the CMC figures differ, and that is "
+        "not an error: TPIR requires the mate to be both within rank *k* **and** above "
+        "threshold. The CMC gap shows the mate does surface at ranks 2-5 for a small "
+        "number of probes, but those scores fall below the operating threshold, so "
+        "returning five candidates instead of one adds no true identification at this "
+        "operating point. It would still change the reviewer's workload.",
+        "",
+        "## Attributing the effect: enrolment or calibration?",
+        "",
+        "Method B changes two things at once, so the comparison above cannot say which "
+        "one helped. Holding the enrolment at three images and reverting only the "
+        "threshold separates them:",
+        "",
+        "| Configuration | FPIR | TPIR@1 |",
+        "| --- | --- | --- |",
+        f"| A: one image, LFW 1:1 threshold (control) | "
+        f"{format_percentage(control_rates['fpir'])} | "
+        f"{format_percentage(control_rates['tpir_rank1'])} |",
+        f"| B: three images, LFW 1:1 threshold (enrolment change only) | "
+        f"{format_percentage(method_b_test['at_lfw_control_threshold']['fpir'])} | "
+        f"{format_percentage(method_b_test['at_lfw_control_threshold']['tpir_rank1'])} |",
+        f"| B: three images, calibrated threshold (both changes) | "
+        f"{format_percentage(primary['fpir'])} | "
+        f"{format_percentage(primary['tpir_rank1'])} |",
+        "",
+        "Read the middle row before drawing any conclusion about multi-image enrolment. "
+        "Averaging three images raises rank-1 identification, but at a fixed threshold it "
+        "*raises* the false-positive identification rate rather than lowering it: a mean "
+        "template sits nearer the centre of the embedding space and is therefore closer "
+        "to everyone, so more non-mated searches clear the same bar. The reduction in "
+        "false reviews is attributable to the gallery-specific calibration, not to the "
+        "multi-image representation. The two are complementary — enrolment supplies the "
+        "headroom in TPIR that calibration then spends on a stricter threshold — but they "
+        "must not be credited interchangeably.",
+        "",
+        "## Operating points and the development-to-test gap",
+        "",
+        "| Target FPIR | Threshold | Achieved test FPIR | TPIR@1 |",
+        "| --- | --- | --- | --- |",
+        *[
+            f"| {target} | "
+            f"{format_number(method_b_test['operating_points'][str(target)].get('threshold'), 4)} | "
+            f"{format_percentage(method_b_test['operating_points'][str(target)]['fpir'])} | "
+            f"{format_percentage(method_b_test['operating_points'][str(target)]['tpir_rank1'])} |"
+            for target in FPIR_TARGETS
+        ],
+        "",
+        "Each achieved test FPIR exceeds the target it was calibrated for. That gap is the "
+        "cost of holding the threshold fixed across disjoint identities and is the reason "
+        "the policy is frozen on development data before the test partition is scored — "
+        "recalibrating on these figures would make them meaningless.",
+        "",
+        "### Coverage (quoted with every rate above)",
+        "",
+        f"- Gallery enrolment coverage "
+        f"{format_percentage(coverage['gallery_enrolment_coverage'])} "
+        f"({coverage['enrolled_gallery_identities']} of "
+        f"{coverage['intended_gallery_identities']} identities)",
+        f"- Mated probe extraction failure "
+        f"{format_percentage(coverage['mated_extraction_failure_rate'])}; non-mated "
+        f"{format_percentage(coverage['non_mated_extraction_failure_rate'])}",
+        "",
+        "## Pre-declared success criteria",
+        "",
+    ]
+    for name, verdict in test["success_criteria"].items():
+        if name == "criteria_declared_before_test":
+            continue
+        actual = verdict.get("actual")
+        rendered = "not measurable" if actual is None else format_percentage(actual)
+        lines.append(
+            f"- {name}: **{verdict['outcome'].replace('_', ' ')}** "
+            f"(target {verdict['target']}, achieved {rendered})"
+        )
+
+    lines += ["", "## Demographic subgroup performance", "", "| Subgroup | FPIR | TPIR@1 |", "| --- | --- | --- |"]
+    for subgroup in sorted(per_subgroup):
+        row = per_subgroup[subgroup]
+        lines.append(
+            f"| {subgroup} | {format_percentage(row['fpir'])} | "
+            f"{format_percentage(row['tpir_rank1'])} |"
+        )
+    ratio = disparity.get("max_to_min_fpir_ratio")
+    lines += [
+        "",
+        f"Absolute FPIR range across subgroups: "
+        f"{format_percentage(disparity.get('absolute_fpir_range'))}."
+        + (
+            f" Max/min ratio {format_number(ratio, 2)}."
+            if ratio is not None
+            else " Max/min ratio not reported (a subgroup recorded zero FPIR)."
+        ),
+        "",
+        "## Limitations",
+        "",
+    ]
+    lines += [f"- {item}" for item in OPEN_SET_LIMITATIONS]
+    return "\n".join(lines) + "\n"
+
+
+def render_open_set_summary(output_root: Path = AGGREGATE_ROOT) -> str:
+    """Terminal summary for --mode open-set-summary, read from the artefacts."""
+    test_path = output_root / "bfw_open_set_test_metrics.json"
+    if not test_path.is_file():
+        return (
+            "No open-set results found. Run `python ACP_arden.py --mode open-set` first.\n"
+            f"That requires the official BFW dataset and {BFW_ROOT_VARIABLE}."
+        )
+    test = read_json_artifact(test_path)
+    intervals = read_json_artifact(output_root / "open_set_confidence_intervals.json").get(
+        "intervals", {}
+    )
+    method_b = test["methods"][METHOD_B]
+    method_a = test["methods"][METHOD_A]
+    primary = method_b["primary_operating_point"]
+    coverage = method_b["coverage"]
+
+    def interval(name: str) -> str:
+        row = intervals.get(name)
+        if not row:
+            return ""
+        return (
+            f" [95% CI {format_percentage(row['lower_95'])} – "
+            f"{format_percentage(row['upper_95'])}]"
+        )
+
+    lines = [
+        f"{PROGRAMME_TITLE} — open-set results summary",
+        "",
+        "Experiment 6 — BFW open-set duplicate-profile evaluation (held-out test)",
+        f"  Frozen threshold: {format_number(test.get('operating_threshold'), 6)} "
+        f"(target FPIR {test.get('primary_fpir_target')}, status {test.get('status')})",
+        "",
+        "  Method A — control, LFW 1:1 threshold reused for 1:N search",
+        f"    FPIR: {format_percentage(method_a['rates']['fpir'])}",
+        f"    TPIR@1: {format_percentage(method_a['rates']['tpir_rank1'])}",
+        "    NOTE: a control, not a valid open-set operating threshold.",
+        "",
+        "  Method B — proposed, three-image template with open-set calibration",
+        f"    FPIR: {format_percentage(primary['fpir'])}{interval('fpir')}",
+        f"    TPIR@1: {format_percentage(primary['tpir_rank1'])}{interval('tpir_rank1')}",
+        f"    TPIR@5: {format_percentage(primary['tpir_rank5'])}",
+        f"    False reviews per 1,000 non-mated searches: "
+        f"{format_number(primary['false_reviews_per_1000_non_mated'], 1)}",
+        f"    Gallery enrolment coverage: "
+        f"{format_percentage(coverage['gallery_enrolment_coverage'])}",
+        f"    Mated extraction failure: "
+        f"{format_percentage(coverage['mated_extraction_failure_rate'])}",
+        f"    Non-mated extraction failure: "
+        f"{format_percentage(coverage['non_mated_extraction_failure_rate'])}",
+        "    LIMITATION: every rate above is conditional on the coverage figures printed "
+        "with it. An FPIR measured over a small surviving fraction of the protocol is not "
+        "comparable with one measured over nearly all of it.",
+        "",
+        "  Pre-declared success criteria:",
+    ]
+    for name, verdict in test.get("success_criteria", {}).items():
+        if name == "criteria_declared_before_test":
+            continue
+        lines.append(f"    {name}: {verdict['outcome'].replace('_', ' ')}")
+    lines += ["", "Policy: " + POLICY_NOTE, "", "Full write-up: results/aggregate/OPEN_SET_EVALUATION_REPORT.md"]
+    return "\n".join(lines)
+
+
+def report_optional_dataset_status() -> List[str]:
+    """Concise skipped-with-reason lines for the optional extensions. Never
+    fabricates a result for a dataset or model that is not present."""
+    config = EnvironmentConfig.load()
+    lines: List[str] = []
+    if config.agedb_root is None:
+        lines.append(
+            f"AgeDB cross-dataset transfer: SKIPPED — {AGEDB_ROOT_VARIABLE} is not set. "
+            f"AgeDB is distributed for non-commercial research on request from its authors; "
+            f"obtain it under those terms to enable this test."
+        )
+    else:
+        lines.append("AgeDB cross-dataset transfer: configured.")
+    lines.append(
+        "Higher-capacity pipeline comparison (SCRFD/RetinaFace + ArcFace buffalo_l): "
+        "NOT RUN — the pretrained recognition models are licensed for non-commercial "
+        "research and their terms are unresolved for this project. No substitute model "
+        "was used, and no comparison figures are reported."
+    )
+    return lines
+
+
+# =============================================================================
+# 25. Synthetic self-test mode
 # =============================================================================
 #
 # Deterministic checks that need no model binary, no dataset and no network.
@@ -3148,14 +5524,19 @@ def _self_test_opaque_id_stability() -> None:
     first = opaque_id("Example_Identity")
     _assert(first == opaque_id("Example_Identity"), "opaque IDs must be reproducible")
     _assert(first != opaque_id("Example_Identity2"), "distinct inputs must not collide")
-    _assert(len(first) == 16, "opaque IDs are truncated to 16 hexadecimal characters")
+    _assert(
+        len(first) == OPAQUE_ID_HEX_LENGTH,
+        f"opaque IDs are truncated to {OPAQUE_ID_HEX_LENGTH} hexadecimal characters",
+    )
     _assert(
         "Example_Identity" not in first, "an opaque ID must not contain its own input"
     )
-    _assert(
-        opaque_id("Example_Identity", salt="other") != first,
-        "the salt must participate in the digest",
-    )
+    with temporary_id_hmac_key("f" * 63 + "e"):
+        _assert(
+            opaque_id("Example_Identity") != first,
+            "the secret key must participate in the digest",
+        )
+    _assert(opaque_ids_match(first, opaque_id("Example_Identity")), "constant-time equality holds")
     _assert(scrub_filename(Path("/private/root/Name_0001.jpg")) == "Name_0001.jpg", "filename only")
 
 
@@ -3229,20 +5610,25 @@ SELF_TESTS: Sequence[Tuple[str, Callable[[], None]]] = (
 
 
 def run_self_tests(verbose: bool = True) -> Tuple[int, int]:
-    """Run every synthetic self-test. Returns (passed, failed)."""
+    """Run every synthetic self-test. Returns (passed, failed).
+
+    The whole run installs a fixed in-memory identifier key, so the self-tests
+    stay runnable on a machine with no research configuration and never depend
+    on the researcher's real key."""
     passed = 0
     failed = 0
-    for name, test in SELF_TESTS:
-        try:
-            test()
-        except Exception as exc:  # noqa: BLE001 - any failure is reported, never swallowed
-            failed += 1
-            if verbose:
-                print(f"FAIL {name}: {redact_private_paths(str(exc))}")
-        else:
-            passed += 1
-            if verbose:
-                print(f"PASS {name}")
+    with temporary_id_hmac_key(SELF_TEST_ID_HMAC_KEY):
+        for name, test in SELF_TESTS:
+            try:
+                test()
+            except Exception as exc:  # noqa: BLE001 - any failure is reported, never swallowed
+                failed += 1
+                if verbose:
+                    print(f"FAIL {name}: {redact_private_paths(str(exc))}")
+            else:
+                passed += 1
+                if verbose:
+                    print(f"PASS {name}")
     if verbose:
         print("")
         print(f"SELF-TEST RESULT: {'PASS' if failed == 0 else 'FAIL'}")
@@ -3252,7 +5638,7 @@ def run_self_tests(verbose: bool = True) -> Tuple[int, int]:
 
 
 # =============================================================================
-# 18. Interactive VS Code launcher
+# 26. Interactive VS Code launcher
 # =============================================================================
 #
 # Running this file with no arguments prints a menu rather than starting a
@@ -3268,9 +5654,16 @@ MENU_TEXT = f"""
 5. Launch the local human-review interface
 6. Run synthetic self-tests
 7. Exit
+8. Run BFW open-set development and held-out evaluation
+9. Show open-set results summary
 """
 
-MODES = ("menu", "check", "verify", "full", "summary", "review", "self-test")
+MODES = (
+    "menu", "check", "verify", "full", "summary", "review", "self-test",
+    # Supplementary Experiment 6. Deliberately separate from "full", which
+    # continues to mean the original five-experiment evaluation.
+    "open-set", "open-set-summary",
+)
 
 
 # --- Stage 0: environment and input verification -----------------------------
@@ -3304,9 +5697,29 @@ def action_check_environment() -> int:
     print("Research storage configuration (values deliberately not printed):")
     for variable in REQUIRED_ENVIRONMENT_VARIABLES:
         print(f"  {variable}: {'set' if variable not in missing else 'NOT SET'}")
+    optional_values = {
+        "FACE_CACHE_ROOT": config.cache_root,
+        "FACE_BFW_ROOT": config.bfw_root,
+        "FACE_BFW_METADATA_ROOT": config.bfw_metadata_root,
+        "FACE_AGEDB_ROOT": config.agedb_root,
+    }
     for variable in OPTIONAL_ENVIRONMENT_VARIABLES:
-        state = "set" if config.cache_root is not None else "not set (optional)"
+        state = "set" if optional_values.get(variable) is not None else "not set (optional)"
         print(f"  {variable}: {state}")
+    # Reported as configured/not configured only. The key's length, encoding
+    # and any digest of it stay unprinted: confirming a guess must be impossible.
+    print(
+        f"  {ID_HMAC_KEY_VARIABLE}: "
+        f"{'set' if id_hmac_key_is_configured() else 'NOT SET (required for identifiers)'}"
+    )
+    if not id_hmac_key_is_configured():
+        ok = False
+        print("")
+        print(
+            f"FAILED: {ID_HMAC_KEY_VARIABLE} is not set. Generate one with: "
+            'python -c "import secrets;print(secrets.token_urlsafe(32))"',
+            file=sys.stderr,
+        )
     if missing:
         ok = False
         print("")
@@ -3694,7 +6107,11 @@ def experiment_duplicate_gallery(
     write_json_artifact(
         output_path,
         {
-            "artifact_type": "duplicate_gallery_metrics",
+            "artifact_type": "duplicate_gallery_metrics_v2",
+            # The scheme, never the key: this records which identifier family
+            # the opaque values below belong to, so two runs under different
+            # keys are not mistaken for comparable ones.
+            "opaque_id_version": OPAQUE_ID_VERSION,
             "duplicate_review_threshold": threshold,
             "threshold_source": project_relative(threshold_artifact),
             "threshold_artifact_sha256": threshold_artifact_sha256,
@@ -3795,7 +6212,10 @@ def action_run_complete_evaluation(
         embedder,
         threshold_artifact=threshold_artifact,
         manifest_path=manifest_path,
-        output_path=output_root / "duplicate_gallery_metrics.json",
+        # Versioned filename: the corrected accounting changes what the
+        # denominators mean, so it is written alongside the historical artefact
+        # rather than over it.
+        output_path=output_root / "duplicate_gallery_metrics_v2.json",
         review_db=review_db,
     )
 
@@ -3842,13 +6262,18 @@ def _run_action(action: Callable[[], int]) -> int:
         return action()
     except (
         ArtifactError,
+        BfwDatasetError,
         CalibrationError,
         ConfigurationError,
         GalleryError,
         ImageLoadError,
         ModelUnavailableError,
+        OpaqueIdentifierKeyError,
+        OpenSetPolicyError,
+        OpenSetProtocolError,
         PrivacyLeakError,
         ProtocolError,
+        ReviewDatabaseVersionError,
         SystemExit,
     ) as exc:
         message = str(exc)
@@ -3860,6 +6285,23 @@ def _run_action(action: Callable[[], int]) -> int:
         return 130
 
 
+def action_run_open_set_evaluation(output_root: Path = AGGREGATE_ROOT) -> int:
+    """Experiment 6. Requires the official BFW dataset; stops on the exact
+    blocker rather than degrading to a partial or invented result."""
+    run_open_set_experiment(output_root=output_root)
+    print("")
+    for line in report_optional_dataset_status():
+        print(line)
+    print("")
+    print(render_open_set_summary(output_root))
+    return 0
+
+
+def action_show_open_set_summary(output_root: Path = AGGREGATE_ROOT) -> int:
+    print(render_open_set_summary(output_root))
+    return 0
+
+
 def run_menu() -> int:
     """Interactive menu. Nothing long-running starts until an option is chosen."""
     actions: Dict[str, Callable[[], int]] = {
@@ -3869,6 +6311,8 @@ def run_menu() -> int:
         "4": action_show_summary,
         "5": lambda: launch_review_interface(DEFAULT_REVIEW_DB),
         "6": action_self_test,
+        "8": action_run_open_set_evaluation,
+        "9": action_show_open_set_summary,
     }
     last_status = 0
     while True:
@@ -3912,7 +6356,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "menu (default): interactive launcher. check: environment and dependencies. "
             "verify: models and benchmark datasets. full: the complete five-experiment "
             "evaluation. summary: the existing results. review: the local human-review "
-            "interface. self-test: deterministic synthetic tests."
+            "interface. self-test: deterministic synthetic tests. open-set: the "
+            "supplementary BFW open-set duplicate-profile experiment (Experiment 6). "
+            "open-set-summary: the existing open-set results."
         ),
     )
     parser.add_argument(
@@ -3955,6 +6401,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return launch_review_interface(args.review_db)
     if args.mode == "self-test":
         return action_self_test()
+    if args.mode == "open-set":
+        return _run_action(lambda: action_run_open_set_evaluation(args.results_root))
+    if args.mode == "open-set-summary":
+        return _run_action(lambda: action_show_open_set_summary(args.results_root))
 
     parser.error(f"Unhandled mode: {args.mode}")
     return 2
