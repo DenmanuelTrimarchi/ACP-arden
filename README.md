@@ -71,6 +71,8 @@ ACP-arden — Face Verification Research Artefact
 5. Launch the local human-review interface
 6. Run synthetic self-tests
 7. Exit
+8. Run BFW open-set development and held-out evaluation
+9. Show open-set results summary
 
 Select an option:
 ```
@@ -82,6 +84,7 @@ python3.13 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt   # tests and type checking
 python ACP_arden.py
 ```
 
@@ -129,7 +132,12 @@ cp .env.example .env   # then fill in your own storage paths
 | `FACE_PROTOCOL_ROOT` | `pairsDevTrain.txt`, `pairsDevTest.txt`, `pairs.txt`, `pairs_CPLFW.txt` |
 | `FACE_CPLFW_RAW_ROOT` | Flat directory of the authors' raw CPLFW images |
 | `FACE_MODEL_ROOT` | The two pinned `.onnx` model files |
+| `FACE_ID_HMAC_KEY` | **Required.** Secret key for the opaque public identifiers |
 | `FACE_CACHE_ROOT` | Optional embedding cache; leave unset by default |
+| `FACE_BFW_ROOT` | Optional. Extracted BFW tree, for Experiment 6 |
+| `FACE_BFW_METADATA_ROOT` | Optional. Where the official BFW datatable lives; defaults to `FACE_BFW_ROOT` |
+| `FACE_AGEDB_ROOT` | Optional. Flat AgeDB directory, for the cross-dataset transfer test |
+| `FACE_ARCFACE_MODEL_ROOT` | Optional. InsightFace weights; the comparison is reported as not run |
 
 **Datasets.** LFW (Labeled Faces in the Wild) is the primary dataset; CPLFW
 (Cross-Pose LFW) is the secondary one. CPLFW ships two non-interchangeable
@@ -213,6 +221,27 @@ results/aggregate/roc_points.csv
 results/aggregate/FINAL_EVALUATION_REPORT.md
 ```
 
+The corrected gallery accounting and Experiment 6 add, without altering any of
+the above:
+
+```text
+results/aggregate/duplicate_gallery_metrics_v2.json
+results/aggregate/bfw_open_set_protocol_summary.json
+results/aggregate/bfw_open_set_threshold.json
+results/aggregate/bfw_open_set_development_metrics.json
+results/aggregate/bfw_open_set_test_metrics.json
+results/aggregate/bfw_subgroup_metrics.csv
+results/aggregate/open_set_confidence_intervals.json
+results/aggregate/open_set_method_comparison.csv
+results/aggregate/pretrained_pipeline_comparison.csv
+results/aggregate/OPEN_SET_EVALUATION_REPORT.md
+results/aggregate/agedb_transfer_metrics.json   (only when AgeDB is configured)
+```
+
+`duplicate_gallery_metrics.json` is retained unchanged for provenance. It
+predates the corrected accounting, so its detection rate is conditional only;
+the summary says so rather than letting that figure stand unqualified.
+
 Each JSON artefact embeds its own provenance: the software environment, both
 model digests, the protocol digest, a digest of exactly which images were
 evaluated, and the dataset archive checksum. `run_manifest.json` records the
@@ -260,7 +289,9 @@ selection rule.
 ACP_arden.py        the entire programme
 CONVERSION_MAP.md   component-to-section map
 REFERENCES.md       code attribution and reference register
-requirements.txt    pinned dependencies
+requirements.txt        pinned runtime dependencies
+requirements-dev.txt    pinned test and type-checking dependencies
+requirements-comparison.txt  optional pipeline comparison; deliberately unpinned
 pyrightconfig.json  type-checker configuration
 .env.example        template for local storage paths
 .vscode/            run configuration for the play button
@@ -363,15 +394,41 @@ open-set identification protocol, and none is implied.**
 
 ### Optional extensions
 
-- **AgeDB** cross-dataset transfer (`FACE_AGEDB_ROOT`). Distributed for
-  non-commercial research on request from its authors. When unset, the run
-  prints a skipped-with-reason line and fabricates nothing.
-- **Higher-capacity pipeline comparison** (SCRFD/RetinaFace + ArcFace
-  `buffalo_l`). Reported as **not run**: the pretrained recognition models are
-  licensed for non-commercial research and their terms are unresolved for this
-  project. No substitute model is used. Any such comparison would be a
-  complete-pipeline comparison, not an embedding-only one, because the detector
-  and preprocessing differ too.
+#### AgeDB cross-dataset transfer (`FACE_AGEDB_ROOT`)
+
+Implemented. Distributed for non-commercial research on request from its
+authors; when unset the run prints a skipped-with-reason line and fabricates
+nothing.
+
+The transfer applies the **BFW-frozen policy unchanged** — no AgeDB identity
+contributes to threshold selection — at a gallery size matched to the BFW
+held-out test. Enrolment takes each subject's youngest images and probes take
+the oldest, maximising the age gap, and the artefact reports that gap's
+distribution alongside coverage and FPIR/FNIR/TPIR. A poor result here means
+*the policy did not transfer*, not that AgeDB is intrinsically harder.
+
+AgeDB filenames embed subjects' real names (`<index>_<name>_<age>_<gender>.jpg`),
+so this adapter is the one place where a filename must never reach an artefact.
+Only opaque identifiers, ages and gaps are published, and the parser withholds
+the offending filename even in its own error messages.
+
+#### Higher-capacity pipeline comparison (`FACE_ARCFACE_MODEL_ROOT`)
+
+The interface is implemented; the comparison is reported as **not run**. The
+InsightFace pretrained recognition models are licensed for non-commercial
+research and the project directs users to contact it regarding licensing, and
+those terms are unresolved here. No substitute model is used.
+
+Setting the variable is not sufficient. The SHA-256 digests of the approved
+weight files must also be pinned in source (`ARCFACE_DETECTOR_SHA256`,
+`ARCFACE_RECOGNITION_SHA256`), because a reportable evaluation never accepts
+digests as command-line arguments. Optional dependencies live in
+`requirements-comparison.txt`, deliberately unpinned until an environment
+actually produces a result.
+
+Any such comparison is a **complete-pipeline** comparison — detector,
+preprocessing and embedding all differ — so a difference can never be
+attributed to the embedding model alone.
 
 ### Pre-declared success criteria
 

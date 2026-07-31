@@ -1,0 +1,3 @@
+pipeline_name,detector_name,embedding_model_name,embedding_dimensions,preprocessing_revision,evaluated,note
+opencv-sface-2021dec-yunet-2023mar,OpenCV YuNet 2023mar,OpenCV SFace 2021dec,128,opencv-yunet-sface-exif-bgr-l2-v1,yes,Mandatory primary pipeline.
+insightface-scrfd-arcface-buffalo_l,InsightFace SCRFD / RetinaFace,InsightFace ArcFace buffalo_l,512,insightface-arcface-112x112-v1,no,"FACE_ARCFACE_MODEL_ROOT is not set. The optional comparison pipeline is not configured. InsightFace publishes its pretrained recognition models for non-commercial research use and directs users to contact the project regarding licensing. Those terms are unresolved for this project, so no ArcFace result is reported."

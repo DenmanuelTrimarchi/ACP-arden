@@ -291,6 +291,7 @@ OPTIONAL_ENVIRONMENT_VARIABLES = (
     "FACE_BFW_ROOT",
     "FACE_BFW_METADATA_ROOT",
     "FACE_AGEDB_ROOT",
+    "FACE_ARCFACE_MODEL_ROOT",
 )
 
 
@@ -346,6 +347,7 @@ class EnvironmentConfig:
     bfw_root: Optional[Path] = None
     bfw_metadata_root: Optional[Path] = None
     agedb_root: Optional[Path] = None
+    arcface_model_root: Optional[Path] = None
 
     # A ``@classmethod`` receives the class itself as its first argument rather
     # than an instance, which is the idiomatic way to offer an alternative
@@ -379,6 +381,7 @@ class EnvironmentConfig:
             bfw_root=optional(BFW_ROOT_VARIABLE),
             bfw_metadata_root=optional(BFW_METADATA_ROOT_VARIABLE),
             agedb_root=optional(AGEDB_ROOT_VARIABLE),
+            arcface_model_root=optional(ARCFACE_MODEL_ROOT_VARIABLE),
         )
 
     def require_bfw_roots(self) -> Tuple[Path, Path]:
@@ -4890,6 +4893,18 @@ def run_open_set_experiment(
         frozen_threshold=frozen_threshold,
     )
 
+    # Optional extensions. Each either produces a real artefact or records why
+    # it did not run; neither is allowed to interrupt the primary experiment.
+    write_pipeline_comparison_csv(
+        output_root / "pretrained_pipeline_comparison.csv",
+        primary=primary_pipeline_description(detector, embedder),
+        config=config,
+    )
+    try:
+        run_agedb_transfer(output_root=output_root, seed=seed)
+    except (AgeDbDatasetError, OpenSetProtocolError, OpenSetPolicyError) as exc:
+        announce(f"AgeDB cross-dataset transfer: NOT RUN — {redact_private_paths(str(exc))}")
+
     report = render_open_set_report(
         protocol_summary=summary_payload,
         development=development_payload,
@@ -5214,17 +5229,498 @@ def report_optional_dataset_status() -> List[str]:
         )
     else:
         lines.append("AgeDB cross-dataset transfer: configured.")
-    lines.append(
-        "Higher-capacity pipeline comparison (SCRFD/RetinaFace + ArcFace buffalo_l): "
-        "NOT RUN — the pretrained recognition models are licensed for non-commercial "
-        "research and their terms are unresolved for this project. No substitute model "
-        "was used, and no comparison figures are reported."
-    )
+    status = pipeline_comparison_status(config)
+    if status["comparison_run"]:
+        lines.append(
+            "Higher-capacity pipeline comparison: configured and verified against pinned "
+            "digests. Reported as a complete-pipeline comparison."
+        )
+    else:
+        lines.append(
+            "Higher-capacity pipeline comparison (SCRFD/RetinaFace + ArcFace buffalo_l): "
+            f"NOT RUN — {status['reason']} No substitute model was used, and no comparison "
+            "figures are reported."
+        )
     return lines
 
 
 # =============================================================================
-# 25. Synthetic self-test mode
+# 25. Pipeline description and the optional higher-capacity comparison
+# =============================================================================
+#
+# A "pipeline" is the whole chain — detector, preprocessing and embedding model
+# — not the embedding model alone. Two pipelines that differ in any of those
+# three cannot attribute a difference in results to the embedding, which is why
+# the record below names every component and why the comparison is always
+# labelled a complete-pipeline comparison.
+#
+# The optional comparator is InsightFace SCRFD/RetinaFace detection with ArcFace
+# buffalo_l recognition. Its pretrained weights are published for non-commercial
+# research and the project asks users to contact InsightFace regarding licensing
+# of the recognition models. Those terms are unresolved for this project, so the
+# adapter is defined and the comparison is reported as not run. No substitute
+# model is used in its place.
+##############
+# Title: ArcFace: Additive Angular Margin Loss for Deep Face Recognition
+# Author: Deng, J., Guo, J., Xue, N. and Zafeiriou, S., Proceedings of the
+#         IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+# Date: 2019
+# Availability: https://doi.org/10.1109/CVPR.2019.00482
+##############
+##############
+# Title: Sample and Computation Redistribution for Efficient Face Detection (SCRFD)
+# Author: Guo, J., Deng, J., Lattas, A. and Zafeiriou, S., International
+#         Conference on Learning Representations (ICLR)
+# Date: 2022
+# Availability: https://arxiv.org/abs/2105.04714
+##############
+##############
+# Title: InsightFace model zoo, distributor of the buffalo_l pretrained pack
+# Author: InsightFace project (deepinsight/insightface)
+# Date: 2021 onwards
+# Availability: https://github.com/deepinsight/insightface
+##############
+
+ARCFACE_MODEL_ROOT_VARIABLE = "FACE_ARCFACE_MODEL_ROOT"
+
+# Digests are pinned in source, never accepted from the command line, so a
+# reportable evaluation cannot be pointed at an unverified weight file. They are
+# filled in only once the exact approved files have been obtained; until then
+# the adapter refuses rather than trusting whatever is on disk.
+ARCFACE_DETECTOR_SHA256: Optional[str] = None
+ARCFACE_RECOGNITION_SHA256: Optional[str] = None
+
+ARCFACE_LICENCE_NOTE = (
+    "InsightFace publishes its pretrained recognition models for non-commercial "
+    "research use and directs users to contact the project regarding licensing. "
+    "Those terms are unresolved for this project, so no ArcFace result is reported."
+)
+
+
+class PipelineUnavailableError(RuntimeError):
+    """Raised when an optional pipeline is not configured, licensed or pinned."""
+
+
+@dataclass(frozen=True)
+class PipelineDescription:
+    """Everything that must match before two runs are comparable. Published in
+    every artefact so a reader can tell which chain produced a number."""
+
+    pipeline_name: str
+    detector_name: str
+    embedding_model_name: str
+    embedding_dimensions: int
+    preprocessing_revision: str
+    model_sha256: Dict[str, str]
+    licence_note: str
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "pipeline_name": self.pipeline_name,
+            "detector_name": self.detector_name,
+            "embedding_model_name": self.embedding_model_name,
+            "embedding_dimensions": self.embedding_dimensions,
+            "preprocessing_revision": self.preprocessing_revision,
+            "model_sha256": dict(self.model_sha256),
+            "licence_note": self.licence_note,
+            "comparison_scope": (
+                "Complete pipeline: detection, preprocessing and embedding. A difference "
+                "between pipelines cannot be attributed to the embedding model alone."
+            ),
+        }
+
+
+def primary_pipeline_description(detector: Any = None, embedder: Any = None) -> PipelineDescription:
+    """The mandatory YuNet + SFace pipeline."""
+    return PipelineDescription(
+        pipeline_name=MODEL_VERSION,
+        detector_name="OpenCV YuNet 2023mar",
+        embedding_model_name="OpenCV SFace 2021dec",
+        embedding_dimensions=EMBEDDING_DIMENSIONS,
+        preprocessing_revision=PREPROCESSING_REVISION,
+        model_sha256={
+            "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
+            "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
+        },
+        licence_note=(
+            "OpenCV Zoo release: YuNet weights MIT, SFace weights Apache-2.0. "
+            "Both are redistributable for research use."
+        ),
+    )
+
+
+def arcface_pipeline_description(config: Optional[EnvironmentConfig] = None) -> PipelineDescription:
+    """Describe the optional comparator, or refuse with the precise blocker.
+
+    Refusal is the expected outcome in this checkout: the digests above are
+    unset, so there is nothing to verify against."""
+    config = config or EnvironmentConfig.load()
+    if config.arcface_model_root is None:
+        raise PipelineUnavailableError(
+            f"{ARCFACE_MODEL_ROOT_VARIABLE} is not set. The optional comparison pipeline is "
+            f"not configured. {ARCFACE_LICENCE_NOTE}"
+        )
+    if ARCFACE_DETECTOR_SHA256 is None or ARCFACE_RECOGNITION_SHA256 is None:
+        raise PipelineUnavailableError(
+            "No SHA-256 digests are pinned for the ArcFace pipeline, so its weights cannot "
+            "be verified. Digests must be pinned in source after the exact approved files "
+            f"are obtained; they are never accepted as arguments. {ARCFACE_LICENCE_NOTE}"
+        )
+    root = Path(config.arcface_model_root)
+    return PipelineDescription(
+        pipeline_name="insightface-scrfd-arcface-buffalo_l",
+        detector_name="InsightFace SCRFD / RetinaFace",
+        embedding_model_name="InsightFace ArcFace buffalo_l",
+        embedding_dimensions=512,
+        preprocessing_revision="insightface-arcface-112x112-v1",
+        model_sha256={
+            "detector": verify_model_file(root / "det_10g.onnx", ARCFACE_DETECTOR_SHA256),
+            "recognition": verify_model_file(root / "w600k_r50.onnx", ARCFACE_RECOGNITION_SHA256),
+        },
+        licence_note=ARCFACE_LICENCE_NOTE,
+    )
+
+
+def pipeline_comparison_status(
+    config: Optional[EnvironmentConfig] = None,
+) -> Dict[str, Any]:
+    """Whether the optional comparison can run. Reported honestly in artefacts
+    rather than being silently omitted."""
+    try:
+        description = arcface_pipeline_description(config)
+    except (PipelineUnavailableError, ModelUnavailableError) as exc:
+        return {
+            "comparison_run": False,
+            "reason": redact_private_paths(str(exc)),
+            "substitute_model_used": False,
+            "licence_note": ARCFACE_LICENCE_NOTE,
+        }
+    return {"comparison_run": True, "pipeline": description.as_dict()}
+
+
+def write_pipeline_comparison_csv(
+    path: Path, *, primary: PipelineDescription, config: Optional[EnvironmentConfig] = None
+) -> None:
+    """Emit the comparison table. When the comparator is unavailable the file
+    still records the primary pipeline and states plainly that no second
+    pipeline was evaluated, so absence is visible rather than inferred."""
+    status = pipeline_comparison_status(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            ["pipeline_name", "detector_name", "embedding_model_name", "embedding_dimensions",
+             "preprocessing_revision", "evaluated", "note"]
+        )
+        writer.writerow(
+            [primary.pipeline_name, primary.detector_name, primary.embedding_model_name,
+             primary.embedding_dimensions, primary.preprocessing_revision, "yes",
+             "Mandatory primary pipeline."]
+        )
+        if status["comparison_run"]:
+            other = status["pipeline"]
+            writer.writerow(
+                [other["pipeline_name"], other["detector_name"], other["embedding_model_name"],
+                 other["embedding_dimensions"], other["preprocessing_revision"], "yes",
+                 other["comparison_scope"]]
+            )
+        else:
+            writer.writerow(
+                ["insightface-scrfd-arcface-buffalo_l", "InsightFace SCRFD / RetinaFace",
+                 "InsightFace ArcFace buffalo_l", 512, "insightface-arcface-112x112-v1",
+                 "no", status["reason"]]
+            )
+
+
+# =============================================================================
+# 26. AgeDB cross-dataset transfer (optional)
+# =============================================================================
+#
+# A secondary test of whether a policy developed on BFW survives a change of
+# dataset and a large age gap. The policy is applied exactly as frozen: nothing
+# here recalibrates, and no AgeDB identity contributes to threshold selection.
+#
+# AgeDB filenames embed the subject's real name, so this adapter is the one
+# place where a filename must never reach an artefact. Only opaque identifiers,
+# ages and age gaps are published.
+##############
+# Title: AgeDB: The First Manually Collected, In-the-Wild Age Database
+# Author: Moschoglou, S., Papaioannou, A., Sagonas, C., Deng, J., Kotsia, I.
+#         and Zafeiriou, S., Proceedings of the IEEE Conference on Computer
+#         Vision and Pattern Recognition Workshops (CVPRW)
+# Date: 2017
+# Availability: https://ibug.doc.ic.ac.uk/resources/agedb/
+##############
+
+
+class AgeDbDatasetError(RuntimeError):
+    """Raised when AgeDB is absent, misconfigured or fails schema validation."""
+
+
+# The official distribution is a flat directory of files named
+# ``<index>_<name>_<age>_<gender>.jpg``. Pinned rather than sniffed, for the
+# same reason as BFW: a mis-parsed age would silently corrupt every age-gap
+# figure while still producing plausible output.
+AGEDB_FILENAME_PATTERN = re.compile(
+    r"^(?P<index>\d+)_(?P<name>.+)_(?P<age>\d{1,3})_(?P<gender>[mf])\.(?:jpg|jpeg|png)$",
+    re.IGNORECASE,
+)
+AGEDB_PROTOCOL_VERSION = "acp-arden-agedb-transfer-v1"
+
+
+@dataclass(frozen=True)
+class AgeDbImage:
+    image_path: Path  # private
+    identity: str     # private: the subject's real name
+    age: int
+    sample_id: str
+    identity_hash: str
+
+
+@dataclass(frozen=True)
+class AgeDbDataset:
+    images: List[AgeDbImage]
+
+    def by_identity(self) -> Dict[str, List[AgeDbImage]]:
+        grouped: Dict[str, List[AgeDbImage]] = {}
+        for image in self.images:
+            grouped.setdefault(image.identity, []).append(image)
+        # Ordered by age, so "youngest enrols, oldest probes" is well defined.
+        return {
+            identity: sorted(items, key=lambda i: (i.age, i.image_path.name))
+            for identity, items in sorted(grouped.items())
+        }
+
+
+def load_agedb_dataset(root: Path) -> AgeDbDataset:
+    """Read the official flat AgeDB directory. Every failure is explicit."""
+    root = Path(root).resolve()
+    if not root.is_dir():
+        raise AgeDbDatasetError(f"{AGEDB_ROOT_VARIABLE} does not point at a directory: {root}")
+
+    images: List[AgeDbImage] = []
+    unmatched: List[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+            continue
+        match = AGEDB_FILENAME_PATTERN.match(path.name)
+        if match is None:
+            unmatched.append(path.name)
+            continue
+        identity = match.group("name")
+        age = int(match.group("age"))
+        if not 0 < age <= 120:
+            raise AgeDbDatasetError(
+                f"AgeDB image records an implausible age of {age}; refusing to proceed."
+            )
+        images.append(
+            AgeDbImage(
+                image_path=path,
+                identity=identity,
+                age=age,
+                sample_id=opaque_id(f"agedb:{path.name}"),
+                identity_hash=opaque_id(f"agedb-identity:{identity}"),
+            )
+        )
+
+    if unmatched:
+        raise AgeDbDatasetError(
+            f"{len(unmatched)} file(s) under {AGEDB_ROOT_VARIABLE} do not match the official "
+            f"'<index>_<name>_<age>_<gender>.jpg' naming. This adapter pins the official "
+            f"layout and refuses to guess; the first unmatched filename is withheld here "
+            f"because AgeDB filenames contain subjects' real names."
+        )
+    if not images:
+        raise AgeDbDatasetError(f"No AgeDB images found under {AGEDB_ROOT_VARIABLE}.")
+    return AgeDbDataset(images=images)
+
+
+def build_agedb_transfer_protocol(
+    dataset: AgeDbDataset,
+    *,
+    gallery_size: int,
+    seed: int = DEFAULT_RANDOM_SEED,
+    enrolment_images: int = MULTI_IMAGE_ENROLMENT,
+    mated_probes: int = MATED_PROBES_PER_IDENTITY,
+    non_mated_probes: int = NON_MATED_PROBES_PER_IDENTITY,
+) -> OpenSetProtocol:
+    """Build a transfer protocol at a gallery size comparable with the BFW test.
+
+    Enrolment takes the youngest images and mated probes the oldest, so the
+    cross-age gap being tested is as wide as each subject allows."""
+    grouped = dataset.by_identity()
+    minimum = enrolment_images + mated_probes
+    eligible = sorted(i for i, images in grouped.items() if len(images) >= minimum)
+    spare = sorted(i for i in grouped if i not in set(eligible))
+    if len(eligible) < gallery_size:
+        raise AgeDbDatasetError(
+            f"AgeDB yielded {len(eligible)} identities with at least {minimum} images, "
+            f"fewer than the requested comparable gallery size of {gallery_size}."
+        )
+
+    rng = random.Random(f"{seed}:agedb")
+    rng.shuffle(eligible)
+    mated = sorted(eligible[:gallery_size])
+    non_mated = sorted(set(eligible[gallery_size:]) | set(spare))
+    if not non_mated:
+        raise AgeDbDatasetError("AgeDB left no identities outside the gallery for non-mated probes.")
+
+    entries: List[OpenSetEntry] = []
+    for identity in mated:
+        images = grouped[identity]
+        for image in images[:enrolment_images]:
+            entries.append(
+                OpenSetEntry(image.sample_id, image.identity_hash, identity, "agedb",
+                             image.image_path, "gallery_enrolment", "test")
+            )
+        # Oldest images become the probes, maximising the age gap under test.
+        for image in images[-mated_probes:]:
+            entries.append(
+                OpenSetEntry(image.sample_id, image.identity_hash, identity, "agedb",
+                             image.image_path, "mated_probe", "test")
+            )
+    for identity in non_mated:
+        for image in grouped[identity][:non_mated_probes]:
+            entries.append(
+                OpenSetEntry(image.sample_id, image.identity_hash, identity, "agedb",
+                             image.image_path, "non_mated_probe", "test")
+            )
+
+    _assert_protocol_invariants(entries)
+    return OpenSetProtocol(
+        entries=entries,
+        seed=seed,
+        provenance={
+            "dataset_name": "AgeDB",
+            "protocol_version": AGEDB_PROTOCOL_VERSION,
+            "transfer_note": (
+                "Cross-dataset transfer of a policy frozen on BFW. This is not an "
+                "AgeDB-specific calibration: no AgeDB identity contributed to threshold "
+                "selection, and the threshold is applied exactly as frozen."
+            ),
+            "gallery_identities": len(mated),
+            "non_mated_identities": len(non_mated),
+        },
+    )
+
+
+def agedb_age_gap_distribution(
+    dataset: AgeDbDataset, protocol: OpenSetProtocol
+) -> Dict[str, Any]:
+    """Age gap between each mated probe and its enrolment images. Reported so a
+    reader can see how hard the transfer test actually was."""
+    age_of = {image.sample_id: image.age for image in dataset.images}
+    enrolment_ages: Dict[str, List[int]] = {}
+    for entry in protocol.entries:
+        if entry.role == "gallery_enrolment":
+            enrolment_ages.setdefault(entry.identity_hash, []).append(age_of[entry.sample_id])
+
+    gaps: List[int] = []
+    for entry in protocol.entries:
+        if entry.role != "mated_probe":
+            continue
+        enrolled = enrolment_ages.get(entry.identity_hash)
+        if enrolled:
+            gaps.append(abs(age_of[entry.sample_id] - int(statistics.fmean(enrolled))))
+    if not gaps:
+        return {"mated_probes_with_age_gap": 0}
+    return {
+        "mated_probes_with_age_gap": len(gaps),
+        "age_gap_years_min": min(gaps),
+        "age_gap_years_median": statistics.median(gaps),
+        "age_gap_years_mean": statistics.fmean(gaps),
+        "age_gap_years_max": max(gaps),
+    }
+
+
+def run_agedb_transfer(
+    *,
+    output_root: Path = AGGREGATE_ROOT,
+    policy_path: Optional[Path] = None,
+    seed: int = DEFAULT_RANDOM_SEED,
+) -> Optional[Dict[str, Any]]:
+    """Apply the frozen BFW policy to AgeDB. Returns None when AgeDB is not
+    configured, having printed the reason; never fabricates a result."""
+    config = EnvironmentConfig.load()
+    if config.agedb_root is None:
+        announce(
+            f"AgeDB cross-dataset transfer: SKIPPED — {AGEDB_ROOT_VARIABLE} is not set."
+        )
+        return None
+
+    policy_path = policy_path or (output_root / "bfw_open_set_threshold.json")
+    if not policy_path.is_file():
+        raise OpenSetPolicyError(
+            f"No frozen open-set policy at {project_relative(policy_path)}. Run "
+            f"--mode open-set on BFW before attempting the AgeDB transfer."
+        )
+    policy = read_json_artifact(policy_path)
+    threshold = require_frozen_open_set_policy(policy, context=project_relative(policy_path))
+
+    # Match the BFW held-out gallery size so the two are comparable.
+    test_metrics_path = output_root / "bfw_open_set_test_metrics.json"
+    comparable_size = 0
+    if test_metrics_path.is_file():
+        comparable_size = int(
+            read_json_artifact(test_metrics_path)["methods"][METHOD_B]["coverage"][
+                "enrolled_gallery_identities"
+            ]
+        )
+
+    detector, embedder = load_models(config.require_model_root())
+    dataset = load_agedb_dataset(config.agedb_root)
+    protocol = build_agedb_transfer_protocol(
+        dataset, gallery_size=comparable_size or 200, seed=seed
+    )
+    run = run_open_set_method(
+        protocol, partition="test", method=METHOD_B, detector=detector, embedder=embedder
+    )
+
+    coverage = open_set_coverage(run)
+    rates = open_set_rates_at_threshold(run.search_results, threshold)
+    payload = {
+        "artifact_type": "agedb_transfer_metrics",
+        "schema_version": SCHEMA_VERSION,
+        "opaque_id_version": OPAQUE_ID_VERSION,
+        "created_at": utc_now_iso(),
+        "status": OPEN_SET_STATUS_TESTED,
+        "operating_threshold": threshold,
+        "threshold_source": project_relative(policy_path),
+        "threshold_provenance": (
+            "Frozen on the BFW development partition. Applied here unchanged; AgeDB "
+            "contributed nothing to its selection."
+        ),
+        "pipeline": primary_pipeline_description(detector, embedder).as_dict(),
+        "coverage": coverage,
+        "rates": rates,
+        **open_set_duplicate_detection(run, threshold),
+        "age_gap_distribution": agedb_age_gap_distribution(dataset, protocol),
+        "confidence_intervals": cluster_bootstrap_intervals(
+            run.search_results, threshold=threshold, seed=seed
+        ),
+        "seed": seed,
+        "policy_note": POLICY_NOTE,
+        "limitations": list(OPEN_SET_LIMITATIONS)
+        + [
+            "This is cross-dataset transfer, not an AgeDB-specific calibration. A lower "
+            "score here indicates the policy did not transfer, not that AgeDB is harder "
+            "to calibrate for.",
+            "AgeDB filenames embed subjects' real names; only opaque identifiers, ages "
+            "and age gaps appear in this artefact.",
+        ],
+        "software_environment": software_environment_report(),
+        **protocol.provenance,
+    }
+    write_json_artifact(output_root / "agedb_transfer_metrics.json", payload)
+    announce(
+        f"Wrote AgeDB transfer metrics (FPIR {format_percentage(rates['fpir'])}, "
+        f"TPIR@1 {format_percentage(rates['tpir_rank1'])})"
+    )
+    return payload
+
+
+# =============================================================================
+# 27. Synthetic self-test mode
 # =============================================================================
 #
 # Deterministic checks that need no model binary, no dataset and no network.
@@ -5638,7 +6134,7 @@ def run_self_tests(verbose: bool = True) -> Tuple[int, int]:
 
 
 # =============================================================================
-# 26. Interactive VS Code launcher
+# 28. Interactive VS Code launcher
 # =============================================================================
 #
 # Running this file with no arguments prints a menu rather than starting a
@@ -5702,6 +6198,7 @@ def action_check_environment() -> int:
         "FACE_BFW_ROOT": config.bfw_root,
         "FACE_BFW_METADATA_ROOT": config.bfw_metadata_root,
         "FACE_AGEDB_ROOT": config.agedb_root,
+        "FACE_ARCFACE_MODEL_ROOT": config.arcface_model_root,
     }
     for variable in OPTIONAL_ENVIRONMENT_VARIABLES:
         state = "set" if optional_values.get(variable) is not None else "not set (optional)"

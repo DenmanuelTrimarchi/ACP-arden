@@ -813,3 +813,146 @@ def test_top1_and_top5_latencies_are_measured_separately(bfw: acp.BfwDataset) ->
         assert row.top5_time_seconds is not None
         # Retrieving five candidates cannot cost less than retrieving one.
         assert row.top5_time_seconds >= row.top1_time_seconds
+
+
+# --- Optional pipeline comparison (Phase 11) ----------------------------------
+
+
+def test_the_primary_pipeline_describes_the_whole_chain() -> None:
+    description = acp.primary_pipeline_description()
+    payload = description.as_dict()
+    assert payload["detector_name"].startswith("OpenCV YuNet")
+    assert payload["embedding_model_name"].startswith("OpenCV SFace")
+    assert payload["embedding_dimensions"] == 128
+    assert set(payload["model_sha256"]) == {"yunet", "sface"}
+    # A difference between pipelines must never be attributed to the embedding
+    # alone, because the detector and preprocessing differ too.
+    assert "cannot be attributed to the embedding model alone" in payload["comparison_scope"]
+
+
+def test_an_unconfigured_comparator_is_reported_not_run(tmp_path: Path) -> None:
+    config = acp.EnvironmentConfig(
+        data_root=None, protocol_root=None, model_root=None,
+        cplfw_raw_root=None, cache_root=None, arcface_model_root=None,
+    )
+    status = acp.pipeline_comparison_status(config)
+    assert status["comparison_run"] is False
+    assert status["substitute_model_used"] is False
+    assert "non-commercial" in status["licence_note"]
+
+
+def test_a_configured_comparator_without_pinned_digests_is_refused(tmp_path: Path) -> None:
+    """Digests are pinned in source and never accepted as arguments, so an
+    unverified weight file cannot reach a reportable evaluation."""
+    config = acp.EnvironmentConfig(
+        data_root=None, protocol_root=None, model_root=None,
+        cplfw_raw_root=None, cache_root=None, arcface_model_root=tmp_path,
+    )
+    with pytest.raises(acp.PipelineUnavailableError) as raised:
+        acp.arcface_pipeline_description(config)
+    assert "pinned" in str(raised.value).lower()
+    assert acp.ARCFACE_DETECTOR_SHA256 is None
+    assert acp.ARCFACE_RECOGNITION_SHA256 is None
+
+
+def test_the_comparison_csv_records_absence_rather_than_omitting_it(tmp_path: Path) -> None:
+    config = acp.EnvironmentConfig(
+        data_root=None, protocol_root=None, model_root=None,
+        cplfw_raw_root=None, cache_root=None, arcface_model_root=None,
+    )
+    out = tmp_path / "pretrained_pipeline_comparison.csv"
+    acp.write_pipeline_comparison_csv(
+        out, primary=acp.primary_pipeline_description(), config=config
+    )
+    rows = list(csv.DictReader(open(out)))
+    assert len(rows) == 2
+    assert rows[0]["evaluated"] == "yes"
+    assert rows[1]["evaluated"] == "no" and rows[1]["note"]
+
+
+# --- AgeDB transfer (Phase 10) ------------------------------------------------
+
+
+def _make_agedb(tmp_path: Path, *, identities: int = 30, per_identity: int = 9) -> Path:
+    """Official AgeDB layout: a flat directory of <index>_<name>_<age>_<gender>.jpg."""
+    root = tmp_path / "AgeDB"
+    root.mkdir(parents=True, exist_ok=True)
+    index = 0
+    for person in range(identities):
+        for step in range(per_identity):
+            index += 1
+            age = 20 + step * 5
+            (root / f"{index}_Subject{person:03d}_{age}_f.jpg").write_bytes(b"not-a-real-image")
+    return root
+
+
+def test_the_agedb_adapter_reads_the_official_naming(tmp_path: Path) -> None:
+    ds = acp.load_agedb_dataset(_make_agedb(tmp_path))
+    grouped = ds.by_identity()
+    assert len(grouped) == 30
+    assert all(len(v) == 9 for v in grouped.values())
+    # Ordered by age, so "youngest enrols, oldest probes" is well defined.
+    for images in grouped.values():
+        assert [i.age for i in images] == sorted(i.age for i in images)
+
+
+def test_a_file_not_matching_the_official_naming_is_refused(tmp_path: Path) -> None:
+    root = _make_agedb(tmp_path)
+    (root / "stray_photo.jpg").write_bytes(b"x")
+    with pytest.raises(acp.AgeDbDatasetError) as raised:
+        acp.load_agedb_dataset(root)
+    message = str(raised.value)
+    assert "official" in message
+    # The offending filename must not be echoed: AgeDB names are real people.
+    assert "stray_photo" not in message
+
+
+def test_an_implausible_age_is_refused(tmp_path: Path) -> None:
+    root = _make_agedb(tmp_path)
+    (root / "9999_Someone_999_m.jpg").write_bytes(b"x")
+    with pytest.raises(acp.AgeDbDatasetError) as raised:
+        acp.load_agedb_dataset(root)
+    assert "implausible age" in str(raised.value)
+
+
+def test_agedb_identifiers_never_carry_the_subject_name(tmp_path: Path) -> None:
+    ds = acp.load_agedb_dataset(_make_agedb(tmp_path))
+    for image in ds.images:
+        assert "Subject" not in image.sample_id
+        assert "Subject" not in image.identity_hash
+        assert len(image.identity_hash) == 32
+
+
+def test_the_transfer_protocol_enrols_young_and_probes_old(tmp_path: Path) -> None:
+    ds = acp.load_agedb_dataset(_make_agedb(tmp_path))
+    protocol = acp.build_agedb_transfer_protocol(ds, gallery_size=10, seed=EXPECTED_SEED)
+    age_of = {i.sample_id: i.age for i in ds.images}
+    enrolled = [age_of[e.sample_id] for e in protocol.entries if e.role == "gallery_enrolment"]
+    probes = [age_of[e.sample_id] for e in protocol.entries if e.role == "mated_probe"]
+    assert max(enrolled) < max(probes)
+    # Gallery and non-mated identities must not overlap.
+    assert protocol.identities("test", "gallery_enrolment").isdisjoint(
+        protocol.identities("test", "non_mated_probe")
+    )
+
+
+def test_the_transfer_protocol_reports_the_age_gap(tmp_path: Path) -> None:
+    ds = acp.load_agedb_dataset(_make_agedb(tmp_path))
+    protocol = acp.build_agedb_transfer_protocol(ds, gallery_size=10, seed=EXPECTED_SEED)
+    gaps = acp.agedb_age_gap_distribution(ds, protocol)
+    assert gaps["mated_probes_with_age_gap"] > 0
+    assert gaps["age_gap_years_max"] >= gaps["age_gap_years_min"]
+    assert gaps["age_gap_years_max"] > 0
+
+
+def test_too_few_eligible_identities_is_an_explicit_error(tmp_path: Path) -> None:
+    ds = acp.load_agedb_dataset(_make_agedb(tmp_path, identities=5))
+    with pytest.raises(acp.AgeDbDatasetError) as raised:
+        acp.build_agedb_transfer_protocol(ds, gallery_size=200, seed=EXPECTED_SEED)
+    assert "fewer than the requested" in str(raised.value)
+
+
+def test_agedb_transfer_is_skipped_not_fabricated_when_unconfigured(tmp_path: Path) -> None:
+    assert acp.EnvironmentConfig.load().agedb_root is None
+    assert acp.run_agedb_transfer(output_root=tmp_path) is None
+    assert not (tmp_path / "agedb_transfer_metrics.json").exists()

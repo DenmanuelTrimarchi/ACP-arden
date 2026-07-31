@@ -1,0 +1,24 @@
+# Dependencies for the OPTIONAL higher-capacity pipeline comparison only
+# (InsightFace SCRFD/RetinaFace detection + ArcFace buffalo_l recognition).
+#
+# Deliberately kept out of requirements.txt. The mandatory YuNet + SFace
+# evaluation, the five baseline experiments, the BFW open-set experiment and the
+# whole test suite run without anything below, and forcing these into the base
+# installation would overstate what a published result depends on.
+#
+# NOT PINNED, and deliberately so. Every other requirements file in this project
+# pins versions read from the project virtual environment after a green run.
+# These packages are not installed here, so any version written below would be a
+# guess rather than a record. Pin them from the environment that actually
+# produced a comparison result, at the point such a result exists.
+#
+# Before installing, note that the comparison is currently reported as NOT RUN:
+# InsightFace publishes its pretrained recognition models for non-commercial
+# research use and directs users to contact the project regarding licensing of
+# the recognition models. Resolve those terms first. The SHA-256 digests of the
+# exact approved weight files must then be pinned in source
+# (ARCFACE_DETECTOR_SHA256, ARCFACE_RECOGNITION_SHA256); they are never accepted
+# as command-line arguments.
+
+# onnxruntime==<pin from the environment that produced the result>
+# insightface==<pin from the environment that produced the result>

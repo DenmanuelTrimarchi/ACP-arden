@@ -39,11 +39,11 @@ package of small modules.
 | Record-level leakage assertions | Section 15 | Preserved |
 | Local review database (SQLite, opaque identifiers only) | Section 16 | Preserved |
 | Streamlit human-review page and its launcher | Section 16 | Preserved |
-| Deterministic synthetic self-tests and their fakes | Section 25 | Preserved |
-| Environment check action | Section 26 | Preserved |
-| Model and dataset verification action | Section 26 | Preserved |
-| Five-experiment orchestration in required order | Section 26 | Preserved |
-| Interactive menu, `--mode` command line, entry point | Section 26 | Added |
+| Deterministic synthetic self-tests and their fakes | Section 27 | Preserved |
+| Environment check action | Section 28 | Preserved |
+| Model and dataset verification action | Section 28 | Preserved |
+| Five-experiment orchestration in required order | Section 28 | Preserved |
+| Interactive menu, `--mode` command line, entry point | Section 28 | Added |
 
 ## Reference-only
 
@@ -92,6 +92,8 @@ full register, with licences and digests, is `REFERENCES.md`.
 | Cluster-bootstrap confidence intervals over identities | Section 22 | Added |
 | Demographic subgroup metrics and disparity summary | Section 23 | Added |
 | Experiment 6 orchestration, artefacts, success criteria, open-set report | Section 24 | Added |
+| Pipeline description record and optional ArcFace comparator interface | Section 25 | Added |
+| AgeDB adapter, cross-dataset transfer protocol, age-gap reporting | Section 26 | Added |
 
 ## Notes on the added and revised rows
 
@@ -100,7 +102,7 @@ full register, with licences and digests, is `REFERENCES.md`.
   message it emits is passed through a redactor that replaces a configured
   storage root with its variable name. No storage location can reach the
   screen, a log, or a published artefact.
-- **Interactive menu (section 26)** is new. It replaces a set of separate
+- **Interactive menu (section 28)** is new. It replaces a set of separate
   command-line entry points with one launcher that requires no arguments, so
   the VS Code play button is safe to press: it shows the menu rather than
   starting a multi-minute benchmark.
@@ -114,6 +116,10 @@ full register, with licences and digests, is `REFERENCES.md`.
   feature. Reference images that failed to embed were previously dropped, which
   removed the identity from the gallery while its mated probe was still scored
   as an ordinary miss. Both denominators are now reported.
+- **Sections 25-26** are the two optional extensions. Both are implemented as
+  interfaces that either produce a real artefact or record precisely why they
+  did not run; neither can interrupt the primary experiment, and neither
+  substitutes a stand-in model or dataset.
 - **Sections 17-24** are the supplementary open-set experiment. They are
   additive: `--mode full` still runs exactly the original five experiments, and
   none of the baseline artefacts changed.
