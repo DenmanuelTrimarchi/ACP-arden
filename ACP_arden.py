@@ -3632,7 +3632,9 @@ NON_MATED_PROBES_PER_IDENTITY = 15
 
 # An identity needs enough images to enrol the maximum template and still hold
 # back its probes, otherwise the two methods would not see the same identities.
-MINIMUM_IMAGES_FOR_MATED_IDENTITY = MULTI_IMAGE_ENROLMENT + MATED_PROBES_PER_IDENTITY
+# Derived inside build_open_set_protocol from its arguments rather than fixed
+# here, so that overriding the probe counts cannot leave a stale threshold
+# behind.
 
 
 class OpenSetProtocolError(RuntimeError):
@@ -4381,10 +4383,19 @@ def require_frozen_open_set_policy(payload: Mapping[str, Any], *, context: str =
     not tuned on the data they describe."""
     status = payload.get("status")
     if status != OPEN_SET_STATUS_FROZEN:
+        # An unrecognised status is a different fault from a recognised but
+        # wrong one — the first suggests a corrupt or foreign artefact, the
+        # second an ordering mistake — so the message distinguishes them.
+        detail = (
+            f"Only {OPEN_SET_STATUS_FROZEN!r} is accepted; develop and freeze the policy "
+            f"on the development partition first."
+            if status in OPEN_SET_STATUSES
+            else f"That is not a recognised open-set status; expected one of "
+            f"{list(OPEN_SET_STATUSES)}. The artefact may be corrupt or from another tool."
+        )
         raise OpenSetPolicyError(
             f"Refusing to run a held-out open-set evaluation with policy status {status!r}"
-            f"{f' from {context}' if context else ''}. Only {OPEN_SET_STATUS_FROZEN!r} is "
-            f"accepted; develop and freeze the policy on the development partition first."
+            f"{f' from {context}' if context else ''}. {detail}"
         )
     operating = payload.get("operating_points") or {}
     primary = operating.get(str(PRIMARY_FPIR_TARGET))

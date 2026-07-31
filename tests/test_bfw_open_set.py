@@ -956,3 +956,19 @@ def test_agedb_transfer_is_skipped_not_fabricated_when_unconfigured(tmp_path: Pa
     assert acp.EnvironmentConfig.load().agedb_root is None
     assert acp.run_agedb_transfer(output_root=tmp_path) is None
     assert not (tmp_path / "agedb_transfer_metrics.json").exists()
+
+
+def test_an_unrecognised_policy_status_is_distinguished_from_a_wrong_one() -> None:
+    """A corrupt or foreign artefact and an ordering mistake are different
+    faults, and the message should say which one occurred."""
+    operating = {str(EXPECTED_PRIMARY_FPIR_TARGET): {"threshold": 0.5}}
+
+    with pytest.raises(acp.OpenSetPolicyError) as recognised:
+        acp.require_frozen_open_set_policy(
+            {"status": "open_set_development", "operating_points": operating}
+        )
+    assert "develop and freeze" in str(recognised.value)
+
+    with pytest.raises(acp.OpenSetPolicyError) as unknown:
+        acp.require_frozen_open_set_policy({"status": "banana", "operating_points": operating})
+    assert "not a recognised open-set status" in str(unknown.value)
