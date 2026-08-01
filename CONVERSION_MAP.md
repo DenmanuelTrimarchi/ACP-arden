@@ -1,6 +1,6 @@
 # Conversion map
 
-`ACP_arden.py` is organised into eighteen numbered sections. This table maps
+`ACP_arden.py` is organised into thirty numbered sections. This table maps
 each functional component of the research pipeline to the section that
 implements it, so a reviewer can navigate the single file as quickly as a
 package of small modules.
@@ -39,11 +39,11 @@ package of small modules.
 | Record-level leakage assertions | Section 15 | Preserved |
 | Local review database (SQLite, opaque identifiers only) | Section 16 | Preserved |
 | Streamlit human-review page and its launcher | Section 16 | Preserved |
-| Deterministic synthetic self-tests and their fakes | Section 27 | Preserved |
-| Environment check action | Section 28 | Preserved |
-| Model and dataset verification action | Section 28 | Preserved |
-| Five-experiment orchestration in required order | Section 28 | Preserved |
-| Interactive menu, `--mode` command line, entry point | Section 28 | Added |
+| Deterministic synthetic self-tests and their fakes | Section 29 | Preserved |
+| Environment check action | Section 30 | Preserved |
+| Model and dataset verification action | Section 30 | Preserved |
+| Five-experiment orchestration in required order | Section 30 | Preserved |
+| Interactive menu, `--mode` command line, entry point | Section 30 | Added |
 
 ## Reference-only
 
@@ -93,7 +93,9 @@ full register, with licences and digests, is `REFERENCES.md`.
 | Demographic subgroup metrics and disparity summary | Section 23 | Added |
 | Experiment 6 orchestration, artefacts, success criteria, open-set report | Section 24 | Added |
 | Pipeline description record and optional ArcFace comparator interface | Section 25 | Added |
-| AgeDB adapter, cross-dataset transfer protocol, age-gap reporting | Section 26 | Added |
+| Review classifier: identity split, features, logistic regression, freezing | Section 26 | Added |
+| Experiment 7 and 8 orchestration, artefacts and reports | Section 27 | Added |
+| Figure generation from published artefacts | Section 28 | Added |
 
 ## Notes on the added and revised rows
 
@@ -102,7 +104,7 @@ full register, with licences and digests, is `REFERENCES.md`.
   message it emits is passed through a redactor that replaces a configured
   storage root with its variable name. No storage location can reach the
   screen, a log, or a published artefact.
-- **Interactive menu (section 28)** is new. It replaces a set of separate
+- **Interactive menu (section 30)** is new. It replaces a set of separate
   command-line entry points with one launcher that requires no arguments, so
   the VS Code play button is safe to press: it shows the menu rather than
   starting a multi-minute benchmark.

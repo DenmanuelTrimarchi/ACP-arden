@@ -1,6 +1,6 @@
 {
   "artifact_type": "bfw_open_set_development_metrics",
-  "created_at": "2026-07-31T02:44:51.123638+00:00",
+  "created_at": "2026-08-01T16:43:54.416999+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
@@ -57,10 +57,10 @@
         "scored_mated_probes": 957,
         "scored_non_mated_probes": 2861,
         "similarity_comparisons": 759782,
-        "top1_search_time_mean_ms": 0.8592255735698244,
-        "top1_search_time_p95_ms": 0.89725614998315,
-        "top5_search_time_mean_ms": 0.8796960599373489,
-        "top5_search_time_p95_ms": 0.9205054484482389
+        "top1_search_time_mean_ms": 0.8614264701961368,
+        "top1_search_time_p95_ms": 0.9039714561367873,
+        "top5_search_time_mean_ms": 0.8804735500616621,
+        "top5_search_time_p95_ms": 0.9251732975826599
       },
       "end_to_end_duplicate_detection_rate": 0.869,
       "operating_threshold": 0.3630116835391414,
@@ -113,10 +113,10 @@
         "scored_mated_probes": 959,
         "scored_non_mated_probes": 2861,
         "similarity_comparisons": 760180,
-        "top1_search_time_mean_ms": 0.8517001258999113,
-        "top1_search_time_p95_ms": 0.8797982016403694,
-        "top5_search_time_mean_ms": 0.8722787693784242,
-        "top5_search_time_p95_ms": 0.9022080048453063
+        "top1_search_time_mean_ms": 0.8571845076922437,
+        "top1_search_time_p95_ms": 0.8985000022221357,
+        "top5_search_time_mean_ms": 0.8765316575629081,
+        "top5_search_time_p95_ms": 0.9202624431054572
       },
       "operating_points": {
         "0.001": {
@@ -187,6 +187,10 @@
       "opencv-python-headless": {
         "expected": "4.13.0.92",
         "installed": "4.13.0.92"
+      },
+      "scikit-learn": {
+        "expected": "1.9.0",
+        "installed": "1.9.0"
       }
     },
     "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",

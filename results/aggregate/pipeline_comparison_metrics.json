@@ -1,0 +1,61 @@
+{
+  "artifact_type": "pipeline_comparison_metrics",
+  "comparison_scope": "Complete pretrained pipelines. Detection, landmarking, alignment, preprocessing, embedding dimensionality and runtime all differ, so no difference may be attributed to the embedding model alone.",
+  "created_at": "2026-08-01T16:50:47.607494+00:00",
+  "dataset_name": "BFW",
+  "dependency_versions": {
+    "Pillow": "12.3.0",
+    "matplotlib": "3.11.1",
+    "numpy": "2.5.1",
+    "opencv-python-headless": "4.13.0.92",
+    "scikit-learn": "1.9.0"
+  },
+  "evaluated": "no",
+  "fine_tuning_performed": false,
+  "licence_note": "InsightFace publishes its pretrained recognition models for non-commercial research use and directs users to contact the project regarding licensing. Those terms are unresolved for this project, so no ArcFace result is reported.",
+  "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
+  "primary_pipeline": {
+    "comparison_scope": "Complete pipeline: detection, preprocessing and embedding. A difference between pipelines cannot be attributed to the embedding model alone.",
+    "detector_name": "OpenCV YuNet 2023mar",
+    "embedding_dimensions": 128,
+    "embedding_model_name": "OpenCV SFace 2021dec",
+    "licence_note": "OpenCV Zoo release: YuNet weights MIT, SFace weights Apache-2.0. Both are redistributable for research use.",
+    "model_sha256": {
+      "sface": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+      "yunet": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
+    },
+    "pipeline_name": "opencv-sface-2021dec-yunet-2023mar",
+    "preprocessing_revision": "opencv-yunet-sface-exif-bgr-l2-v1"
+  },
+  "protocol_version": "acp-arden-bfw-open-set-v1",
+  "reason": "FACE_ARCFACE_MODEL_ROOT is not set. The optional comparison pipeline is not configured. InsightFace publishes its pretrained recognition models for non-commercial research use and directs users to contact the project regarding licensing. Those terms are unresolved for this project, so no ArcFace result is reported.",
+  "schema_version": 1,
+  "seed": 20260727,
+  "separate_calibration_required": "Similarity scores from different embedding models are not interchangeable, so each pipeline must receive its own development-only threshold. The SFace threshold is never applied to ArcFace.",
+  "software_environment": {
+    "dependencies": {
+      "Pillow": {
+        "expected": "12.3.0",
+        "installed": "12.3.0"
+      },
+      "numpy": {
+        "expected": "2.5.1",
+        "installed": "2.5.1"
+      },
+      "opencv-python-headless": {
+        "expected": "4.13.0.92",
+        "installed": "4.13.0.92"
+      },
+      "scikit-learn": {
+        "expected": "1.9.0",
+        "installed": "1.9.0"
+      }
+    },
+    "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",
+    "processor": "arm",
+    "python_version": "3.13.0"
+  },
+  "status": "not_run_licensing_unresolved",
+  "substitute_model_used": false,
+  "training_performed": false
+}

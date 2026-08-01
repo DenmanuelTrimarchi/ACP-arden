@@ -674,9 +674,25 @@ def test_an_undefined_metric_is_not_measurable_rather_than_a_pass() -> None:
 def test_absent_optional_datasets_are_reported_as_skipped_not_fabricated() -> None:
     lines = acp.report_optional_dataset_status()
     joined = "\n".join(lines)
-    assert "AgeDB" in joined
     assert "ArcFace" in joined or "buffalo_l" in joined
     assert "NOT RUN" in joined or "SKIPPED" in joined
+
+
+def test_agedb_is_not_implemented_anywhere() -> None:
+    """AgeDB was deliberately withdrawn. No configuration variable, execution
+    mode or adapter may remain, so it cannot be run by accident."""
+    assert not hasattr(acp, "AGEDB_ROOT_VARIABLE")
+    assert not hasattr(acp, "load_agedb_dataset")
+    assert not hasattr(acp, "run_agedb_transfer")
+    assert "FACE_AGEDB_ROOT" not in acp.OPTIONAL_ENVIRONMENT_VARIABLES
+    assert not any("agedb" in mode.lower() for mode in acp.MODES)
+    template = (Path(acp.__file__).parent / ".env.example").read_text()
+    assert "AGEDB" not in template.upper()
+
+
+def test_no_continuous_integration_configuration_is_present() -> None:
+    """The brief excludes CI configuration; assert none was introduced."""
+    assert not (Path(acp.__file__).parent / ".github" / "workflows").exists()
 
 
 def test_the_open_set_summary_reports_the_absence_of_results(tmp_path: Path) -> None:
@@ -710,7 +726,7 @@ def test_a_clean_artifact_directory_passes_the_key_scan(tmp_path: Path) -> None:
 
 
 def test_optional_dataset_roots_join_the_forbidden_substring_set() -> None:
-    for variable in ("FACE_BFW_ROOT", "FACE_BFW_METADATA_ROOT", "FACE_AGEDB_ROOT"):
+    for variable in ("FACE_BFW_ROOT", "FACE_BFW_METADATA_ROOT"):
         assert variable in acp.OPTIONAL_ENVIRONMENT_VARIABLES
     substrings = acp.default_forbidden_path_substrings(
         env={"FACE_BFW_ROOT": "/private/research/bfw"}
@@ -868,94 +884,6 @@ def test_the_comparison_csv_records_absence_rather_than_omitting_it(tmp_path: Pa
     assert len(rows) == 2
     assert rows[0]["evaluated"] == "yes"
     assert rows[1]["evaluated"] == "no" and rows[1]["note"]
-
-
-# --- AgeDB transfer (Phase 10) ------------------------------------------------
-
-
-def _make_agedb(tmp_path: Path, *, identities: int = 30, per_identity: int = 9) -> Path:
-    """Official AgeDB layout: a flat directory of <index>_<name>_<age>_<gender>.jpg."""
-    root = tmp_path / "AgeDB"
-    root.mkdir(parents=True, exist_ok=True)
-    index = 0
-    for person in range(identities):
-        for step in range(per_identity):
-            index += 1
-            age = 20 + step * 5
-            (root / f"{index}_Subject{person:03d}_{age}_f.jpg").write_bytes(b"not-a-real-image")
-    return root
-
-
-def test_the_agedb_adapter_reads_the_official_naming(tmp_path: Path) -> None:
-    ds = acp.load_agedb_dataset(_make_agedb(tmp_path))
-    grouped = ds.by_identity()
-    assert len(grouped) == 30
-    assert all(len(v) == 9 for v in grouped.values())
-    # Ordered by age, so "youngest enrols, oldest probes" is well defined.
-    for images in grouped.values():
-        assert [i.age for i in images] == sorted(i.age for i in images)
-
-
-def test_a_file_not_matching_the_official_naming_is_refused(tmp_path: Path) -> None:
-    root = _make_agedb(tmp_path)
-    (root / "stray_photo.jpg").write_bytes(b"x")
-    with pytest.raises(acp.AgeDbDatasetError) as raised:
-        acp.load_agedb_dataset(root)
-    message = str(raised.value)
-    assert "official" in message
-    # The offending filename must not be echoed: AgeDB names are real people.
-    assert "stray_photo" not in message
-
-
-def test_an_implausible_age_is_refused(tmp_path: Path) -> None:
-    root = _make_agedb(tmp_path)
-    (root / "9999_Someone_999_m.jpg").write_bytes(b"x")
-    with pytest.raises(acp.AgeDbDatasetError) as raised:
-        acp.load_agedb_dataset(root)
-    assert "implausible age" in str(raised.value)
-
-
-def test_agedb_identifiers_never_carry_the_subject_name(tmp_path: Path) -> None:
-    ds = acp.load_agedb_dataset(_make_agedb(tmp_path))
-    for image in ds.images:
-        assert "Subject" not in image.sample_id
-        assert "Subject" not in image.identity_hash
-        assert len(image.identity_hash) == 32
-
-
-def test_the_transfer_protocol_enrols_young_and_probes_old(tmp_path: Path) -> None:
-    ds = acp.load_agedb_dataset(_make_agedb(tmp_path))
-    protocol = acp.build_agedb_transfer_protocol(ds, gallery_size=10, seed=EXPECTED_SEED)
-    age_of = {i.sample_id: i.age for i in ds.images}
-    enrolled = [age_of[e.sample_id] for e in protocol.entries if e.role == "gallery_enrolment"]
-    probes = [age_of[e.sample_id] for e in protocol.entries if e.role == "mated_probe"]
-    assert max(enrolled) < max(probes)
-    # Gallery and non-mated identities must not overlap.
-    assert protocol.identities("test", "gallery_enrolment").isdisjoint(
-        protocol.identities("test", "non_mated_probe")
-    )
-
-
-def test_the_transfer_protocol_reports_the_age_gap(tmp_path: Path) -> None:
-    ds = acp.load_agedb_dataset(_make_agedb(tmp_path))
-    protocol = acp.build_agedb_transfer_protocol(ds, gallery_size=10, seed=EXPECTED_SEED)
-    gaps = acp.agedb_age_gap_distribution(ds, protocol)
-    assert gaps["mated_probes_with_age_gap"] > 0
-    assert gaps["age_gap_years_max"] >= gaps["age_gap_years_min"]
-    assert gaps["age_gap_years_max"] > 0
-
-
-def test_too_few_eligible_identities_is_an_explicit_error(tmp_path: Path) -> None:
-    ds = acp.load_agedb_dataset(_make_agedb(tmp_path, identities=5))
-    with pytest.raises(acp.AgeDbDatasetError) as raised:
-        acp.build_agedb_transfer_protocol(ds, gallery_size=200, seed=EXPECTED_SEED)
-    assert "fewer than the requested" in str(raised.value)
-
-
-def test_agedb_transfer_is_skipped_not_fabricated_when_unconfigured(tmp_path: Path) -> None:
-    assert acp.EnvironmentConfig.load().agedb_root is None
-    assert acp.run_agedb_transfer(output_root=tmp_path) is None
-    assert not (tmp_path / "agedb_transfer_metrics.json").exists()
 
 
 def test_an_unrecognised_policy_status_is_distinguished_from_a_wrong_one() -> None:

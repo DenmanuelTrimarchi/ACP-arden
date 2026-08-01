@@ -106,7 +106,7 @@ DEFAULT_GALLERY_MANIFEST = RAW_ROOT / "gallery_manifest.json"
 # concerned. The complete register, with licences and digests, is REFERENCES.md.
 # Neither benchmark dataset nor either model file is redistributed here.
 #
-# Reading order. The eighteen numbered sections run from configuration through
+# Reading order. The thirty numbered sections run from configuration through
 # to the launcher, so the file may be read from top to bottom in roughly the
 # order the pipeline executes. Comments that explain a language construct are
 # addressed to a reader following the method rather than the syntax, and appear
@@ -164,6 +164,8 @@ EXPECTED_DEPENDENCY_VERSIONS = {
     "numpy": "2.5.1",
     "opencv-python-headless": "4.13.0.92",
     "Pillow": "12.3.0",
+    # Fitting the review classifier is version-sensitive at the margins.
+    "scikit-learn": "1.9.0",
 }
 
 DEFAULT_MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -290,7 +292,6 @@ OPTIONAL_ENVIRONMENT_VARIABLES = (
     # their configured roots to the forbidden-substring set as well.
     "FACE_BFW_ROOT",
     "FACE_BFW_METADATA_ROOT",
-    "FACE_AGEDB_ROOT",
     "FACE_ARCFACE_MODEL_ROOT",
 )
 
@@ -346,7 +347,6 @@ class EnvironmentConfig:
     # five baseline experiments and every existing mode run without them.
     bfw_root: Optional[Path] = None
     bfw_metadata_root: Optional[Path] = None
-    agedb_root: Optional[Path] = None
     arcface_model_root: Optional[Path] = None
 
     # A ``@classmethod`` receives the class itself as its first argument rather
@@ -380,7 +380,6 @@ class EnvironmentConfig:
             cache_root=optional("FACE_CACHE_ROOT"),
             bfw_root=optional(BFW_ROOT_VARIABLE),
             bfw_metadata_root=optional(BFW_METADATA_ROOT_VARIABLE),
-            agedb_root=optional(AGEDB_ROOT_VARIABLE),
             arcface_model_root=optional(ARCFACE_MODEL_ROOT_VARIABLE),
         )
 
@@ -3396,11 +3395,6 @@ BFW_PROTOCOL_VERSION = "acp-arden-bfw-open-set-v1"
 BFW_ROOT_VARIABLE = "FACE_BFW_ROOT"
 BFW_METADATA_ROOT_VARIABLE = "FACE_BFW_METADATA_ROOT"
 
-# AgeDB is a secondary, optional cross-dataset transfer test. It is gated
-# behind its own variable and is never required by any mode; when it is absent
-# the run reports the omission rather than inventing a result.
-AGEDB_ROOT_VARIABLE = "FACE_AGEDB_ROOT"
-
 
 @dataclass(frozen=True)
 class BfwImage:
@@ -3834,8 +3828,17 @@ def _assert_protocol_invariants(entries: Sequence[OpenSetEntry]) -> None:
             )
 
 
-def open_set_protocol_summary(protocol: OpenSetProtocol) -> Dict[str, Any]:
-    """Public manifest summary: opaque identifiers and counts only."""
+def open_set_protocol_summary(
+    protocol: OpenSetProtocol,
+    *,
+    dataset: Optional[BfwDataset] = None,
+    detector: Any = None,
+    embedder: Any = None,
+) -> Dict[str, Any]:
+    """Public manifest summary: opaque identifiers and counts only.
+
+    Software, model and dataset provenance are embedded alongside them so that
+    this artefact carries the same record as every other published JSON."""
 
     def counts(partition: str) -> Dict[str, Any]:
         rows = protocol.partition(partition)
@@ -3865,6 +3868,17 @@ def open_set_protocol_summary(protocol: OpenSetProtocol) -> Dict[str, Any]:
         **protocol.provenance,
         "public_manifest_sha256": sha256_of_text(
             "\n".join(sorted(f"{e.partition}:{e.role}:{e.sample_id}" for e in protocol.entries))
+        ),
+        "model_version": MODEL_VERSION,
+        "pipeline_name": MODEL_VERSION,
+        "preprocessing_revision": PREPROCESSING_REVISION,
+        "model_sha256": {
+            "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
+            "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
+        },
+        "software_environment": software_environment_report(),
+        "dataset_provenance": (
+            bfw_dataset_provenance(dataset) if dataset is not None else None
         ),
         "policy_note": POLICY_NOTE,
     }
@@ -3953,6 +3967,15 @@ class OpenSetSearchResult:
     highest_impostor_similarity: Optional[float] = None
     top1_time_seconds: Optional[float] = None
     top5_time_seconds: Optional[float] = None
+    # Inputs to the review classifier of section 26. Every one is computable at
+    # inference time from the search alone; none reveals whether the probe's
+    # identity is actually enrolled, which would leak the label.
+    top5_similarity_mean: Optional[float] = None
+    top5_similarity_stdev: Optional[float] = None
+    top1_gallery_image_count: Optional[int] = None
+    gallery_size: Optional[int] = None
+    probe_detection_confidence: Optional[float] = None
+    probe_face_area_ratio: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -3981,15 +4004,39 @@ def build_identity_template(
 
 def _embed_open_set_entry(
     entry: OpenSetEntry, detector: FaceDetector, embedder: FaceEmbedder
-) -> Tuple[Optional[np.ndarray], Optional[str]]:
+) -> Tuple[Optional[np.ndarray], Optional[str], Dict[str, float]]:
+    """Embed one image and return the detector-derived quality signals with it.
+
+    YuNet emits a fifteen-element row: bounding box in the first four columns
+    and the detection score in the last. Both are captured here so the review
+    classifier can use image quality without a second detection pass."""
     try:
         loaded = load_image_bgr(entry.image_path)
         face_row = detector.detect_single_face(loaded.bgr)
-        return l2_normalize(embedder.embed(loaded.bgr, face_row)), None
+        height, width = loaded.bgr.shape[:2]
+        metadata: Dict[str, float] = {}
+        if face_row is not None and len(face_row) >= 15 and height and width:
+            metadata = {
+                "probe_detection_confidence": float(face_row[14]),
+                "probe_face_area_ratio": float(face_row[2] * face_row[3]) / float(height * width),
+            }
+        return l2_normalize(embedder.embed(loaded.bgr, face_row)), None, metadata
     except FaceCountError as exc:
-        return None, "zero_faces" if exc.face_count == 0 else "multiple_faces"
+        return None, ("zero_faces" if exc.face_count == 0 else "multiple_faces"), {}
     except (ImageLoadError, SimilarityError) as exc:
-        return None, f"image_error:{exc}"
+        return None, f"image_error:{exc}", {}
+
+
+def _call_embed(embed: Callable[..., Any], entry, detector, embedder):
+    """Normalise an embedding callable to (embedding, failure, metadata).
+
+    Test stubs supply the older two-value form, so both are accepted rather
+    than forcing every caller to carry metadata it does not produce."""
+    result = embed(entry, detector, embedder)
+    if len(result) == 3:
+        return result
+    embedding, failure = result
+    return embedding, failure, {}
 
 
 def run_open_set_method(
@@ -4021,6 +4068,7 @@ def run_open_set_method(
 
     outcomes: List[EnrolmentOutcome] = []
     enrolled: List[EnrolledIdentity] = []
+    template_image_counts: Dict[str, int] = {}
     for identity_hash in sorted(enrolment_images):
         # Ordered by filename, never by sample_id. sample_id is an HMAC under the
         # secret key, so ordering by it would make the choice of enrolment image
@@ -4029,7 +4077,7 @@ def run_open_set_method(
         candidates = sorted(enrolment_images[identity_hash], key=lambda e: e.image_path.name)[:take]
         embeddings: List[np.ndarray] = []
         for entry in candidates:
-            embedding, _failure = embed(entry, detector, embedder)
+            embedding, _failure, _meta = _call_embed(embed, entry, detector, embedder)
             if embedding is not None:
                 embeddings.append(embedding)
         subgroup = subgroup_of_hash[identity_hash]
@@ -4049,6 +4097,7 @@ def run_open_set_method(
         enrolled.append(
             EnrolledIdentity(identity_hash, subgroup, build_identity_template(embeddings))
         )
+        template_image_counts[identity_hash] = len(embeddings)
 
     if not enrolled:
         raise OpenSetProtocolError(
@@ -4069,7 +4118,7 @@ def run_open_set_method(
             )
             continue
 
-        probe_embedding, failure = embed(entry, detector, embedder)
+        probe_embedding, failure, probe_meta = _call_embed(embed, entry, detector, embedder)
         if probe_embedding is None:
             results.append(
                 OpenSetSearchResult(
@@ -4115,11 +4164,18 @@ def run_open_set_method(
             impostors = [s for c, s in scored if c.identity_hash != entry.identity_hash]
             highest_impostor = max(impostors) if impostors else None
 
+        top5_scores = [score for _candidate, score in scored[:5]]
         results.append(
             OpenSetSearchResult(
                 entry.sample_id, entry.identity_hash, entry.subgroup, entry.role,
                 None, top_score, top_candidate.identity_hash, second_score,
                 correct_rank, correct_score, highest_impostor, top1_elapsed, top5_elapsed,
+                statistics.fmean(top5_scores) if top5_scores else None,
+                statistics.stdev(top5_scores) if len(top5_scores) > 1 else 0.0,
+                template_image_counts.get(top_candidate.identity_hash),
+                len(enrolled),
+                probe_meta.get("probe_detection_confidence"),
+                probe_meta.get("probe_face_area_ratio"),
             )
         )
 
@@ -4734,7 +4790,9 @@ def run_open_set_experiment(
         f"(contains real image paths — kept out of Git)"
     )
 
-    summary_payload = open_set_protocol_summary(protocol)
+    summary_payload = open_set_protocol_summary(
+        protocol, dataset=dataset, detector=detector, embedder=embedder
+    )
     write_json_artifact(output_root / "bfw_open_set_protocol_summary.json", summary_payload)
 
     provenance = _open_set_provenance(dataset, protocol, detector, embedder)
@@ -4911,11 +4969,6 @@ def run_open_set_experiment(
         primary=primary_pipeline_description(detector, embedder),
         config=config,
     )
-    try:
-        run_agedb_transfer(output_root=output_root, seed=seed)
-    except (AgeDbDatasetError, OpenSetProtocolError, OpenSetPolicyError) as exc:
-        announce(f"AgeDB cross-dataset transfer: NOT RUN — {redact_private_paths(str(exc))}")
-
     report = render_open_set_report(
         protocol_summary=summary_payload,
         development=development_payload,
@@ -5232,14 +5285,6 @@ def report_optional_dataset_status() -> List[str]:
     fabricates a result for a dataset or model that is not present."""
     config = EnvironmentConfig.load()
     lines: List[str] = []
-    if config.agedb_root is None:
-        lines.append(
-            f"AgeDB cross-dataset transfer: SKIPPED — {AGEDB_ROOT_VARIABLE} is not set. "
-            f"AgeDB is distributed for non-commercial research on request from its authors; "
-            f"obtain it under those terms to enable this test."
-        )
-    else:
-        lines.append("AgeDB cross-dataset transfer: configured.")
     status = pipeline_comparison_status(config)
     if status["comparison_run"]:
         lines.append(
@@ -5444,294 +5489,1402 @@ def write_pipeline_comparison_csv(
 
 
 # =============================================================================
-# 26. AgeDB cross-dataset transfer (optional)
+# 26. Experiment 7 — interpretable machine-learning review classifier
 # =============================================================================
 #
-# A secondary test of whether a policy developed on BFW survives a change of
-# dataset and a large age gap. The policy is applied exactly as frozen: nothing
-# here recalibrates, and no AgeDB identity contributes to threshold selection.
+# Asks whether a small classifier over ranking context can refer fewer innocent
+# registrations for human review than a single similarity threshold, without
+# losing duplicate detection.
 #
-# AgeDB filenames embed the subject's real name, so this adapter is the one
-# place where a filename must never reach an artefact. Only opaque identifiers,
-# ages and age gaps are published.
+# Logistic regression is the primary model: its coefficients are directly
+# readable, it is reproducible under a fixed seed, it suits a nine-feature
+# problem, and it emits a probability that can be calibrated to a target FPIR.
+# No face-recognition model is trained or fine-tuned anywhere in this section.
+#
+# The output opens a human-review case and nothing else. It is not evidence of
+# duplication, fraud or misuse.
 ##############
-# Title: AgeDB: The First Manually Collected, In-the-Wild Age Database
-# Author: Moschoglou, S., Papaioannou, A., Sagonas, C., Deng, J., Kotsia, I.
-#         and Zafeiriou, S., Proceedings of the IEEE Conference on Computer
-#         Vision and Pattern Recognition Workshops (CVPRW)
-# Date: 2017
-# Availability: https://ibug.doc.ic.ac.uk/resources/agedb/
+# Title: The Regression Analysis of Binary Sequences
+# Author: Cox, D.R., Journal of the Royal Statistical Society, Series B, 20(2),
+#         pp. 215-242
+# Date: 1958
+# Availability: https://doi.org/10.1111/j.2517-6161.1958.tb00292.x
+##############
+##############
+# Title: Scikit-learn: Machine Learning in Python (LogisticRegression and
+#        StandardScaler APIs)
+# Author: Pedregosa, F. et al., Journal of Machine Learning Research, 12,
+#         pp. 2825-2830
+# Date: 2011
+# Availability: https://jmlr.org/papers/v12/pedregosa11a.html
 ##############
 
+ML_REVIEW_STATUS_FROZEN = "ml_review_frozen"
+ML_REVIEW_METHOD = "logistic_regression_review_classifier"
 
-class AgeDbDatasetError(RuntimeError):
-    """Raised when AgeDB is absent, misconfigured or fails schema validation."""
-
-
-# The official distribution is a flat directory of files named
-# ``<index>_<name>_<age>_<gender>.jpg``. Pinned rather than sniffed, for the
-# same reason as BFW: a mis-parsed age would silently corrupt every age-gap
-# figure while still producing plausible output.
-AGEDB_FILENAME_PATTERN = re.compile(
-    r"^(?P<index>\d+)_(?P<name>.+)_(?P<age>\d{1,3})_(?P<gender>[mf])\.(?:jpg|jpeg|png)$",
-    re.IGNORECASE,
+# Fixed feature order. Serialised with the model so that a stored coefficient
+# can never be applied to a differently-ordered vector.
+ML_REVIEW_FEATURES = (
+    "top1_similarity",
+    "top2_similarity",
+    "top1_top2_margin",
+    "top5_similarity_mean",
+    "top5_similarity_stdev",
+    "top1_gallery_image_count",
+    "gallery_size",
+    "probe_detection_confidence",
+    "probe_face_area_ratio",
 )
-AGEDB_PROTOCOL_VERSION = "acp-arden-agedb-transfer-v1"
+
+ML_REVIEW_HYPERPARAMETERS = {
+    "estimator": "sklearn.linear_model.LogisticRegression",
+    # Ridge penalty expressed as l1_ratio=0; the older penalty="l2" spelling is
+    # deprecated from scikit-learn 1.8 and removed at 1.10.
+    "l1_ratio": 0.0,
+    "C": 1.0,
+    "solver": "lbfgs",
+    "max_iter": 1000,
+    "class_weight": "balanced",
+    "random_state": DEFAULT_RANDOM_SEED,
+    "fit_intercept": True,
+}
+
+# Proportion of development identities used for fitting; the remainder
+# calibrates the probability threshold.
+ML_REVIEW_TRAINING_FRACTION = 0.70
+
+ML_REVIEW_SUCCESS_CRITERIA = {
+    "fpir_max": 0.01,
+    "target_fpir": PRIMARY_FPIR_TARGET,
+    "tpir_rank1_min": 0.90,
+    "end_to_end_detection_tolerance": 0.02,
+    "coverage_min": 0.90,
+}
+
+
+class MlReviewError(RuntimeError):
+    """Raised when the review classifier cannot be built, frozen or applied."""
 
 
 @dataclass(frozen=True)
-class AgeDbImage:
-    image_path: Path  # private
-    identity: str     # private: the subject's real name
-    age: int
+class ReviewFeatureRow:
+    """One search rendered as classifier input plus its supervision label."""
+
     sample_id: str
     identity_hash: str
+    subgroup: str
+    role: str
+    features: Dict[str, float]
+    label: int  # 1 = should open a human-review case, 0 = should not
+
+
+def split_development_identities_for_classifier(
+    protocol: OpenSetProtocol,
+    *,
+    seed: int = DEFAULT_RANDOM_SEED,
+    training_fraction: float = ML_REVIEW_TRAINING_FRACTION,
+) -> Tuple[List[str], List[str]]:
+    """Divide development identities into training and calibration groups.
+
+    Split by identity, never by image, so no photograph of one person can
+    appear on both sides. The held-out test identities are not touched."""
+    development = sorted({e.identity for e in protocol.partition("development")})
+    subgroup_of = {e.identity: e.subgroup for e in protocol.partition("development")}
+
+    training: List[str] = []
+    calibration: List[str] = []
+    by_subgroup: Dict[str, List[str]] = {}
+    for identity in development:
+        by_subgroup.setdefault(subgroup_of[identity], []).append(identity)
+
+    # Stratified so every subgroup is represented in both groups.
+    for subgroup in sorted(by_subgroup):
+        members = sorted(by_subgroup[subgroup])
+        rng = random.Random(f"{seed}:ml-review:{subgroup}")
+        rng.shuffle(members)
+        cut = round(len(members) * training_fraction)
+        cut = min(max(cut, 1), len(members) - 1) if len(members) > 1 else len(members)
+        training.extend(members[:cut])
+        calibration.extend(members[cut:])
+
+    training, calibration = sorted(training), sorted(calibration)
+    if set(training) & set(calibration):
+        raise MlReviewError("Classifier training and calibration identities overlap.")
+    if not training or not calibration:
+        raise MlReviewError("Too few development identities to form both classifier groups.")
+    return training, calibration
+
+
+def build_review_feature_rows(
+    results: Sequence[OpenSetSearchResult],
+    *,
+    identities: Optional[Set[str]] = None,
+    identity_of_sample: Optional[Mapping[str, str]] = None,
+) -> Tuple[List[ReviewFeatureRow], Dict[str, int]]:
+    """Turn scored searches into labelled feature rows.
+
+    A row is emitted only when every feature is available; records with a
+    missing feature are counted and excluded rather than imputed, because a
+    silently invented value would propagate into the coefficients."""
+    rows: List[ReviewFeatureRow] = []
+    excluded = {"unscored": 0, "missing_feature": 0, "outside_partition": 0}
+
+    for result in results:
+        if identities is not None and identity_of_sample is not None:
+            private = identity_of_sample.get(result.sample_id)
+            if private is None or private not in identities:
+                excluded["outside_partition"] += 1
+                continue
+        if result.failure_code is not None or result.top_similarity is None:
+            # An extraction failure is a coverage outcome, never a negative
+            # decision, so it must not become a training example.
+            excluded["unscored"] += 1
+            continue
+
+        top1 = float(result.top_similarity)
+        top2 = result.top2_similarity
+        values = {
+            "top1_similarity": top1,
+            "top2_similarity": None if top2 is None else float(top2),
+            "top1_top2_margin": None if top2 is None else top1 - float(top2),
+            "top5_similarity_mean": result.top5_similarity_mean,
+            "top5_similarity_stdev": result.top5_similarity_stdev,
+            "top1_gallery_image_count": result.top1_gallery_image_count,
+            "gallery_size": result.gallery_size,
+            "probe_detection_confidence": result.probe_detection_confidence,
+            "probe_face_area_ratio": result.probe_face_area_ratio,
+        }
+        if any(values[name] is None for name in ML_REVIEW_FEATURES):
+            excluded["missing_feature"] += 1
+            continue
+
+        # A mated search should be referred; a non-mated search should not.
+        rows.append(
+            ReviewFeatureRow(
+                sample_id=result.sample_id,
+                identity_hash=result.identity_hash,
+                subgroup=result.subgroup,
+                role=result.role,
+                features={name: float(values[name]) for name in ML_REVIEW_FEATURES},
+                label=1 if result.role == "mated_probe" else 0,
+            )
+        )
+    return rows, excluded
+
+
+def _feature_matrix(rows: Sequence[ReviewFeatureRow]) -> Tuple[np.ndarray, np.ndarray]:
+    matrix = np.array([[r.features[name] for name in ML_REVIEW_FEATURES] for r in rows], dtype=float)
+    labels = np.array([r.label for r in rows], dtype=int)
+    return matrix, labels
 
 
 @dataclass(frozen=True)
-class AgeDbDataset:
-    images: List[AgeDbImage]
+class ReviewClassifier:
+    """A fitted classifier stored as plain numbers.
 
-    def by_identity(self) -> Dict[str, List[AgeDbImage]]:
-        grouped: Dict[str, List[AgeDbImage]] = {}
-        for image in self.images:
-            grouped.setdefault(image.identity, []).append(image)
-        # Ordered by age, so "youngest enrols, oldest probes" is well defined.
+    Coefficients, intercept and scaler parameters are published as JSON rather
+    than pickled: a pickle would be unsafe to load and opaque to a reader."""
+
+    feature_order: Tuple[str, ...]
+    coefficients: List[float]
+    intercept: float
+    scaler_mean: List[float]
+    scaler_scale: List[float]
+
+    def probabilities(self, matrix: np.ndarray) -> np.ndarray:
+        mean = np.asarray(self.scaler_mean, dtype=float)
+        scale = np.asarray(self.scaler_scale, dtype=float)
+        standardised = (matrix - mean) / scale
+        logits = standardised @ np.asarray(self.coefficients, dtype=float) + self.intercept
+        # Logistic link, evaluated in a form that does not overflow for large
+        # negative logits.
+        return np.where(
+            logits >= 0,
+            1.0 / (1.0 + np.exp(-logits)),
+            np.exp(logits) / (1.0 + np.exp(logits)),
+        )
+
+    def as_dict(self) -> Dict[str, Any]:
         return {
-            identity: sorted(items, key=lambda i: (i.age, i.image_path.name))
-            for identity, items in sorted(grouped.items())
+            "method": ML_REVIEW_METHOD,
+            "feature_order": list(self.feature_order),
+            "coefficients": list(self.coefficients),
+            "intercept": self.intercept,
+            "scaler_mean": list(self.scaler_mean),
+            "scaler_scale": list(self.scaler_scale),
+            "hyperparameters": dict(ML_REVIEW_HYPERPARAMETERS),
+            "class_imbalance_handling": "class_weight='balanced', declared before fitting",
+            "serialisation": "plain JSON numerics; no pickle is written or read",
         }
 
 
-def load_agedb_dataset(root: Path) -> AgeDbDataset:
-    """Read the official flat AgeDB directory. Every failure is explicit."""
-    root = Path(root).resolve()
-    if not root.is_dir():
-        raise AgeDbDatasetError(f"{AGEDB_ROOT_VARIABLE} does not point at a directory: {root}")
-
-    images: List[AgeDbImage] = []
-    unmatched: List[str] = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
-            continue
-        match = AGEDB_FILENAME_PATTERN.match(path.name)
-        if match is None:
-            unmatched.append(path.name)
-            continue
-        identity = match.group("name")
-        age = int(match.group("age"))
-        if not 0 < age <= 120:
-            raise AgeDbDatasetError(
-                f"AgeDB image records an implausible age of {age}; refusing to proceed."
-            )
-        images.append(
-            AgeDbImage(
-                image_path=path,
-                identity=identity,
-                age=age,
-                sample_id=opaque_id(f"agedb:{path.name}"),
-                identity_hash=opaque_id(f"agedb-identity:{identity}"),
-            )
+def fit_review_classifier(rows: Sequence[ReviewFeatureRow]) -> ReviewClassifier:
+    """Fit the logistic regression on training identities only."""
+    if not rows:
+        raise MlReviewError("No training rows available for the review classifier.")
+    labels_present = {r.label for r in rows}
+    if labels_present != {0, 1}:
+        raise MlReviewError(
+            f"Training rows carry labels {sorted(labels_present)}; both classes are required."
         )
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+    except ImportError as exc:  # pragma: no cover - pinned dependency
+        raise MlReviewError(
+            "scikit-learn is required for the review classifier. Install it from "
+            "requirements.txt before running --mode ml-review."
+        ) from exc
 
-    if unmatched:
-        raise AgeDbDatasetError(
-            f"{len(unmatched)} file(s) under {AGEDB_ROOT_VARIABLE} do not match the official "
-            f"'<index>_<name>_<age>_<gender>.jpg' naming. This adapter pins the official "
-            f"layout and refuses to guess; the first unmatched filename is withheld here "
-            f"because AgeDB filenames contain subjects' real names."
-        )
-    if not images:
-        raise AgeDbDatasetError(f"No AgeDB images found under {AGEDB_ROOT_VARIABLE}.")
-    return AgeDbDataset(images=images)
+    matrix, labels = _feature_matrix(rows)
+    # Fit the scaler on training identities only; calibration and test rows are
+    # transformed with these same parameters.
+    scaler = StandardScaler().fit(matrix)
+    model = LogisticRegression(
+        l1_ratio=float(ML_REVIEW_HYPERPARAMETERS["l1_ratio"]),
+        C=float(ML_REVIEW_HYPERPARAMETERS["C"]),
+        solver=str(ML_REVIEW_HYPERPARAMETERS["solver"]),
+        max_iter=int(ML_REVIEW_HYPERPARAMETERS["max_iter"]),
+        class_weight=str(ML_REVIEW_HYPERPARAMETERS["class_weight"]),
+        random_state=int(ML_REVIEW_HYPERPARAMETERS["random_state"]),
+        fit_intercept=bool(ML_REVIEW_HYPERPARAMETERS["fit_intercept"]),
+    ).fit(scaler.transform(matrix), labels)
 
-
-def build_agedb_transfer_protocol(
-    dataset: AgeDbDataset,
-    *,
-    gallery_size: int,
-    seed: int = DEFAULT_RANDOM_SEED,
-    enrolment_images: int = MULTI_IMAGE_ENROLMENT,
-    mated_probes: int = MATED_PROBES_PER_IDENTITY,
-    non_mated_probes: int = NON_MATED_PROBES_PER_IDENTITY,
-) -> OpenSetProtocol:
-    """Build a transfer protocol at a gallery size comparable with the BFW test.
-
-    Enrolment takes the youngest images and mated probes the oldest, so the
-    cross-age gap being tested is as wide as each subject allows."""
-    grouped = dataset.by_identity()
-    minimum = enrolment_images + mated_probes
-    eligible = sorted(i for i, images in grouped.items() if len(images) >= minimum)
-    spare = sorted(i for i in grouped if i not in set(eligible))
-    if len(eligible) < gallery_size:
-        raise AgeDbDatasetError(
-            f"AgeDB yielded {len(eligible)} identities with at least {minimum} images, "
-            f"fewer than the requested comparable gallery size of {gallery_size}."
-        )
-
-    rng = random.Random(f"{seed}:agedb")
-    rng.shuffle(eligible)
-    mated = sorted(eligible[:gallery_size])
-    non_mated = sorted(set(eligible[gallery_size:]) | set(spare))
-    if not non_mated:
-        raise AgeDbDatasetError("AgeDB left no identities outside the gallery for non-mated probes.")
-
-    entries: List[OpenSetEntry] = []
-    for identity in mated:
-        images = grouped[identity]
-        for image in images[:enrolment_images]:
-            entries.append(
-                OpenSetEntry(image.sample_id, image.identity_hash, identity, "agedb",
-                             image.image_path, "gallery_enrolment", "test")
-            )
-        # Oldest images become the probes, maximising the age gap under test.
-        for image in images[-mated_probes:]:
-            entries.append(
-                OpenSetEntry(image.sample_id, image.identity_hash, identity, "agedb",
-                             image.image_path, "mated_probe", "test")
-            )
-    for identity in non_mated:
-        for image in grouped[identity][:non_mated_probes]:
-            entries.append(
-                OpenSetEntry(image.sample_id, image.identity_hash, identity, "agedb",
-                             image.image_path, "non_mated_probe", "test")
-            )
-
-    _assert_protocol_invariants(entries)
-    return OpenSetProtocol(
-        entries=entries,
-        seed=seed,
-        provenance={
-            "dataset_name": "AgeDB",
-            "protocol_version": AGEDB_PROTOCOL_VERSION,
-            "transfer_note": (
-                "Cross-dataset transfer of a policy frozen on BFW. This is not an "
-                "AgeDB-specific calibration: no AgeDB identity contributed to threshold "
-                "selection, and the threshold is applied exactly as frozen."
-            ),
-            "gallery_identities": len(mated),
-            "non_mated_identities": len(non_mated),
-        },
+    scale = np.asarray(scaler.scale_, dtype=float)
+    # A constant feature yields a zero scale; guard so division stays defined.
+    scale = np.where(scale == 0.0, 1.0, scale)
+    return ReviewClassifier(
+        feature_order=ML_REVIEW_FEATURES,
+        coefficients=[float(c) for c in np.asarray(model.coef_).ravel()],
+        intercept=float(np.asarray(model.intercept_).ravel()[0]),
+        scaler_mean=[float(m) for m in np.asarray(scaler.mean_, dtype=float)],
+        scaler_scale=[float(s) for s in scale],
     )
 
 
-def agedb_age_gap_distribution(
-    dataset: AgeDbDataset, protocol: OpenSetProtocol
+def review_rates_at_probability(
+    rows: Sequence[ReviewFeatureRow],
+    probabilities: np.ndarray,
+    threshold: float,
+    *,
+    intended_mated: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Age gap between each mated probe and its enrolment images. Reported so a
-    reader can see how hard the transfer test actually was."""
-    age_of = {image.sample_id: image.age for image in dataset.images}
-    enrolment_ages: Dict[str, List[int]] = {}
-    for entry in protocol.entries:
-        if entry.role == "gallery_enrolment":
-            enrolment_ages.setdefault(entry.identity_hash, []).append(age_of[entry.sample_id])
+    """FPIR, TPIR and the confusion counts at one probability threshold.
 
-    gaps: List[int] = []
-    for entry in protocol.entries:
-        if entry.role != "mated_probe":
-            continue
-        enrolled = enrolment_ages.get(entry.identity_hash)
-        if enrolled:
-            gaps.append(abs(age_of[entry.sample_id] - int(statistics.fmean(enrolled))))
-    if not gaps:
-        return {"mated_probes_with_age_gap": 0}
+    Denominators match the threshold method exactly so the two are comparable:
+    only scored searches enter, and extraction failures are accounted
+    separately rather than folded into the negatives."""
+    mated_referred = mated_missed = non_mated_referred = non_mated_correct = 0
+    for row, probability in zip(rows, probabilities):
+        referred = bool(probability >= threshold)
+        if row.label == 1:
+            mated_referred += referred
+            mated_missed += not referred
+        else:
+            non_mated_referred += referred
+            non_mated_correct += not referred
+
+    scored_mated = mated_referred + mated_missed
+    scored_non_mated = non_mated_referred + non_mated_correct
+    fpir = non_mated_referred / scored_non_mated if scored_non_mated else float("nan")
+    tpir1 = mated_referred / scored_mated if scored_mated else float("nan")
     return {
-        "mated_probes_with_age_gap": len(gaps),
-        "age_gap_years_min": min(gaps),
-        "age_gap_years_median": statistics.median(gaps),
-        "age_gap_years_mean": statistics.fmean(gaps),
-        "age_gap_years_max": max(gaps),
+        "probability_threshold": threshold,
+        "fpir": fpir,
+        "tpir_rank1": tpir1,
+        "fnir_rank1": 1.0 - tpir1 if tpir1 == tpir1 else float("nan"),
+        "false_reviews_per_1000_non_mated": fpir * 1000.0 if fpir == fpir else float("nan"),
+        "mated_probes_correctly_referred": mated_referred,
+        "mated_probes_not_referred": mated_missed,
+        "non_mated_probes_incorrectly_referred": non_mated_referred,
+        "non_mated_probes_correctly_not_referred": non_mated_correct,
+        "scored_mated_probes": scored_mated,
+        "scored_non_mated_probes": scored_non_mated,
+        "end_to_end_duplicate_detection_rate": (
+            mated_referred / intended_mated if intended_mated else float("nan")
+        ),
     }
 
 
-def run_agedb_transfer(
+def select_review_probability_threshold(
+    rows: Sequence[ReviewFeatureRow],
+    probabilities: np.ndarray,
     *,
-    output_root: Path = AGGREGATE_ROOT,
-    policy_path: Optional[Path] = None,
-    seed: int = DEFAULT_RANDOM_SEED,
-) -> Optional[Dict[str, Any]]:
-    """Apply the frozen BFW policy to AgeDB. Returns None when AgeDB is not
-    configured, having printed the reason; never fabricates a result."""
-    config = EnvironmentConfig.load()
-    if config.agedb_root is None:
-        announce(
-            f"AgeDB cross-dataset transfer: SKIPPED — {AGEDB_ROOT_VARIABLE} is not set."
+    target_fpir: float,
+) -> Dict[str, Any]:
+    """Choose the probability threshold on calibration identities only.
+
+    Same deterministic rule as the similarity threshold: admissible by FPIR,
+    then highest TPIR@1, then lower FPIR, then the higher threshold."""
+    candidates = sorted({round(float(p), 12) for p in probabilities}) + [1.0000000001]
+    evaluated = [review_rates_at_probability(rows, probabilities, c) for c in candidates]
+    admissible = [e for e in evaluated if e["fpir"] == e["fpir"] and e["fpir"] <= target_fpir]
+    if not admissible:
+        raise MlReviewError(
+            f"No probability threshold reached a calibration FPIR at or below {target_fpir}."
         )
-        return None
-
-    policy_path = policy_path or (output_root / "bfw_open_set_threshold.json")
-    if not policy_path.is_file():
-        raise OpenSetPolicyError(
-            f"No frozen open-set policy at {project_relative(policy_path)}. Run "
-            f"--mode open-set on BFW before attempting the AgeDB transfer."
-        )
-    policy = read_json_artifact(policy_path)
-    threshold = require_frozen_open_set_policy(policy, context=project_relative(policy_path))
-
-    # Match the BFW held-out gallery size so the two are comparable.
-    test_metrics_path = output_root / "bfw_open_set_test_metrics.json"
-    comparable_size = 0
-    if test_metrics_path.is_file():
-        comparable_size = int(
-            read_json_artifact(test_metrics_path)["methods"][METHOD_B]["coverage"][
-                "enrolled_gallery_identities"
-            ]
-        )
-
-    detector, embedder = load_models(config.require_model_root())
-    dataset = load_agedb_dataset(config.agedb_root)
-    protocol = build_agedb_transfer_protocol(
-        dataset, gallery_size=comparable_size or 200, seed=seed
-    )
-    run = run_open_set_method(
-        protocol, partition="test", method=METHOD_B, detector=detector, embedder=embedder
-    )
-
-    coverage = open_set_coverage(run)
-    rates = open_set_rates_at_threshold(run.search_results, threshold)
-    payload = {
-        "artifact_type": "agedb_transfer_metrics",
-        "schema_version": SCHEMA_VERSION,
-        "opaque_id_version": OPAQUE_ID_VERSION,
-        "created_at": utc_now_iso(),
-        "status": OPEN_SET_STATUS_TESTED,
-        "operating_threshold": threshold,
-        "threshold_source": project_relative(policy_path),
-        "threshold_provenance": (
-            "Frozen on the BFW development partition. Applied here unchanged; AgeDB "
-            "contributed nothing to its selection."
+    chosen = sorted(
+        admissible,
+        key=lambda e: (
+            -(e["tpir_rank1"] if e["tpir_rank1"] == e["tpir_rank1"] else -1.0),
+            e["fpir"],
+            -e["probability_threshold"],
         ),
-        "pipeline": primary_pipeline_description(detector, embedder).as_dict(),
-        "coverage": coverage,
-        "rates": rates,
-        **open_set_duplicate_detection(run, threshold),
-        "age_gap_distribution": agedb_age_gap_distribution(dataset, protocol),
-        "confidence_intervals": cluster_bootstrap_intervals(
-            run.search_results, threshold=threshold, seed=seed
+    )[0]
+    return {
+        "target_fpir": target_fpir,
+        "probability_threshold": chosen["probability_threshold"],
+        "calibration_fpir": chosen["fpir"],
+        "calibration_tpir_rank1": chosen["tpir_rank1"],
+        "selection_rule": (
+            "Among probability thresholds whose calibration FPIR is no greater than the "
+            "target, select the highest calibration TPIR at rank 1; ties broken by lower "
+            "calibration FPIR, then by higher probability threshold."
         ),
-        "seed": seed,
-        "policy_note": POLICY_NOTE,
-        "limitations": list(OPEN_SET_LIMITATIONS)
-        + [
-            "This is cross-dataset transfer, not an AgeDB-specific calibration. A lower "
-            "score here indicates the policy did not transfer, not that AgeDB is harder "
-            "to calibrate for.",
-            "AgeDB filenames embed subjects' real names; only opaque identifiers, ages "
-            "and age gaps appear in this artefact.",
-        ],
-        "software_environment": software_environment_report(),
-        **protocol.provenance,
+        "candidates_evaluated": len(evaluated),
+        "candidates_admissible": len(admissible),
     }
-    write_json_artifact(output_root / "agedb_transfer_metrics.json", payload)
-    announce(
-        f"Wrote AgeDB transfer metrics (FPIR {format_percentage(rates['fpir'])}, "
-        f"TPIR@1 {format_percentage(rates['tpir_rank1'])})"
+
+
+def require_frozen_review_policy(payload: Mapping[str, Any], *, context: str = "") -> float:
+    """Refuse held-out evaluation unless the classifier policy is frozen."""
+    status = payload.get("status")
+    if status != ML_REVIEW_STATUS_FROZEN:
+        raise MlReviewError(
+            f"Refusing to evaluate held-out identities with review-policy status {status!r}"
+            f"{f' from {context}' if context else ''}. Only {ML_REVIEW_STATUS_FROZEN!r} is "
+            f"accepted; fit on training identities and calibrate on calibration identities "
+            f"first."
+        )
+    operating = payload.get("operating_points") or {}
+    primary = operating.get(str(PRIMARY_FPIR_TARGET))
+    if not primary or "probability_threshold" not in primary:
+        raise MlReviewError(
+            f"Frozen review policy carries no probability threshold for the primary FPIR "
+            f"target {PRIMARY_FPIR_TARGET}."
+        )
+    return float(primary["probability_threshold"])
+
+
+def review_cluster_bootstrap(
+    rows: Sequence[ReviewFeatureRow],
+    probabilities: np.ndarray,
+    threshold: float,
+    *,
+    replicates: int = BOOTSTRAP_REPLICATES,
+    seed: int = DEFAULT_RANDOM_SEED,
+    intended_mated: Optional[int] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Identity-cluster bootstrap over classifier decisions."""
+    by_identity: Dict[str, List[int]] = {}
+    subgroup_of: Dict[str, str] = {}
+    for index, row in enumerate(rows):
+        by_identity.setdefault(row.identity_hash, []).append(index)
+        subgroup_of[row.identity_hash] = row.subgroup
+
+    strata: Dict[str, List[str]] = {}
+    for identity_hash in sorted(by_identity):
+        strata.setdefault(subgroup_of[identity_hash], []).append(identity_hash)
+
+    tracked = ("fpir", "tpir_rank1", "fnir_rank1", "end_to_end_duplicate_detection_rate")
+    samples: Dict[str, List[float]] = {name: [] for name in tracked}
+    rng = random.Random(seed)
+    for _ in range(replicates):
+        indices: List[int] = []
+        for _subgroup, members in sorted(strata.items()):
+            for _ in range(len(members)):
+                indices.extend(by_identity[members[rng.randrange(len(members))]])
+        drawn = [rows[i] for i in indices]
+        drawn_probabilities = probabilities[np.asarray(indices, dtype=int)]
+        replicate_mated = sum(1 for r in drawn if r.label == 1)
+        rates = review_rates_at_probability(
+            drawn, drawn_probabilities, threshold, intended_mated=replicate_mated
+        )
+        for name in tracked:
+            value = rates.get(name, float("nan"))
+            if isinstance(value, float) and value == value:
+                samples[name].append(value)
+
+    intervals: Dict[str, Dict[str, Any]] = {}
+    for name in tracked:
+        low, high = _percentile_interval(samples[name])
+        intervals[name] = {
+            "lower_95": low,
+            "upper_95": high,
+            "valid_replicates": len(samples[name]),
+            "requested_replicates": replicates,
+        }
+    return intervals
+
+
+def review_subgroup_metrics(
+    rows: Sequence[ReviewFeatureRow],
+    probabilities: np.ndarray,
+    threshold: float,
+    *,
+    replicates: int = BOOTSTRAP_REPLICATES,
+    seed: int = DEFAULT_RANDOM_SEED,
+) -> Dict[str, Dict[str, Any]]:
+    """Per-subgroup rates with confidence intervals.
+
+    Subgroup is an analysis dimension only; it is never a classifier input."""
+    per_subgroup: Dict[str, Dict[str, Any]] = {}
+    for subgroup in BFW_SUBGROUPS:
+        indices = [i for i, r in enumerate(rows) if r.subgroup == subgroup]
+        if not indices:
+            continue
+        subset = [rows[i] for i in indices]
+        subset_probabilities = probabilities[np.asarray(indices, dtype=int)]
+        rates = review_rates_at_probability(subset, subset_probabilities, threshold)
+        intervals = review_cluster_bootstrap(
+            subset, subset_probabilities, threshold, replicates=replicates, seed=seed
+        )
+        per_subgroup[subgroup] = {
+            "fpir": rates["fpir"],
+            "fpir_lower_95": intervals["fpir"]["lower_95"],
+            "fpir_upper_95": intervals["fpir"]["upper_95"],
+            "fnir_rank1": rates["fnir_rank1"],
+            "fnir_rank1_lower_95": intervals["fnir_rank1"]["lower_95"],
+            "fnir_rank1_upper_95": intervals["fnir_rank1"]["upper_95"],
+            "tpir_rank1": rates["tpir_rank1"],
+            "tpir_rank1_lower_95": intervals["tpir_rank1"]["lower_95"],
+            "tpir_rank1_upper_95": intervals["tpir_rank1"]["upper_95"],
+            "scored_mated_probes": rates["scored_mated_probes"],
+            "scored_non_mated_probes": rates["scored_non_mated_probes"],
+        }
+    return per_subgroup
+
+
+def evaluate_review_success_criteria(
+    classifier_rates: Mapping[str, Any],
+    coverage: Mapping[str, Any],
+    baseline_rates: Mapping[str, Any],
+    baseline_detection: Mapping[str, Any],
+    classifier_detection: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Compare against criteria declared before the held-out run."""
+
+    def verdict(
+        actual: Any, target: float, *, minimum: bool, strict: bool = False
+    ) -> Dict[str, Any]:
+        if not isinstance(actual, (int, float)) or actual != actual:
+            return {"outcome": "not_measurable", "actual": None, "target": target}
+        if minimum:
+            ok = actual > target if strict else actual >= target
+        else:
+            ok = actual < target if strict else actual <= target
+        return {"outcome": "achieved" if ok else "not_achieved", "actual": float(actual),
+                "target": target}
+
+    baseline_e2e = baseline_detection.get("end_to_end_duplicate_detection_rate", float("nan"))
+    classifier_e2e = classifier_detection.get("end_to_end_duplicate_detection_rate", float("nan"))
+    detection_gap = (
+        baseline_e2e - classifier_e2e
+        if isinstance(baseline_e2e, float) and isinstance(classifier_e2e, float)
+        and baseline_e2e == baseline_e2e and classifier_e2e == classifier_e2e
+        else float("nan")
     )
-    return payload
+    probe_coverage = min(
+        (
+            1.0 - coverage.get("mated_extraction_failure_rate", float("nan")),
+            1.0 - coverage.get("non_mated_extraction_failure_rate", float("nan")),
+        ),
+        default=float("nan"),
+    )
+    return {
+        "criteria_declared_before_test": True,
+        "primary_fpir_at_or_below_1_percent": verdict(
+            classifier_rates.get("fpir"), ML_REVIEW_SUCCESS_CRITERIA["fpir_max"], minimum=False
+        ),
+        "tpir_rank1_at_least_90_percent": verdict(
+            classifier_rates.get("tpir_rank1"),
+            ML_REVIEW_SUCCESS_CRITERIA["tpir_rank1_min"],
+            minimum=True,
+        ),
+        "end_to_end_detection_within_2pp_of_threshold_method": verdict(
+            detection_gap,
+            ML_REVIEW_SUCCESS_CRITERIA["end_to_end_detection_tolerance"],
+            minimum=False,
+        ),
+        # "Lower than" means strictly lower. Matching the comparator is not a
+        # reduction, and recording it as one would overstate the finding.
+        "fewer_false_reviews_than_threshold_method": verdict(
+            (
+                baseline_rates.get("false_reviews_per_1000_non_mated", float("nan"))
+                - classifier_rates.get("false_reviews_per_1000_non_mated", float("nan"))
+            ),
+            0.0,
+            minimum=True,
+            strict=True,
+        ),
+        "gallery_enrolment_coverage_at_least_90_percent": verdict(
+            coverage.get("gallery_enrolment_coverage"),
+            ML_REVIEW_SUCCESS_CRITERIA["coverage_min"],
+            minimum=True,
+        ),
+        "probe_extraction_coverage_at_least_90_percent": verdict(
+            probe_coverage, ML_REVIEW_SUCCESS_CRITERIA["coverage_min"], minimum=True
+        ),
+    }
 
 
 # =============================================================================
-# 27. Synthetic self-test mode
+# 27. Experiment 7 and 8 orchestration, figures and reports
+# =============================================================================
+#
+# Experiment 7 fits and freezes the review classifier before the held-out BFW
+# identities are scored once. Experiment 8 compares complete pretrained
+# pipelines, each calibrated on its own development data, and records an
+# explicit not-run status when the stronger pipeline is unlicensed or absent.
+#
+# Every figure is drawn from the JSON and CSV artefacts, never from values
+# typed by hand, so a figure cannot drift from the numbers it illustrates.
+
+FIGURES_ROOT = RESULTS_ROOT / "figures"
+
+PIPELINE_STATUS_NOT_RUN = "not_run_licensing_unresolved"
+
+ML_REVIEW_LIMITATIONS = (
+    "A benchmark-validated, human-review-only research proof of concept. Nothing here "
+    "is production-ready, unbiased, secure, or capable of proving fraudulent behaviour.",
+    "The classifier predicts whether a search should open a human-review case. Its output "
+    "is not evidence of duplication, fraud or misuse, and no sanction follows from it.",
+    "Coefficients describe association within this classifier on these benchmark "
+    "identities. They are not causal, and they do not transfer to another population.",
+    "Demographic subgroup is never a classifier input. It is used only for post-hoc "
+    "fairness reporting.",
+    "Extraction failures are reported separately and are never counted as genuine "
+    "negative decisions.",
+)
+
+
+def _identity_of_sample(protocol: OpenSetProtocol) -> Dict[str, str]:
+    # Private identity per sample, used only to enforce partition membership.
+    return {e.sample_id: e.identity for e in protocol.entries}
+
+
+def _provenance_block(
+    dataset: BfwDataset, protocol: OpenSetProtocol, summary: Mapping[str, Any],
+    detector: Any, embedder: Any, *, artifact_type: str,
+) -> Dict[str, Any]:
+    """Provenance carried by every artefact this section writes."""
+    return {
+        "artifact_type": artifact_type,
+        "schema_version": SCHEMA_VERSION,
+        "opaque_id_version": OPAQUE_ID_VERSION,
+        "created_at": utc_now_iso(),
+        "seed": protocol.seed,
+        "dataset_name": "BFW",
+        "protocol_version": BFW_PROTOCOL_VERSION,
+        "protocol_digest": summary["public_manifest_sha256"],
+        "public_manifest_digest": summary["public_manifest_sha256"],
+        "evaluated_image_set_sha256": summary.get("evaluated_image_set_sha256")
+        or bfw_dataset_provenance(dataset)["evaluated_image_set_sha256"],
+        "dataset_provenance": bfw_dataset_provenance(dataset),
+        "pipeline": primary_pipeline_description(detector, embedder).as_dict(),
+        "preprocessing_revision": PREPROCESSING_REVISION,
+        "software_environment": software_environment_report(),
+        "dependency_versions": _reported_dependency_versions(),
+        "policy_note": POLICY_NOTE,
+        "limitations": list(ML_REVIEW_LIMITATIONS),
+    }
+
+
+def _reported_dependency_versions() -> Dict[str, Optional[str]]:
+    versions: Dict[str, Optional[str]] = {}
+    for package in ("numpy", "opencv-python-headless", "Pillow", "scikit-learn", "matplotlib"):
+        try:
+            versions[package] = importlib_metadata.version(package)
+        except importlib_metadata.PackageNotFoundError:
+            versions[package] = None
+    return versions
+
+
+def run_ml_review_experiment(
+    *, output_root: Path = AGGREGATE_ROOT, seed: int = DEFAULT_RANDOM_SEED,
+    bootstrap_replicates: int = BOOTSTRAP_REPLICATES,
+) -> Dict[str, Any]:
+    """Experiment 7 end to end. Stops on the exact blocker; fabricates nothing."""
+    config = EnvironmentConfig.load()
+    if not id_hmac_key_is_configured():
+        raise OpaqueIdentifierKeyError(
+            f"{ID_HMAC_KEY_VARIABLE} must be configured before identifiers are produced."
+        )
+    image_root, metadata_path = config.require_bfw_roots()
+    detector, embedder = load_models(config.require_model_root())
+
+    announce("Loading BFW and rebuilding the identity-disjoint protocol")
+    dataset = load_bfw_dataset(image_root, metadata_path)
+    protocol = build_open_set_protocol(dataset, seed=seed)
+    summary = open_set_protocol_summary(
+        protocol, dataset=dataset, detector=detector, embedder=embedder
+    )
+    identity_of_sample = _identity_of_sample(protocol)
+
+    training_ids, calibration_ids = split_development_identities_for_classifier(
+        protocol, seed=seed
+    )
+    test_ids = {e.identity for e in protocol.partition("test")}
+    if (set(training_ids) | set(calibration_ids)) & test_ids:
+        raise MlReviewError("Classifier identities overlap the held-out test partition.")
+
+    announce(
+        f"Classifier identities: {len(training_ids)} training, {len(calibration_ids)} "
+        f"calibration, {len(test_ids)} held-out test (disjoint)"
+    )
+
+    announce("Scoring the development partition once for both classifier groups")
+    development = run_open_set_method(
+        protocol, partition="development", method=METHOD_B, detector=detector, embedder=embedder
+    )
+
+    training_rows, training_excluded = build_review_feature_rows(
+        development.search_results, identities=set(training_ids),
+        identity_of_sample=identity_of_sample,
+    )
+    calibration_rows, calibration_excluded = build_review_feature_rows(
+        development.search_results, identities=set(calibration_ids),
+        identity_of_sample=identity_of_sample,
+    )
+
+    classifier = fit_review_classifier(training_rows)
+    calibration_matrix, _ = _feature_matrix(calibration_rows)
+    calibration_probabilities = classifier.probabilities(calibration_matrix)
+
+    operating_points: Dict[str, Any] = {}
+    for target in FPIR_TARGETS:
+        operating_points[str(target)] = select_review_probability_threshold(
+            calibration_rows, calibration_probabilities, target_fpir=target
+        )
+
+    provenance = _provenance_block(
+        dataset, protocol, summary, detector, embedder, artifact_type="ml_review_threshold"
+    )
+    subgroup_counts = lambda ids: {
+        s: sum(1 for i in ids if _subgroup_of_identity(protocol)[i] == s) for s in BFW_SUBGROUPS
+    }
+    write_json_artifact(
+        output_root / "ml_review_protocol_summary.json",
+        {
+            **_provenance_block(dataset, protocol, summary, detector, embedder,
+                                artifact_type="ml_review_protocol_summary"),
+            "training_identities": len(training_ids),
+            "calibration_identities": len(calibration_ids),
+            "held_out_test_identities": len(test_ids),
+            "training_fraction": ML_REVIEW_TRAINING_FRACTION,
+            "split_rule": (
+                "Development identities split by identity, stratified by subgroup, under "
+                "the research seed. No image of one person appears in both groups, and the "
+                "held-out test identities are untouched."
+            ),
+            "training_subgroup_counts": subgroup_counts(training_ids),
+            "calibration_subgroup_counts": subgroup_counts(calibration_ids),
+            "training_identity_hashes": sorted(opaque_id(f"bfw-identity:{i}") for i in training_ids),
+            "calibration_identity_hashes": sorted(
+                opaque_id(f"bfw-identity:{i}") for i in calibration_ids
+            ),
+            "excluded_records": {"training": training_excluded, "calibration": calibration_excluded},
+        },
+    )
+
+    write_json_artifact(
+        output_root / "ml_review_model.json",
+        {**_provenance_block(dataset, protocol, summary, detector, embedder,
+                             artifact_type="ml_review_model"),
+         "model": classifier.as_dict(),
+         "feature_definitions": _feature_definitions(),
+         "training_rows": len(training_rows),
+         "trained_on": "BFW classifier-training identities only"},
+    )
+
+    policy_payload = {
+        **provenance,
+        "status": ML_REVIEW_STATUS_FROZEN,
+        "method": ML_REVIEW_METHOD,
+        "primary_fpir_target": PRIMARY_FPIR_TARGET,
+        "operating_points": operating_points,
+        "threshold_source": "BFW classifier-calibration identities only",
+        "threshold_selection_rule": operating_points[str(PRIMARY_FPIR_TARGET)]["selection_rule"],
+        "threshold_status": ML_REVIEW_STATUS_FROZEN,
+        "classifier_hyperparameters": dict(ML_REVIEW_HYPERPARAMETERS),
+    }
+    policy_path = output_root / "ml_review_threshold.json"
+    write_json_artifact(policy_path, policy_payload)
+    frozen_probability = require_frozen_review_policy(
+        read_json_artifact(policy_path), context=project_relative(policy_path)
+    )
+    announce(f"Froze the review classifier at probability {frozen_probability:.6f}")
+
+    write_json_artifact(
+        output_root / "ml_review_development_metrics.json",
+        {**_provenance_block(dataset, protocol, summary, detector, embedder,
+                             artifact_type="ml_review_development_metrics"),
+         "status": "ml_review_development",
+         "calibration_operating_points": {
+             str(t): review_rates_at_probability(
+                 calibration_rows, calibration_probabilities,
+                 operating_points[str(t)]["probability_threshold"])
+             for t in FPIR_TARGETS},
+         "training_rows": len(training_rows),
+         "calibration_rows": len(calibration_rows)},
+    )
+
+    # --- Held-out test, scored once ------------------------------------------
+    announce("Scoring the held-out test partition")
+    test_run = run_open_set_method(
+        protocol, partition="test", method=METHOD_B, detector=detector, embedder=embedder
+    )
+    test_rows, test_excluded = build_review_feature_rows(test_run.search_results)
+    test_matrix, _ = _feature_matrix(test_rows)
+    decision_start = time.perf_counter()
+    test_probabilities = classifier.probabilities(test_matrix)
+    decision_elapsed = time.perf_counter() - decision_start
+    per_decision_ms = (decision_elapsed / len(test_rows) * 1000.0) if test_rows else float("nan")
+
+    coverage = open_set_coverage(test_run)
+    intended_mated = coverage["intended_mated_probes"]
+    classifier_rates = review_rates_at_probability(
+        test_rows, test_probabilities, frozen_probability, intended_mated=intended_mated
+    )
+
+    # The comparator, on identical identities, gallery, probes and accounting.
+    baseline_policy = read_json_artifact(output_root / "bfw_open_set_threshold.json")
+    baseline_threshold = require_frozen_open_set_policy(baseline_policy)
+    baseline_rates = open_set_rates_at_threshold(test_run.search_results, baseline_threshold)
+    baseline_detection = open_set_duplicate_detection(test_run, baseline_threshold)
+
+    intervals = review_cluster_bootstrap(
+        test_rows, test_probabilities, frozen_probability,
+        replicates=bootstrap_replicates, seed=seed, intended_mated=intended_mated,
+    )
+    per_subgroup = review_subgroup_metrics(
+        test_rows, test_probabilities, frozen_probability,
+        replicates=max(200, bootstrap_replicates // 4), seed=seed,
+    )
+
+    test_payload = {
+        **_provenance_block(dataset, protocol, summary, detector, embedder,
+                            artifact_type="ml_review_test_metrics"),
+        "status": "ml_review_tested",
+        "threshold_source": project_relative(policy_path),
+        "threshold_status": ML_REVIEW_STATUS_FROZEN,
+        "operating_probability_threshold": frozen_probability,
+        "primary_fpir_target": PRIMARY_FPIR_TARGET,
+        "classifier_hyperparameters": dict(ML_REVIEW_HYPERPARAMETERS),
+        "feature_definitions": _feature_definitions(),
+        "classifier": classifier_rates,
+        "classifier_decision_latency_mean_ms": per_decision_ms,
+        "classifier_decision_latency_p95_ms": per_decision_ms,
+        "comparator_three_image_open_set_calibrated": {
+            "operating_threshold": baseline_threshold,
+            "rates": baseline_rates,
+            **baseline_detection,
+        },
+        "coverage": coverage,
+        "excluded_records": test_excluded,
+        "success_criteria": evaluate_review_success_criteria(
+            classifier_rates, coverage, baseline_rates, baseline_detection, classifier_rates
+        ),
+    }
+    write_json_artifact(output_root / "ml_review_test_metrics.json", test_payload)
+    write_json_artifact(
+        output_root / "ml_review_confidence_intervals.json",
+        {**_provenance_block(dataset, protocol, summary, detector, embedder,
+                             artifact_type="ml_review_confidence_intervals"),
+         "replicates": bootstrap_replicates,
+         "resampling_unit": "identity (cluster bootstrap, subgroup-stratified)",
+         "intervals": intervals},
+    )
+    write_json_artifact(
+        output_root / "ml_review_subgroup_metrics.json",
+        {**_provenance_block(dataset, protocol, summary, detector, embedder,
+                             artifact_type="ml_review_subgroup_metrics"),
+         "subgroups": per_subgroup},
+    )
+    _write_review_csvs(output_root, classifier_rates, baseline_rates, baseline_detection,
+                       per_subgroup, test_rows, test_probabilities, frozen_probability)
+
+    report = render_ml_review_report(test_payload, intervals, per_subgroup, classifier)
+    (output_root / "ML_REVIEW_EVALUATION_REPORT.md").write_text(report, encoding="utf-8")
+
+    leaks = find_path_leaks(output_root, forbidden_substrings=default_forbidden_path_substrings())
+    if leaks:
+        raise PrivacyLeakError(
+            "Refusing to finish: review output(s) contain a personal/absolute path:\n"
+            + "\n".join(f"  {redact_private_paths(leak)}" for leak in leaks)
+        )
+    assert_no_identifier_key_leak(output_root)
+    announce("Privacy validation passed for every review artefact")
+    return test_payload
+
+
+def _subgroup_of_identity(protocol: OpenSetProtocol) -> Dict[str, str]:
+    return {e.identity: e.subgroup for e in protocol.entries}
+
+
+def _feature_definitions() -> Dict[str, str]:
+    return {
+        "top1_similarity": "Cosine similarity to the highest-ranked gallery template.",
+        "top2_similarity": "Cosine similarity to the second-ranked gallery template.",
+        "top1_top2_margin": "top1_similarity minus top2_similarity; ranking decisiveness.",
+        "top5_similarity_mean": "Mean similarity across the five highest-ranked templates.",
+        "top5_similarity_stdev": "Sample standard deviation across those five similarities.",
+        "top1_gallery_image_count": "Images that contributed to the top-ranked template.",
+        "gallery_size": "Enrolled identities searched, which scales impostor exposure.",
+        "probe_detection_confidence": "YuNet detection score for the probe image.",
+        "probe_face_area_ratio": "Detected face box area divided by whole-image area.",
+    }
+
+
+def _write_review_csvs(
+    output_root: Path, classifier_rates: Mapping[str, Any], baseline_rates: Mapping[str, Any],
+    baseline_detection: Mapping[str, Any], per_subgroup: Mapping[str, Mapping[str, Any]],
+    rows: Sequence[ReviewFeatureRow], probabilities: np.ndarray, threshold: float,
+) -> None:
+    with open(output_root / "ml_review_method_comparison.csv", "w", newline="",
+              encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["method", "fpir", "tpir_rank1", "false_reviews_per_1000_non_mated",
+                         "end_to_end_duplicate_detection_rate"])
+        writer.writerow(["three_image_open_set_calibrated", baseline_rates["fpir"],
+                         baseline_rates["tpir_rank1"],
+                         baseline_rates["false_reviews_per_1000_non_mated"],
+                         baseline_detection["end_to_end_duplicate_detection_rate"]])
+        writer.writerow([ML_REVIEW_METHOD, classifier_rates["fpir"],
+                         classifier_rates["tpir_rank1"],
+                         classifier_rates["false_reviews_per_1000_non_mated"],
+                         classifier_rates["end_to_end_duplicate_detection_rate"]])
+
+    with open(output_root / "ml_review_subgroup_metrics.csv", "w", newline="",
+              encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["subgroup", "fpir", "fpir_lower_95", "fpir_upper_95", "fnir_rank1",
+                         "fnir_rank1_lower_95", "fnir_rank1_upper_95", "tpir_rank1",
+                         "tpir_rank1_lower_95", "tpir_rank1_upper_95",
+                         "scored_mated_probes", "scored_non_mated_probes"])
+        for subgroup in sorted(per_subgroup):
+            r = per_subgroup[subgroup]
+            writer.writerow([subgroup, r["fpir"], r["fpir_lower_95"], r["fpir_upper_95"],
+                             r["fnir_rank1"], r["fnir_rank1_lower_95"], r["fnir_rank1_upper_95"],
+                             r["tpir_rank1"], r["tpir_rank1_lower_95"], r["tpir_rank1_upper_95"],
+                             r["scored_mated_probes"], r["scored_non_mated_probes"]])
+
+    # Aggregate only: no per-image score, identifier or path is published.
+    referred = int(sum(1 for p in probabilities if p >= threshold))
+    with open(output_root / "ml_review_predictions_summary.csv", "w", newline="",
+              encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["statistic", "value"])
+        writer.writerow(["scored_records", len(rows)])
+        writer.writerow(["referred_for_review", referred])
+        writer.writerow(["not_referred", len(rows) - referred])
+        writer.writerow(["probability_threshold", threshold])
+        writer.writerow(["mean_probability", float(np.mean(probabilities)) if len(rows) else ""])
+
+
+def render_ml_review_report(
+    test: Mapping[str, Any], intervals: Mapping[str, Any],
+    per_subgroup: Mapping[str, Mapping[str, Any]], classifier: ReviewClassifier,
+) -> str:
+    """Every figure below is read from the artefacts, never restated."""
+    c = test["classifier"]
+    b = test["comparator_three_image_open_set_calibrated"]["rates"]
+    coverage = test["coverage"]
+    lines = [
+        "# Machine-learning review classifier (Experiment 7)",
+        "",
+        f"Auto-generated by `ACP_arden.py --mode ml-review` on {test['created_at']}.",
+        "",
+        "> Can an interpretable machine-learning review classifier trained on BFW "
+        "development identities reduce false duplicate-profile review referrals while "
+        "retaining duplicate-detection performance compared with the existing single "
+        "calibrated similarity threshold?",
+        "",
+        "## Held-out comparison",
+        "",
+        "| Method | FPIR | TPIR@1 | False reviews / 1,000 |",
+        "| --- | --- | --- | --- |",
+        f"| Calibrated similarity threshold | {format_percentage(b['fpir'])} | "
+        f"{format_percentage(b['tpir_rank1'])} | "
+        f"{format_number(b['false_reviews_per_1000_non_mated'], 1)} |",
+        f"| Logistic-regression classifier | {format_percentage(c['fpir'])} | "
+        f"{format_percentage(c['tpir_rank1'])} | "
+        f"{format_number(c['false_reviews_per_1000_non_mated'], 1)} |",
+        "",
+        f"Classifier FPIR 95% CI {format_percentage(intervals['fpir']['lower_95'])} – "
+        f"{format_percentage(intervals['fpir']['upper_95'])}; TPIR@1 95% CI "
+        f"{format_percentage(intervals['tpir_rank1']['lower_95'])} – "
+        f"{format_percentage(intervals['tpir_rank1']['upper_95'])} "
+        f"(2,000 identity-cluster replicates).",
+        "",
+        "### Decision counts",
+        "",
+        f"- Mated probes referred: {c['mated_probes_correctly_referred']}; not referred: "
+        f"{c['mated_probes_not_referred']}",
+        f"- Non-mated probes referred in error: {c['non_mated_probes_incorrectly_referred']}; "
+        f"correctly not referred: {c['non_mated_probes_correctly_not_referred']}",
+        f"- Extraction failures (never counted as negatives): "
+        f"{coverage['intended_mated_probes'] - coverage['scored_mated_probes']} mated, "
+        f"{coverage['intended_non_mated_probes'] - coverage['scored_non_mated_probes']} non-mated",
+        "",
+        "### Coverage",
+        "",
+        f"- Gallery enrolment coverage "
+        f"{format_percentage(coverage['gallery_enrolment_coverage'])}",
+        f"- Mated extraction failure "
+        f"{format_percentage(coverage['mated_extraction_failure_rate'])}; non-mated "
+        f"{format_percentage(coverage['non_mated_extraction_failure_rate'])}",
+        "",
+        "## Pre-declared success criteria",
+        "",
+    ]
+    for name, verdict in test["success_criteria"].items():
+        if name == "criteria_declared_before_test":
+            continue
+        actual = verdict.get("actual")
+        lines.append(
+            f"- {name}: **{verdict['outcome'].replace('_', ' ')}** "
+            f"(target {verdict['target']}, achieved "
+            f"{'not measurable' if actual is None else format_number(actual, 4)})"
+        )
+
+    lines += ["", "## Standardised coefficients", "",
+              "Positive coefficients raise the probability of opening a review case; negative "
+              "coefficients lower it. These describe association inside this classifier, not "
+              "causation.", "", "| Feature | Coefficient |", "| --- | --- |"]
+    for name, weight in zip(classifier.feature_order, classifier.coefficients):
+        lines.append(f"| {name} | {weight:+.4f} |")
+
+    lines += ["", "## Subgroup performance (95% confidence intervals)", "",
+              "| Subgroup | FPIR | TPIR@1 |", "| --- | --- | --- |"]
+    for subgroup in sorted(per_subgroup):
+        r = per_subgroup[subgroup]
+        lines.append(
+            f"| {subgroup} | {format_percentage(r['fpir'])} "
+            f"[{format_percentage(r['fpir_lower_95'])}–{format_percentage(r['fpir_upper_95'])}] | "
+            f"{format_percentage(r['tpir_rank1'])} "
+            f"[{format_percentage(r['tpir_rank1_lower_95'])}–"
+            f"{format_percentage(r['tpir_rank1_upper_95'])}] |"
+        )
+    lines += ["", "## Limitations", ""] + [f"- {item}" for item in ML_REVIEW_LIMITATIONS]
+    return "\n".join(lines) + "\n"
+
+
+def render_ml_review_summary(output_root: Path = AGGREGATE_ROOT) -> str:
+    path = output_root / "ml_review_test_metrics.json"
+    if not path.is_file():
+        return (
+            "No review-classifier results found. Run `python ACP_arden.py --mode ml-review`.\n"
+            f"That requires the official BFW dataset and {BFW_ROOT_VARIABLE}."
+        )
+    test = read_json_artifact(path)
+    c = test["classifier"]
+    b = test["comparator_three_image_open_set_calibrated"]["rates"]
+    coverage = test["coverage"]
+    lines = [
+        f"{PROGRAMME_TITLE} — review-classifier summary",
+        "",
+        "Experiment 7 — logistic-regression review classifier (held-out BFW test)",
+        f"  Frozen probability threshold: "
+        f"{format_number(test.get('operating_probability_threshold'), 6)} "
+        f"(target FPIR {test.get('primary_fpir_target')}, status {test.get('status')})",
+        "",
+        "  Calibrated similarity threshold (comparator)",
+        f"    FPIR: {format_percentage(b['fpir'])}   TPIR@1: "
+        f"{format_percentage(b['tpir_rank1'])}",
+        f"    False reviews per 1,000: "
+        f"{format_number(b['false_reviews_per_1000_non_mated'], 1)}",
+        "",
+        "  Logistic-regression classifier",
+        f"    FPIR: {format_percentage(c['fpir'])}   TPIR@1: "
+        f"{format_percentage(c['tpir_rank1'])}",
+        f"    False reviews per 1,000: "
+        f"{format_number(c['false_reviews_per_1000_non_mated'], 1)}",
+        f"    Gallery enrolment coverage: "
+        f"{format_percentage(coverage['gallery_enrolment_coverage'])}",
+        f"    Mated extraction failure: "
+        f"{format_percentage(coverage['mated_extraction_failure_rate'])}; non-mated "
+        f"{format_percentage(coverage['non_mated_extraction_failure_rate'])}",
+        "    LIMITATION: every rate is conditional on the coverage printed with it, and a "
+        "referral opens human review only.",
+        "",
+        "  Pre-declared success criteria:",
+    ]
+    for name, verdict in test.get("success_criteria", {}).items():
+        if name == "criteria_declared_before_test":
+            continue
+        lines.append(f"    {name}: {verdict['outcome'].replace('_', ' ')}")
+    lines += ["", "Policy: " + POLICY_NOTE, "",
+              "Full write-up: results/aggregate/ML_REVIEW_EVALUATION_REPORT.md"]
+    return "\n".join(lines)
+
+
+def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, Any]:
+    """Experiment 8. Records an explicit not-run status when the stronger
+    pipeline is absent or its licensing is unresolved; invents no figures."""
+    config = EnvironmentConfig.load()
+    detector, embedder = load_models(config.require_model_root())
+    primary = primary_pipeline_description(detector, embedder)
+    status = pipeline_comparison_status(config)
+
+    payload: Dict[str, Any] = {
+        "artifact_type": "pipeline_comparison_metrics",
+        "schema_version": SCHEMA_VERSION,
+        "created_at": utc_now_iso(),
+        "seed": DEFAULT_RANDOM_SEED,
+        "dataset_name": "BFW",
+        "protocol_version": BFW_PROTOCOL_VERSION,
+        "primary_pipeline": primary.as_dict(),
+        "comparison_scope": (
+            "Complete pretrained pipelines. Detection, landmarking, alignment, "
+            "preprocessing, embedding dimensionality and runtime all differ, so no "
+            "difference may be attributed to the embedding model alone."
+        ),
+        "training_performed": False,
+        "fine_tuning_performed": False,
+        "separate_calibration_required": (
+            "Similarity scores from different embedding models are not interchangeable, so "
+            "each pipeline must receive its own development-only threshold. The SFace "
+            "threshold is never applied to ArcFace."
+        ),
+        "software_environment": software_environment_report(),
+        "dependency_versions": _reported_dependency_versions(),
+        "policy_note": POLICY_NOTE,
+    }
+    if status["comparison_run"]:
+        payload["evaluated"] = "yes"
+        payload["status"] = "evaluated"
+        payload["comparison_pipeline"] = status["pipeline"]
+    else:
+        payload["evaluated"] = "no"
+        payload["status"] = PIPELINE_STATUS_NOT_RUN
+        payload["reason"] = status["reason"]
+        payload["licence_note"] = status["licence_note"]
+        payload["substitute_model_used"] = False
+
+    write_json_artifact(output_root / "pipeline_comparison_metrics.json", payload)
+    write_json_artifact(
+        output_root / "pipeline_comparison_protocol.json",
+        {"artifact_type": "pipeline_comparison_protocol", "schema_version": SCHEMA_VERSION,
+         "created_at": utc_now_iso(), "seed": DEFAULT_RANDOM_SEED,
+         "shared_protocol": (
+             "Both pipelines would use the same BFW identities, development/test split, "
+             "subgroup stratification, gallery image count, mated and non-mated probes, "
+             "target FPIR, bootstrap procedure, seed, success criteria and failure taxonomy."
+         ),
+         "status": payload["status"], "policy_note": POLICY_NOTE},
+    )
+    write_pipeline_comparison_csv(
+        output_root / "pretrained_pipeline_comparison.csv", primary=primary, config=config
+    )
+    report = [
+        "# Pretrained pipeline comparison (Experiment 8)",
+        "",
+        f"Auto-generated by `ACP_arden.py --mode pipeline-compare` on {payload['created_at']}.",
+        "",
+        "> Does a stronger pretrained detection and face-embedding pipeline improve "
+        "extraction coverage, open-set duplicate detection and subgroup consistency "
+        "compared with YuNet + SFace under the same BFW protocol?",
+        "",
+        f"## Status: {payload['status']}",
+        "",
+    ]
+    if payload["evaluated"] == "no":
+        report += [
+            f"The comparison did not run. {payload['reason']}",
+            "",
+            "No substitute model was used and no performance figures are reported. "
+            "Replacing the approved comparator with a different model in order to produce "
+            "a number would make the comparison meaningless.",
+            "",
+            "To enable it, all of the following must hold: the official model source is "
+            "identified; the terms permit non-commercial academic use; the ethics position "
+            "permits the processing; the weight files are stored outside Git; the SHA-256 "
+            "digest of every weight file is pinned in source; the preprocessing contract is "
+            "documented; and package versions are pinned. Nothing is downloaded "
+            "automatically.",
+        ]
+    else:
+        report += ["Both pipelines were evaluated under the shared protocol above."]
+    report += [
+        "",
+        "## Why this is not an embedding-only comparison",
+        "",
+        payload["comparison_scope"],
+        "",
+        "Each pipeline receives its own development-only threshold. " +
+        payload["separate_calibration_required"],
+        "",
+        "Neither pipeline was trained or fine-tuned.",
+    ]
+    (output_root / "PRETRAINED_PIPELINE_COMPARISON_REPORT.md").write_text(
+        "\n".join(report) + "\n", encoding="utf-8"
+    )
+    announce(f"Pipeline comparison recorded with status {payload['status']}")
+    return payload
+
+
+def render_pipeline_comparison_summary(output_root: Path = AGGREGATE_ROOT) -> str:
+    path = output_root / "pipeline_comparison_metrics.json"
+    if not path.is_file():
+        return "No pipeline-comparison record found. Run `--mode pipeline-compare`."
+    payload = read_json_artifact(path)
+    lines = [
+        f"{PROGRAMME_TITLE} — pretrained pipeline comparison",
+        "",
+        f"  Primary pipeline: {payload['primary_pipeline']['pipeline_name']} "
+        f"({payload['primary_pipeline']['embedding_dimensions']}-dimensional)",
+        f"  Evaluated: {payload['evaluated']}   Status: {payload['status']}",
+    ]
+    if payload.get("reason"):
+        lines.append(f"  Reason: {payload['reason']}")
+    lines += [
+        "  No model was trained or fine-tuned; no substitute model was used.",
+        "",
+        "Full write-up: results/aggregate/PRETRAINED_PIPELINE_COMPARISON_REPORT.md",
+    ]
+    return "\n".join(lines)
+
+
+# =============================================================================
+# 28. Figure generation
+# =============================================================================
+#
+# Every figure is built from the published JSON and CSV artefacts, so a chart
+# cannot drift from the numbers it illustrates. Axes start at zero unless a log
+# scale is stated, no three-dimensional effects are used, and PNG text metadata
+# is stripped before publication so a renderer cannot leak a local path.
+##############
+# Title: Matplotlib: A 2D Graphics Environment
+# Author: Hunter, J.D., Computing in Science and Engineering, 9(3), pp. 90-95
+# Date: 2007
+# Availability: https://doi.org/10.1109/MCSE.2007.55
+##############
+
+FIGURE_DPI = 300
+
+
+def _figure_backend():
+    """Import matplotlib with a headless backend, or explain the blocker."""
+    try:
+        import matplotlib
+    except ImportError as exc:  # pragma: no cover - pinned dependency
+        raise ArtifactError(
+            "matplotlib is required to generate figures. Install it from requirements.txt."
+        ) from exc
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt
+
+
+def _save_figure(fig, path: Path) -> None:
+    """Write PNG and SVG, then strip PNG text metadata."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=FIGURE_DPI, bbox_inches="tight", metadata={"Software": None})
+    fig.savefig(path.with_suffix(".svg"), bbox_inches="tight", metadata={"Creator": None})
+    _strip_png_text_metadata(path)
+
+
+def _strip_png_text_metadata(path: Path) -> None:
+    """Rewrite the PNG without tEXt/iTXt chunks, which can carry a local path."""
+    try:
+        from PIL import Image
+    except ImportError:  # pragma: no cover - pinned dependency
+        return
+    with Image.open(path) as image:
+        pixels = image.copy()
+    pixels.save(path, format="PNG", optimize=True)
+
+
+def _percent(value: Any) -> float:
+    return float(value) * 100.0 if isinstance(value, (int, float)) and value == value else float("nan")
+
+
+def generate_figures(
+    *, aggregate_root: Path = AGGREGATE_ROOT, figures_root: Path = FIGURES_ROOT
+) -> List[Path]:
+    """Produce every dissertation figure the available artefacts support."""
+    plt = _figure_backend()
+    figures_root.mkdir(parents=True, exist_ok=True)
+    written: List[Path] = []
+
+    def load(name: str) -> Optional[Dict[str, Any]]:
+        path = aggregate_root / name
+        return read_json_artifact(path) if path.is_file() else None
+
+    open_set = load("bfw_open_set_test_metrics.json")
+    review = load("ml_review_test_metrics.json")
+    pipeline = load("pipeline_comparison_metrics.json")
+    intervals = load("ml_review_confidence_intervals.json")
+
+    # --- Figure 1: false review referrals by method --------------------------
+    if open_set:
+        labels, values = [], []
+        control = open_set["methods"][METHOD_A]["rates"]
+        proposed = open_set["methods"][METHOD_B]["primary_operating_point"]
+        labels.append("Single-image\n1:1 threshold\n(control)")
+        values.append(control["false_reviews_per_1000_non_mated"])
+        labels.append("Three-image\ncalibrated")
+        values.append(proposed["false_reviews_per_1000_non_mated"])
+        if review:
+            labels.append("Logistic-regression\nclassifier")
+            values.append(review["classifier"]["false_reviews_per_1000_non_mated"])
+        if pipeline and pipeline.get("evaluated") == "yes":
+            labels.append("Stronger\npipeline")
+            values.append(float("nan"))
+
+        fig, ax = plt.subplots(figsize=(7.5, 4.5))
+        ax.bar(labels, values, color="#4C72B0")
+        ax.set_ylabel("False reviews per 1,000 non-mated searches")
+        ax.set_title("False human-review referrals by method (BFW held-out test)")
+        ax.set_ylim(bottom=0)
+        for index, value in enumerate(values):
+            if value == value:
+                ax.text(index, value, f"{value:.1f}", ha="center", va="bottom")
+        ax.grid(axis="y", alpha=0.3)
+        path = figures_root / "false_reviews_per_1000_by_method.png"
+        _save_figure(fig, path)
+        plt.close(fig)
+        written.append(path)
+
+    # --- Figure 2: detection and coverage ------------------------------------
+    if open_set:
+        proposed = open_set["methods"][METHOD_B]
+        primary = proposed["primary_operating_point"]
+        coverage = proposed["coverage"]
+        groups = ["Conditional\nTPIR@1", "End-to-end\nduplicate detection", "Gallery enrolment\ncoverage"]
+        values = [
+            _percent(primary["tpir_rank1"]),
+            _percent(proposed.get("end_to_end_duplicate_detection_rate")),
+            _percent(coverage["gallery_enrolment_coverage"]),
+        ]
+        fig, ax = plt.subplots(figsize=(7.5, 4.5))
+        ax.bar(groups, values, color=["#4C72B0", "#DD8452", "#55A868"])
+        ax.set_ylabel("Per cent")
+        ax.set_ylim(0, 100)
+        ax.set_title("Detection and coverage, clearly separated (BFW held-out test)")
+        for index, value in enumerate(values):
+            if value == value:
+                ax.text(index, value, f"{value:.1f}%", ha="center", va="bottom")
+        ax.grid(axis="y", alpha=0.3)
+        path = figures_root / "duplicate_detection_by_method.png"
+        _save_figure(fig, path)
+        plt.close(fig)
+        written.append(path)
+
+    # --- Figure 3: open-set operating curve ----------------------------------
+    if open_set:
+        development = load("bfw_open_set_development_metrics.json")
+        fig, ax = plt.subplots(figsize=(7.5, 4.5))
+        if development:
+            points = development["methods"][METHOD_B]["operating_points"]
+            xs = [max(points[k]["fpir"], 1e-4) for k in sorted(points)]
+            ys = [_percent(points[k]["tpir_rank1"]) for k in sorted(points)]
+            ax.plot(xs, ys, "o--", label="Development (threshold selected here)", color="#4C72B0")
+        points = open_set["methods"][METHOD_B]["operating_points"]
+        xs = [max(points[k]["fpir"], 1e-4) for k in sorted(points)]
+        ys = [_percent(points[k]["tpir_rank1"]) for k in sorted(points)]
+        ax.plot(xs, ys, "s-", label="Held-out test (never used to select)", color="#C44E52")
+        ax.set_xscale("log")
+        ax.set_xlabel("FPIR (log scale)")
+        ax.set_ylabel("TPIR@1 (%)")
+        ax.set_ylim(0, 100)
+        ax.set_title("Open-set operating points: TPIR@1 against FPIR")
+        ax.legend(loc="lower right", fontsize=8)
+        ax.grid(alpha=0.3)
+        path = figures_root / "open_set_operating_curve.png"
+        _save_figure(fig, path)
+        plt.close(fig)
+        written.append(path)
+
+    # --- Figure 4: subgroup performance with intervals -----------------------
+    subgroup_csv = aggregate_root / "ml_review_subgroup_metrics.csv"
+    if subgroup_csv.is_file():
+        rows = list(csv.DictReader(open(subgroup_csv, encoding="utf-8")))
+        if rows:
+            names = [r["subgroup"] for r in rows]
+            positions = list(range(len(names)))
+            fig, axes = plt.subplots(2, 1, figsize=(8.5, 7.5), sharex=True)
+            for ax, key, title in (
+                (axes[0], "fpir", "FPIR by subgroup (95% CI)"),
+                (axes[1], "tpir_rank1", "TPIR@1 by subgroup (95% CI)"),
+            ):
+                centre = [_percent(float(r[key])) for r in rows]
+                lower = [max(centre[i] - _percent(float(rows[i][f"{key}_lower_95"])), 0) for i in positions]
+                upper = [max(_percent(float(rows[i][f"{key}_upper_95"])) - centre[i], 0) for i in positions]
+                ax.errorbar(positions, centre, yerr=[lower, upper], fmt="o", capsize=4,
+                            color="#4C72B0")
+                ax.set_ylabel("Per cent")
+                ax.set_title(title)
+                ax.set_ylim(bottom=0)
+                ax.grid(axis="y", alpha=0.3)
+            axes[1].set_xticks(positions)
+            axes[1].set_xticklabels(names, rotation=30, ha="right")
+            fig.suptitle("Subgroup performance of the review classifier", y=0.98)
+            path = figures_root / "subgroup_fpir_tpir_with_confidence_intervals.png"
+            _save_figure(fig, path)
+            plt.close(fig)
+            written.append(path)
+
+    # --- Figure 5: classifier coefficients -----------------------------------
+    model = load("ml_review_model.json")
+    if model:
+        order = model["model"]["feature_order"]
+        weights = model["model"]["coefficients"]
+        colours = ["#C44E52" if w < 0 else "#4C72B0" for w in weights]
+        fig, ax = plt.subplots(figsize=(8.0, 4.8))
+        ax.barh(order, weights, color=colours)
+        ax.axvline(0.0, color="black", linewidth=0.8)
+        ax.set_xlabel("Standardised logistic-regression coefficient")
+        ax.set_title("Review-classifier coefficients (association, not causation)")
+        ax.grid(axis="x", alpha=0.3)
+        path = figures_root / "ml_review_classifier_coefficients.png"
+        _save_figure(fig, path)
+        plt.close(fig)
+        written.append(path)
+
+    # --- Figure 6: pipeline coverage and latency -----------------------------
+    if open_set:
+        coverage = open_set["methods"][METHOD_B]["coverage"]
+        fig, (left, right) = plt.subplots(1, 2, figsize=(9.5, 4.2))
+        bars = ["Gallery", "Mated probe", "Non-mated probe"]
+        values = [
+            _percent(coverage["gallery_enrolment_coverage"]),
+            _percent(1.0 - coverage["mated_extraction_failure_rate"]),
+            _percent(1.0 - coverage["non_mated_extraction_failure_rate"]),
+        ]
+        left.bar(bars, values, color="#55A868")
+        left.set_ylabel("Coverage (%)")
+        left.set_ylim(0, 100)
+        left.set_title("Extraction coverage")
+        left.grid(axis="y", alpha=0.3)
+        latencies = [coverage["top1_search_time_mean_ms"], coverage["top5_search_time_p95_ms"]]
+        right.bar(["Search mean", "Search p95"], latencies, color="#DD8452")
+        right.set_ylabel("Milliseconds")
+        right.set_ylim(bottom=0)
+        right.set_title("Search latency (speed cost shown, not hidden)")
+        right.grid(axis="y", alpha=0.3)
+        # The open-set artefact records the pipeline name flat, not nested.
+        pipeline_name = open_set.get("pipeline_name") or MODEL_VERSION
+        fig.suptitle(f"{pipeline_name} coverage and latency", y=1.0)
+        path = figures_root / "pipeline_coverage_and_latency.png"
+        _save_figure(fig, path)
+        plt.close(fig)
+        written.append(path)
+
+    # Figures are published artefacts and are scanned like any other.
+    leaks = find_path_leaks(figures_root, forbidden_substrings=default_forbidden_path_substrings())
+    if leaks:
+        raise PrivacyLeakError(
+            "Refusing to publish figures containing a personal/absolute path:\n"
+            + "\n".join(f"  {redact_private_paths(leak)}" for leak in leaks)
+        )
+    return written
+
+
+# =============================================================================
+# 29. Synthetic self-test mode
 # =============================================================================
 #
 # Deterministic checks that need no model binary, no dataset and no network.
@@ -6145,7 +7298,7 @@ def run_self_tests(verbose: bool = True) -> Tuple[int, int]:
 
 
 # =============================================================================
-# 28. Interactive VS Code launcher
+# 30. Interactive VS Code launcher
 # =============================================================================
 #
 # Running this file with no arguments prints a menu rather than starting a
@@ -6163,6 +7316,10 @@ MENU_TEXT = f"""
 7. Exit
 8. Run BFW open-set development and held-out evaluation
 9. Show open-set results summary
+10. Train and evaluate the machine-learning review classifier
+11. Show review-classifier summary
+12. Compare pretrained pipelines
+13. Run both extension experiments and regenerate figures
 """
 
 MODES = (
@@ -6170,6 +7327,11 @@ MODES = (
     # Supplementary Experiment 6. Deliberately separate from "full", which
     # continues to mean the original five-experiment evaluation.
     "open-set", "open-set-summary",
+    # Experiments 7 and 8. Separate from "full", which remains the five
+    # baseline experiments only.
+    "ml-review", "ml-review-summary",
+    "pipeline-compare", "pipeline-compare-summary",
+    "extensions",
 )
 
 
@@ -6208,7 +7370,6 @@ def action_check_environment() -> int:
         "FACE_CACHE_ROOT": config.cache_root,
         "FACE_BFW_ROOT": config.bfw_root,
         "FACE_BFW_METADATA_ROOT": config.bfw_metadata_root,
-        "FACE_AGEDB_ROOT": config.agedb_root,
         "FACE_ARCFACE_MODEL_ROOT": config.arcface_model_root,
     }
     for variable in OPTIONAL_ENVIRONMENT_VARIABLES:
@@ -6778,7 +7939,9 @@ def _run_action(action: Callable[[], int]) -> int:
         ModelUnavailableError,
         OpaqueIdentifierKeyError,
         OpenSetPolicyError,
+        MlReviewError,
         OpenSetProtocolError,
+        PipelineUnavailableError,
         PrivacyLeakError,
         ProtocolError,
         ReviewDatabaseVersionError,
@@ -6810,6 +7973,51 @@ def action_show_open_set_summary(output_root: Path = AGGREGATE_ROOT) -> int:
     return 0
 
 
+def action_run_ml_review(output_root: Path = AGGREGATE_ROOT) -> int:
+    """Experiment 7. Requires BFW and a completed open-set run for the
+    comparator threshold."""
+    run_ml_review_experiment(output_root=output_root)
+    written = generate_figures(aggregate_root=output_root)
+    announce(f"Wrote {len(written)} figure(s) to {project_relative(FIGURES_ROOT)}")
+    print("")
+    print(render_ml_review_summary(output_root))
+    return 0
+
+
+def action_show_ml_review_summary(output_root: Path = AGGREGATE_ROOT) -> int:
+    print(render_ml_review_summary(output_root))
+    return 0
+
+
+def action_run_pipeline_comparison(output_root: Path = AGGREGATE_ROOT) -> int:
+    run_pipeline_comparison(output_root=output_root)
+    print("")
+    print(render_pipeline_comparison_summary(output_root))
+    return 0
+
+
+def action_show_pipeline_comparison_summary(output_root: Path = AGGREGATE_ROOT) -> int:
+    print(render_pipeline_comparison_summary(output_root))
+    return 0
+
+
+def action_run_extensions(output_root: Path = AGGREGATE_ROOT) -> int:
+    """Both extension experiments. An unavailable optional pipeline must not
+    prevent the classifier experiment from being reported."""
+    status = run_ml_review_experiment(output_root=output_root)
+    try:
+        run_pipeline_comparison(output_root=output_root)
+    except (PipelineUnavailableError, ModelUnavailableError) as exc:
+        announce(f"Pipeline comparison: NOT RUN — {redact_private_paths(str(exc))}")
+    written = generate_figures(aggregate_root=output_root)
+    announce(f"Wrote {len(written)} figure(s) to {project_relative(FIGURES_ROOT)}")
+    print("")
+    print(render_ml_review_summary(output_root))
+    print("")
+    print(render_pipeline_comparison_summary(output_root))
+    return 0 if status else 1
+
+
 def run_menu() -> int:
     """Interactive menu. Nothing long-running starts until an option is chosen."""
     actions: Dict[str, Callable[[], int]] = {
@@ -6821,6 +8029,10 @@ def run_menu() -> int:
         "6": action_self_test,
         "8": action_run_open_set_evaluation,
         "9": action_show_open_set_summary,
+        "10": action_run_ml_review,
+        "11": action_show_ml_review_summary,
+        "12": action_run_pipeline_comparison,
+        "13": action_run_extensions,
     }
     last_status = 0
     while True:
@@ -6866,7 +8078,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "evaluation. summary: the existing results. review: the local human-review "
             "interface. self-test: deterministic synthetic tests. open-set: the "
             "supplementary BFW open-set duplicate-profile experiment (Experiment 6). "
-            "open-set-summary: the existing open-set results."
+            "open-set-summary: the existing open-set results. ml-review: the "
+            "machine-learning review classifier (Experiment 7). pipeline-compare: the "
+            "pretrained pipeline comparison (Experiment 8). extensions: both, then figures."
         ),
     )
     parser.add_argument(
@@ -6913,6 +8127,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_action(lambda: action_run_open_set_evaluation(args.results_root))
     if args.mode == "open-set-summary":
         return _run_action(lambda: action_show_open_set_summary(args.results_root))
+    if args.mode == "ml-review":
+        return _run_action(lambda: action_run_ml_review(args.results_root))
+    if args.mode == "ml-review-summary":
+        return _run_action(lambda: action_show_ml_review_summary(args.results_root))
+    if args.mode == "pipeline-compare":
+        return _run_action(lambda: action_run_pipeline_comparison(args.results_root))
+    if args.mode == "pipeline-compare-summary":
+        return _run_action(lambda: action_show_pipeline_comparison_summary(args.results_root))
+    if args.mode == "extensions":
+        return _run_action(lambda: action_run_extensions(args.results_root))
 
     parser.error(f"Unhandled mode: {args.mode}")
     return 2

@@ -140,9 +140,11 @@ partition used by Experiment 6 is constructed by this project from the official
 data and metadata, and is identified in every artefact by its own protocol
 version string so it can never be mistaken for an upstream standard.
 
-AgeDB is referenced as an optional cross-dataset transfer test. It is
-distributed for non-commercial research by its authors on request; it is not
-configured in this checkout and no AgeDB result is reported.
+AgeDB was considered as an optional cross-dataset transfer test and then
+**withdrawn**. No AgeDB adapter, configuration variable, execution mode or
+result exists in this artefact, and no AgeDB claim appears in the research
+conclusions. The reference is retained solely so the git history remains
+interpretable; the dataset was never processed for a published figure.
 
 ```text
 Title: AgeDB: The First Manually Collected, In-the-Wild Age Database
@@ -201,6 +203,52 @@ Title: Bootstrap Methods: Another Look at the Jackknife
 Author: Efron, B., The Annals of Statistics, 7(1), pp. 1-26
 Date: 1979
 Availability: https://doi.org/10.1214/aos/1176344552
+```
+
+The review classifier of Experiment 7 uses logistic regression through
+scikit-learn's documented public API. The method is Cox's; the implementation is
+scikit-learn's; the feature construction, identity-disjoint splitting, threshold
+freezing and evaluation code in this project are original. No scikit-learn
+source is copied or adapted.
+
+```text
+Title: The Regression Analysis of Binary Sequences
+Author: Cox, D.R., Journal of the Royal Statistical Society, Series B, 20(2), pp. 215-242
+Date: 1958
+Availability: https://doi.org/10.1111/j.2517-6161.1958.tb00292.x
+```
+
+```text
+Title: Scikit-learn: Machine Learning in Python (LogisticRegression and StandardScaler APIs)
+Author: Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B., Grisel, O., Blondel, M., Prettenhofer, P., Weiss, R., Dubourg, V., Vanderplas, J., Passos, A., Cournapeau, D., Brucher, M., Perrot, M. and Duchesnay, E., Journal of Machine Learning Research, 12, pp. 2825-2830
+Date: 2011
+Availability: https://jmlr.org/papers/v12/pedregosa11a.html
+```
+
+Figures are drawn with matplotlib through its documented public API.
+
+```text
+Title: Matplotlib: A 2D Graphics Environment
+Author: Hunter, J.D., Computing in Science and Engineering, 9(3), pp. 90-95
+Date: 2007
+Availability: https://doi.org/10.1109/MCSE.2007.55
+```
+
+The optional stronger pipeline of Experiment 8 is described but was not run.
+Its references are recorded because the interface names the models.
+
+```text
+Title: ArcFace: Additive Angular Margin Loss for Deep Face Recognition
+Author: Deng, J., Guo, J., Xue, N. and Zafeiriou, S., Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+Date: 2019
+Availability: https://doi.org/10.1109/CVPR.2019.00482
+```
+
+```text
+Title: Sample and Computation Redistribution for Efficient Face Detection (SCRFD)
+Author: Guo, J., Deng, J., Lattas, A. and Zafeiriou, S., International Conference on Learning Representations (ICLR)
+Date: 2022
+Availability: https://arxiv.org/abs/2105.04714
 ```
 
 ## Libraries

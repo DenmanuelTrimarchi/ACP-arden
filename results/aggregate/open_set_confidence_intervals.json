@@ -1,6 +1,6 @@
 {
   "artifact_type": "open_set_confidence_intervals",
-  "created_at": "2026-07-31T02:44:51.123638+00:00",
+  "created_at": "2026-08-01T16:43:54.416999+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
@@ -26,9 +26,9 @@
   },
   "intervals": {
     "end_to_end_duplicate_detection_rate": {
-      "lower_95": 0.842,
+      "lower_95": 0.843,
       "requested_replicates": 2000,
-      "upper_95": 0.899,
+      "upper_95": 0.8990249999999999,
       "valid_replicates": 2000
     },
     "extraction_coverage": {
@@ -38,15 +38,15 @@
       "valid_replicates": 2000
     },
     "fnir_rank1": {
-      "lower_95": 0.05212351368425802,
+      "lower_95": 0.051063829787234005,
       "requested_replicates": 2000,
-      "upper_95": 0.09958850968391326,
+      "upper_95": 0.09850185626618899,
       "valid_replicates": 2000
     },
     "fnir_rank5": {
-      "lower_95": 0.05212351368425802,
+      "lower_95": 0.051063829787234005,
       "requested_replicates": 2000,
-      "upper_95": 0.09958850968391326,
+      "upper_95": 0.09850185626618899,
       "valid_replicates": 2000
     },
     "fpir": {
@@ -56,15 +56,15 @@
       "valid_replicates": 2000
     },
     "tpir_rank1": {
-      "lower_95": 0.9004114903160867,
+      "lower_95": 0.901498143733811,
       "requested_replicates": 2000,
-      "upper_95": 0.947876486315742,
+      "upper_95": 0.948936170212766,
       "valid_replicates": 2000
     },
     "tpir_rank5": {
-      "lower_95": 0.9004114903160867,
+      "lower_95": 0.901498143733811,
       "requested_replicates": 2000,
-      "upper_95": 0.947876486315742,
+      "upper_95": 0.948936170212766,
       "valid_replicates": 2000
     }
   },
@@ -107,6 +107,10 @@
       "opencv-python-headless": {
         "expected": "4.13.0.92",
         "installed": "4.13.0.92"
+      },
+      "scikit-learn": {
+        "expected": "1.9.0",
+        "installed": "1.9.0"
       }
     },
     "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",

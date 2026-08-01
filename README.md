@@ -73,6 +73,10 @@ ACP-arden — Face Verification Research Artefact
 7. Exit
 8. Run BFW open-set development and held-out evaluation
 9. Show open-set results summary
+10. Train and evaluate the machine-learning review classifier
+11. Show review-classifier summary
+12. Compare pretrained pipelines
+13. Run both extension experiments and regenerate figures
 
 Select an option:
 ```
@@ -108,6 +112,13 @@ python ACP_arden.py --mode self-test  # deterministic synthetic tests, no data n
 # Supplementary Experiment 6 (needs the official BFW dataset)
 python ACP_arden.py --mode open-set          # development, freezing, held-out test
 python ACP_arden.py --mode open-set-summary  # headline open-set figures
+
+# Extension experiments 7 and 8
+python ACP_arden.py --mode ml-review                 # train, freeze, evaluate the classifier
+python ACP_arden.py --mode ml-review-summary         # headline classifier figures
+python ACP_arden.py --mode pipeline-compare          # pretrained pipeline comparison
+python ACP_arden.py --mode pipeline-compare-summary  # its status
+python ACP_arden.py --mode extensions                # both, then regenerate figures
 ```
 
 `--mode full` continues to mean exactly the original five-experiment
@@ -136,7 +147,6 @@ cp .env.example .env   # then fill in your own storage paths
 | `FACE_CACHE_ROOT` | Optional embedding cache; leave unset by default |
 | `FACE_BFW_ROOT` | Optional. Extracted BFW tree, for Experiment 6 |
 | `FACE_BFW_METADATA_ROOT` | Optional. Where the official BFW datatable lives; defaults to `FACE_BFW_ROOT` |
-| `FACE_AGEDB_ROOT` | Optional. Flat AgeDB directory, for the cross-dataset transfer test |
 | `FACE_ARCFACE_MODEL_ROOT` | Optional. InsightFace weights; the comparison is reported as not run |
 
 **Datasets.** LFW (Labeled Faces in the Wild) is the primary dataset; CPLFW
@@ -246,7 +256,6 @@ results/aggregate/open_set_confidence_intervals.json
 results/aggregate/open_set_method_comparison.csv
 results/aggregate/pretrained_pipeline_comparison.csv
 results/aggregate/OPEN_SET_EVALUATION_REPORT.md
-results/aggregate/agedb_transfer_metrics.json   (only when AgeDB is configured)
 ```
 
 `duplicate_gallery_metrics.json` is retained unchanged for provenance. It
@@ -405,23 +414,14 @@ open-set identification protocol, and none is implied.**
 
 ### Optional extensions
 
-#### AgeDB cross-dataset transfer (`FACE_AGEDB_ROOT`)
+#### AgeDB cross-dataset transfer — withdrawn, not pursued
 
-Implemented. Distributed for non-commercial research on request from its
-authors; when unset the run prints a skipped-with-reason line and fabricates
-nothing.
+An AgeDB transfer test was implemented and then **deliberately removed**. It is
+not part of this artefact: there is no adapter, no configuration variable, no
+execution mode and no result file, and contract tests assert that none returns.
 
-The transfer applies the **BFW-frozen policy unchanged** — no AgeDB identity
-contributes to threshold selection — at a gallery size matched to the BFW
-held-out test. Enrolment takes each subject's youngest images and probes take
-the oldest, maximising the age gap, and the artefact reports that gap's
-distribution alongside coverage and FPIR/FNIR/TPIR. A poor result here means
-*the policy did not transfer*, not that AgeDB is intrinsically harder.
-
-AgeDB filenames embed subjects' real names (`<index>_<name>_<age>_<gender>.jpg`),
-so this adapter is the one place where a filename must never reach an artefact.
-Only opaque identifiers, ages and gaps are published, and the parser withholds
-the offending filename even in its own error messages.
+It is recorded here only so the git history is interpretable. No AgeDB claim
+appears in the research conclusions.
 
 #### Higher-capacity pipeline comparison (`FACE_ARCFACE_MODEL_ROOT`)
 
@@ -456,6 +456,68 @@ not achieved, or not measurable:
 
 These are research targets, not results, and are not revised after seeing test
 outcomes.
+
+## Extension experiments 7 and 8
+
+### Experiment 7 — interpretable review classifier
+
+> Can an interpretable machine-learning review classifier trained on BFW
+> development identities reduce false duplicate-profile review referrals while
+> retaining duplicate-detection performance compared with the existing single
+> calibrated similarity threshold?
+
+Logistic regression, chosen because it is interpretable, reproducible, suited to
+a nine-feature problem, unlikely to overfit at this size, and emits a
+probability that can be calibrated to a target FPIR. **No face-recognition model
+is trained or fine-tuned.**
+
+The BFW development identities are split again, by identity and stratified
+across the eight subgroups: 70% fit the model, 30% calibrate its probability
+threshold. The held-out test identities are untouched by both.
+
+Features are computed from the gallery search alone — top-1 and top-2
+similarity, their margin, top-5 mean and standard deviation, the images backing
+the top-ranked template, gallery size, probe detection confidence and face-area
+ratio. **Demographic subgroup is never an input**; it is used only for
+post-evaluation fairness reporting. No identity, filename, path, raw embedding
+or label-derived quantity is used. Records missing a feature are excluded and
+counted, never imputed.
+
+The model is published as plain JSON numerics — coefficients, intercept, feature
+order, scaler mean and scale. No pickle is written or read.
+
+### Experiment 8 — stronger pretrained pipeline
+
+> Does a stronger pretrained detection and face-embedding pipeline improve
+> extraction coverage, open-set duplicate detection and subgroup consistency
+> compared with YuNet + SFace under the same BFW protocol?
+
+Reported as **`not_run_licensing_unresolved`**. The InsightFace recognition
+models are published for non-commercial research with a direction to contact the
+project about licensing, and that position is unresolved here. No substitute
+model was used and no figures are invented.
+
+Each pipeline would receive its own development-only threshold, because
+similarity scores from different embedding models are not interchangeable — the
+SFace threshold is never applied to ArcFace. Any such comparison is a
+**complete-pipeline** comparison: detection, landmarking, alignment,
+preprocessing, embedding dimensionality and runtime all differ, so no difference
+could be attributed to the embedding model alone.
+
+### Figures
+
+`results/figures/` holds six figures in PNG (300 dpi) and SVG, each generated
+from the published JSON and CSV artefacts rather than typed values, with PNG
+text metadata stripped and the privacy scan applied:
+
+```text
+false_reviews_per_1000_by_method
+duplicate_detection_by_method
+open_set_operating_curve
+subgroup_fpir_tpir_with_confidence_intervals
+ml_review_classifier_coefficients
+pipeline_coverage_and_latency
+```
 
 ## Opaque identifiers and the required key
 

@@ -2,13 +2,18 @@
 # produced under. The programme refuses to report an evaluation as evidence if
 # an installed version differs (see check_dependency_contract).
 #
-# PyYAML and matplotlib were removed at the open-set revision: neither is
-# imported by the programme or by any test, so pinning them would have
-# overstated what a result actually depends on. Test-only packages moved to
+# PyYAML was removed at the open-set revision: it is imported by neither the
+# programme nor any test. matplotlib returned with Experiment 7, which
+# generates the dissertation figures. Test-only packages live in
 # requirements-dev.txt.
 numpy==2.5.1
 opencv-python-headless==4.13.0.92
 Pillow==12.3.0
+
+# Experiment 7: the review classifier and its figures. Neither the five
+# baseline experiments nor the self-tests import them.
+scikit-learn==1.9.0
+matplotlib==3.11.1
 
 # Used only by the optional local human-review interface (--mode review). The
 # five-experiment evaluation and the self-tests never import it.

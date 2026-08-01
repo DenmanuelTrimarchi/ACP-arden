@@ -1,6 +1,6 @@
 {
   "artifact_type": "bfw_open_set_threshold",
-  "created_at": "2026-07-31T02:44:51.123638+00:00",
+  "created_at": "2026-08-01T16:43:54.416999+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
@@ -99,6 +99,10 @@
       "opencv-python-headless": {
         "expected": "4.13.0.92",
         "installed": "4.13.0.92"
+      },
+      "scikit-learn": {
+        "expected": "1.9.0",
+        "installed": "1.9.0"
       }
     },
     "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",
