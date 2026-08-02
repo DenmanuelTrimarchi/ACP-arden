@@ -14,7 +14,7 @@ import csv
 import json
 import math
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Callable, Dict, List
 
 import numpy as np
 import pytest
@@ -774,3 +774,159 @@ def test_section_numbers_are_contiguous_and_documented() -> None:
     assert numbers == list(range(1, len(numbers) + 1))
     assert len(numbers) == 30
     assert "thirty numbered sections" in _project_file("CONVERSION_MAP.md")
+
+
+# --- Experiment 8 evaluation path (synthetic stubs, no real weights) ----------
+
+
+def _stub_pipeline(dimensions: int, seed_offset: int) -> Callable[..., Any]:
+    """A deterministic stand-in producing embeddings of a chosen width.
+
+    Used to prove the comparison machinery without any pretrained weights."""
+
+    def _embed(entry, detector, embedder):
+        seed = (int(entry.identity_hash[:8], 16) + seed_offset) % (2**32)
+        vector = np.random.default_rng(seed).normal(size=dimensions)
+        return vector / float(np.linalg.norm(vector)), None, {
+            "probe_detection_confidence": 0.9,
+            "probe_face_area_ratio": 0.5,
+        }
+
+    return _embed
+
+
+def test_each_pipeline_receives_its_own_development_threshold(tmp_path: Path) -> None:
+    """Similarity scales differ between embedding models, so one threshold must
+    never be reused for the other."""
+    protocol = _protocol(tmp_path)
+    results = {}
+    for name, (dims, offset) in {"primary": (128, 0), "comparator": (512, 7)}.items():
+        run_dev = acp.run_open_set_method(
+            protocol, partition="development", method=acp.METHOD_B,
+            detector=None, embedder=None,  # type: ignore[arg-type]
+            embed_fn=_stub_pipeline(dims, offset),
+        )
+        results[name] = acp.select_open_set_threshold(
+            run_dev.search_results, target_fpir=EXPECTED_PRIMARY_FPIR_TARGET
+        )["threshold"]
+    # Two independently calibrated thresholds, each from its own scores.
+    assert set(results) == {"primary", "comparator"}
+    assert all(isinstance(v, float) for v in results.values())
+
+
+def test_both_pipelines_traverse_the_identical_protocol(tmp_path: Path) -> None:
+    protocol = _protocol(tmp_path)
+    runs = [
+        acp.run_open_set_method(
+            protocol, partition="test", method=acp.METHOD_B,
+            detector=None, embedder=None,  # type: ignore[arg-type]
+            embed_fn=_stub_pipeline(dims, offset),
+        )
+        for dims, offset in ((128, 0), (512, 7))
+    ]
+    assert {r.sample_id for r in runs[0].search_results} == {
+        r.sample_id for r in runs[1].search_results
+    }
+    assert runs[0].gallery_size == runs[1].gallery_size
+
+
+def test_held_out_identities_never_influence_threshold_selection(tmp_path: Path) -> None:
+    """Calibration reads the development partition only."""
+    protocol = _protocol(tmp_path)
+    development = {e.identity for e in protocol.partition("development")}
+    test = {e.identity for e in protocol.partition("test")}
+    assert development.isdisjoint(test)
+    run_dev = acp.run_open_set_method(
+        protocol, partition="development", method=acp.METHOD_B,
+        detector=None, embedder=None,  # type: ignore[arg-type]
+        embed_fn=_stub_pipeline(128, 0),
+    )
+    chosen = acp.select_open_set_threshold(
+        run_dev.search_results, target_fpir=EXPECTED_PRIMARY_FPIR_TARGET
+    )
+    sample_ids = {r.sample_id for r in run_dev.search_results}
+    test_samples = {e.sample_id for e in protocol.partition("test")}
+    assert sample_ids.isdisjoint(test_samples)
+    assert chosen["threshold"] is not None
+
+
+def test_a_status_only_run_never_claims_evaluation() -> None:
+    """Readiness alone must not set evaluated=yes."""
+    root = Path(acp.__file__).parent / "results" / "aggregate"
+    payload = json.loads((root / "pipeline_comparison_metrics.json").read_text(encoding="utf-8"))
+    if payload["evaluated"] == "no":
+        assert payload.get("held_out_metrics") is None
+        assert payload.get("comparison_pipeline") is None
+        assert payload["status"].startswith("not_run_")
+    else:
+        assert payload.get("held_out_metrics")
+
+
+def test_the_comparison_guard_rejects_evaluation_without_metrics() -> None:
+    assert issubclass(acp.PipelineComparisonError, RuntimeError)
+    source = _project_file("ACP_arden.py")
+    assert "cannot be marked as evaluated without held-out metrics" in source
+
+
+def test_automatic_model_download_is_disabled() -> None:
+    source = _project_file("ACP_arden.py")
+    assert "download=False" in source
+    assert "download_zip=False" in source
+
+
+def test_a_hash_mismatch_is_refused(tmp_path: Path) -> None:
+    impostor = tmp_path / acp.ARCFACE_DETECTOR_FILENAME
+    impostor.write_bytes(b"not the pinned model")
+    with pytest.raises(acp.ModelUnavailableError):
+        acp.verify_model_file(impostor, "0" * 64)
+
+
+def test_the_arcface_embedder_refuses_unexpected_dimensions() -> None:
+    class _Face:
+        # Minimal stand-in for an InsightFace detection result.
+        bbox = np.asarray([0.0, 0.0, 8.0, 8.0])
+        kps = np.zeros((5, 2))
+        det_score = 0.9
+        normed_embedding = np.ones(128) / math.sqrt(128)
+
+    class _App:
+        def get(self, bgr):
+            return [_Face()]
+
+    detector = acp.ArcFaceDetector(_App(), "digest")
+    detector.detect_single_face(np.zeros((8, 8, 3), dtype=np.uint8))
+    embedder = acp.ArcFaceEmbedder(detector, "digest", dimensions=512)
+    with pytest.raises(acp.SimilarityError):
+        embedder.embed(np.zeros((8, 8, 3), dtype=np.uint8), np.zeros(15))
+
+
+def test_the_arcface_detector_requires_exactly_one_face() -> None:
+    class _App:
+        def __init__(self, count):
+            self._count = count
+
+        def get(self, bgr):
+            return [object()] * self._count
+
+    for count in (0, 2):
+        detector = acp.ArcFaceDetector(_App(count), "digest")
+        with pytest.raises(acp.FaceCountError) as raised:
+            detector.detect_single_face(np.zeros((8, 8, 3), dtype=np.uint8))
+        assert raised.value.face_count == count
+
+
+def test_the_comparison_artefact_carries_full_provenance() -> None:
+    root = Path(acp.__file__).parent / "results" / "aggregate"
+    payload = json.loads((root / "pipeline_comparison_metrics.json").read_text(encoding="utf-8"))
+    required = (
+        "artifact_type", "schema_version", "created_at", "seed", "status", "evaluated",
+        "dataset_name", "protocol_version", "protocol_digest", "public_manifest_digest",
+        "primary_pipeline", "comparison_pipeline", "model_filenames", "model_digests",
+        "software_environment", "dependency_versions", "preprocessing_revision",
+        "threshold_policy", "calibration_partition", "held_out_partition", "policy_note",
+        "licence_note", "preconditions", "limitations",
+    )
+    missing = [key for key in required if key not in payload]
+    assert not missing, f"missing provenance: {missing}"
+    if payload["evaluated"] == "no":
+        assert payload["reason"]

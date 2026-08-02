@@ -5403,6 +5403,69 @@ class PipelineUnavailableError(RuntimeError):
     """Raised when an optional pipeline cannot be configured, verified or loaded."""
 
 
+class PipelineComparisonError(RuntimeError):
+    """Raised when a comparison would be recorded without real held-out metrics."""
+
+
+class ArcFaceDetector:
+    """Adapter exposing InsightFace detection through the project's protocol.
+
+    Requires exactly one face, matching the rule the primary pipeline applies,
+    so the two remain comparable."""
+
+    def __init__(self, app: Any, model_sha256: str):
+        self._app = app
+        self.model_sha256 = model_sha256
+        self._last_faces: List[Any] = []
+
+    def detect_single_face(self, bgr: np.ndarray) -> np.ndarray:
+        faces = self._app.get(bgr)
+        self._last_faces = list(faces)
+        if len(faces) != 1:
+            raise FaceCountError(len(faces))
+        face = faces[0]
+        box = np.asarray(face.bbox, dtype=np.float64)
+        score = float(getattr(face, "det_score", 0.0))
+        # Fifteen columns to match the YuNet row shape: box, five landmarks,
+        # then the detection score in the final position.
+        row = np.zeros(15, dtype=np.float64)
+        row[0], row[1] = box[0], box[1]
+        row[2], row[3] = box[2] - box[0], box[3] - box[1]
+        landmarks = np.asarray(getattr(face, "kps", np.zeros((5, 2))), dtype=np.float64)
+        row[4:14] = landmarks.reshape(-1)[:10]
+        row[14] = score
+        return row
+
+    def last_embedding(self) -> Optional[np.ndarray]:
+        if not self._last_faces:
+            return None
+        embedding = getattr(self._last_faces[0], "normed_embedding", None)
+        if embedding is None:
+            embedding = getattr(self._last_faces[0], "embedding", None)
+        return None if embedding is None else np.asarray(embedding, dtype=np.float64)
+
+
+class ArcFaceEmbedder:
+    """Return the 512-dimensional template produced during detection."""
+
+    def __init__(self, detector: ArcFaceDetector, model_sha256: str, dimensions: int = 512):
+        self._detector = detector
+        self.model_sha256 = model_sha256
+        self._dimensions = dimensions
+
+    def embed(self, bgr: np.ndarray, face_row: np.ndarray) -> np.ndarray:
+        embedding = self._detector.last_embedding()
+        if embedding is None:
+            raise SimilarityError("The comparison pipeline produced no embedding.")
+        if embedding.shape[0] != self._dimensions:
+            # Refuse an unexpected dimensionality rather than compare templates
+            # from two different spaces.
+            raise SimilarityError(
+                f"Expected {self._dimensions}-dimensional embeddings, got {embedding.shape[0]}."
+            )
+        return embedding
+
+
 @dataclass(frozen=True)
 class PipelineDescription:
     """Everything that must match before two runs are comparable. Published in
@@ -6859,6 +6922,70 @@ def render_ml_review_summary(output_root: Path = AGGREGATE_ROOT) -> str:
     return "\n".join(lines)
 
 
+def evaluate_one_pipeline_for_comparison(
+    protocol: OpenSetProtocol,
+    *,
+    name: str,
+    detector: FaceDetector,
+    embedder: FaceEmbedder,
+    seed: int = DEFAULT_RANDOM_SEED,
+    bootstrap_replicates: int = BOOTSTRAP_REPLICATES,
+) -> Dict[str, Any]:
+    """Develop, freeze and evaluate one pipeline over the shared protocol.
+
+    Each pipeline receives its own development-only threshold: similarity
+    scores from different embedding models are not interchangeable."""
+    development = run_open_set_method(
+        protocol, partition="development", method=METHOD_B,
+        detector=detector, embedder=embedder,
+    )
+    operating_points = {
+        str(target): select_open_set_threshold(
+            development.search_results, target_fpir=target
+        )
+        for target in FPIR_TARGETS
+    }
+    # Freeze each pipeline threshold before held-out evaluation.
+    frozen = float(operating_points[str(PRIMARY_FPIR_TARGET)]["threshold"])
+
+    test = run_open_set_method(
+        protocol, partition="test", method=METHOD_B, detector=detector, embedder=embedder,
+    )
+    coverage = open_set_coverage(test)
+    rates = open_set_rates_at_threshold(test.search_results, frozen)
+    intervals = cluster_bootstrap_intervals(
+        test.search_results, threshold=frozen, replicates=bootstrap_replicates, seed=seed
+    )
+    per_subgroup = subgroup_open_set_metrics(
+        test.search_results, threshold=frozen,
+        replicates=max(200, bootstrap_replicates // 4), seed=seed,
+    )
+
+    failures = {"zero_faces": 0, "multiple_faces": 0, "image_error": 0,
+                GALLERY_REFERENCE_UNAVAILABLE: 0}
+    for row in test.search_results:
+        if row.failure_code is None:
+            continue
+        key = row.failure_code.split(":", 1)[0]
+        failures[key] = failures.get(key, 0) + 1
+    for outcome in test.enrolment_outcomes:
+        if not outcome.enrolled and outcome.failure_code:
+            failures[outcome.failure_code] = failures.get(outcome.failure_code, 0) + 1
+
+    return {
+        "pipeline_name": name,
+        "development_threshold": frozen,
+        "threshold_status": OPEN_SET_STATUS_FROZEN,
+        "operating_points": operating_points,
+        "rates": rates,
+        "coverage": coverage,
+        "confidence_intervals": intervals,
+        "subgroups": per_subgroup,
+        "failure_breakdown": failures,
+        **open_set_duplicate_detection(test, frozen),
+    }
+
+
 def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, Any]:
     """Experiment 8. Records an explicit not-run status when the stronger
     pipeline is absent or its licensing is unresolved; invents no figures."""
@@ -6866,6 +6993,42 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
     detector, embedder = load_models(config.require_model_root())
     primary = primary_pipeline_description(detector, embedder)
     status = pipeline_comparison_status(config)
+
+    # Real held-out metrics, computed only when every precondition holds.
+    comparison_metrics: Optional[Dict[str, Any]] = None
+    protocol_digest: Optional[str] = None
+    evaluated_image_digest: Optional[str] = None
+    if status["comparison_run"]:
+        image_root, metadata_path = config.require_bfw_roots()
+        dataset = load_bfw_dataset(image_root, metadata_path)
+        protocol = build_open_set_protocol(dataset, seed=DEFAULT_RANDOM_SEED)
+        summary = open_set_protocol_summary(
+            protocol, dataset=dataset, detector=detector, embedder=embedder
+        )
+        protocol_digest = summary["public_manifest_sha256"]
+        evaluated_image_digest = bfw_dataset_provenance(dataset)["evaluated_image_set_sha256"]
+
+        app, arcface_description = load_arcface_pipeline(config)
+        arcface_detector = ArcFaceDetector(app, arcface_description.model_sha256["detector"])
+        arcface_embedder = ArcFaceEmbedder(
+            arcface_detector, arcface_description.model_sha256["recognition"],
+            dimensions=arcface_description.embedding_dimensions,
+        )
+        # Both pipelines traverse the identical protocol: same identities, same
+        # split, same roles, same failure taxonomy.
+        comparison_metrics = {
+            primary.pipeline_name: evaluate_one_pipeline_for_comparison(
+                protocol, name=primary.pipeline_name, detector=detector, embedder=embedder,
+            ),
+            arcface_description.pipeline_name: evaluate_one_pipeline_for_comparison(
+                protocol, name=arcface_description.pipeline_name,
+                detector=arcface_detector, embedder=arcface_embedder,
+            ),
+        }
+        if not comparison_metrics:
+            raise PipelineComparisonError(
+                "The comparison cannot be marked as evaluated without held-out metrics."
+            )
 
     payload: Dict[str, Any] = {
         "artifact_type": "pipeline_comparison_metrics",
@@ -6903,14 +7066,47 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
         "weights_downloaded_automatically": False,
         "ownership_claimed": False,
     }
-    if status["comparison_run"]:
+    # evaluated=yes requires real held-out metrics, never readiness alone.
+    if status["comparison_run"] and comparison_metrics:
         payload["evaluated"] = "yes"
         payload["status"] = status["status"]
         payload["comparison_pipeline"] = status["pipeline"]
+        payload["held_out_metrics"] = comparison_metrics
     else:
         payload["evaluated"] = "no"
         payload["status"] = status["status"]
-        payload["reason"] = status["reason"]
+        payload["reason"] = status["reason"] or (
+            "Preconditions were met but no held-out metrics were produced."
+        )
+        payload["comparison_pipeline"] = None
+        payload["held_out_metrics"] = None
+    payload["protocol_digest"] = protocol_digest
+    payload["public_manifest_digest"] = protocol_digest
+    payload["evaluated_image_set_sha256"] = evaluated_image_digest
+    payload["preprocessing_revision"] = PREPROCESSING_REVISION
+    payload["model_filenames"] = {
+        "primary": [YUNET_FILENAME, SFACE_FILENAME],
+        "comparison": [ARCFACE_DETECTOR_FILENAME, ARCFACE_RECOGNITION_FILENAME],
+    }
+    payload["model_digests"] = {
+        "primary": primary.model_sha256,
+        "comparison": (
+            payload["comparison_pipeline"]["model_sha256"]
+            if payload["comparison_pipeline"] else
+            {"detector": ARCFACE_DETECTOR_SHA256, "recognition": ARCFACE_RECOGNITION_SHA256}
+        ),
+    }
+    payload["threshold_policy"] = (
+        "Each pipeline is calibrated on the BFW development partition only and its "
+        "threshold frozen before the held-out identities are scored once."
+    )
+    payload["calibration_partition"] = (
+        "BFW development identities, identity-disjoint from the held-out test partition."
+    )
+    payload["held_out_partition"] = (
+        "BFW test identities, never used for fitting or threshold selection."
+    )
+    payload["limitations"] = list(OPEN_SET_LIMITATIONS)
 
     write_json_artifact(output_root / "pipeline_comparison_metrics.json", payload)
     write_json_artifact(
