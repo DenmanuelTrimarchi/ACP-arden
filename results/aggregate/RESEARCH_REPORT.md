@@ -38,7 +38,12 @@ Pooled over 200 identities: FPIR 0.14% [0.00%–0.35%], TPIR@1 94.58% [92.41%–
 
 ## 9. Profile-photo identity consistency
 
-Of 1000 photographs, 872 were consistent with their profile template, 70 became review candidates, 48 failed extraction and 10 had no enrolled reference.
+| Pipeline | Consistent | Inconsistent | Control identified | Control false-consistent | Extraction failures |
+| --- | --- | --- | --- | --- | --- |
+| insightface-scrfd-arcface-buffalo_l | 967 | 32 | 2983 | 4 | 1 |
+| opencv-sface-2021dec-yunet-2023mar | 872 | 70 | 2844 | 15 | 48 |
+
+The four outcomes are not equivalent. A consistent photograph opens no case. An inconsistent one opens a consistency review. A mismatched control is correctly identified when it falls below threshold and false-consistent when it does not. An extraction failure resolves nothing and is an unresolved outcome rather than a decision.
 
 A non-match indicates that the photograph is inconsistent with the enrolled facial template under the evaluated model and threshold. It does not prove that the photograph belongs to another person or that fraud occurred. Pose, lighting, occlusion, image quality, age difference, face-detection failure and model error can all produce the same result. An inconsistent photograph opens a human-review case; a consistent one does not, and an extraction failure resolves nothing.
 

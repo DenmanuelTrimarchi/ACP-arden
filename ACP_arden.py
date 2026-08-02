@@ -5215,7 +5215,9 @@ def run_open_set_experiment(
         output_root / "profile_photo_consistency.json",
         {"artifact_type": "profile_photo_consistency", **consistency, **provenance},
     )
-    write_profile_consistency_artefacts({**consistency, **provenance}, output_root)
+    write_profile_consistency_artefacts(
+        {MODEL_VERSION: consistency}, output_root, provenance=provenance
+    )
     by_sex = sex_aggregated_metrics(
         proposed_test.search_results, threshold=frozen_threshold,
         replicates=bootstrap_replicates, seed=seed,
@@ -7744,6 +7746,19 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
          "limitations": payload["limitations"],
          "policy_note": POLICY_NOTE},
     )
+    per_pipeline_consistency = {
+        name: metrics["profile_photo_consistency"]
+        for name, metrics in (comparison_metrics or {}).items()
+        if metrics.get("profile_photo_consistency")
+    }
+    if per_pipeline_consistency:
+        write_profile_consistency_artefacts(
+            per_pipeline_consistency, output_root,
+            provenance={"status": payload["status"], "seed": DEFAULT_RANDOM_SEED,
+                        "created_at": utc_now_iso(), "policy_note": POLICY_NOTE,
+                        "interpretation_note": PROFILE_CONSISTENCY_NOTE},
+        )
+
     write_pipeline_performance_csv(
         output_root / "pretrained_pipeline_comparison.csv", payload=payload
     )
@@ -8287,26 +8302,42 @@ def write_implementation_layer_artefacts(
     return rows
 
 
+CONSISTENCY_OUTCOME_FIELDS = (
+    "photographs_assessed",
+    "consistent_same_person_photographs",
+    "inconsistent_review_candidates",
+    "mismatched_controls_correctly_identified",
+    "mismatched_controls_false_consistent",
+    "extraction_failures",
+    "mismatched_control_extraction_failures",
+    "gallery_reference_unavailable",
+)
+
+
 def write_profile_consistency_artefacts(
-    consistency: Mapping[str, Any], aggregate_root: Path = AGGREGATE_ROOT
+    per_pipeline: Mapping[str, Mapping[str, Any]],
+    aggregate_root: Path = AGGREGATE_ROOT,
+    provenance: Optional[Mapping[str, Any]] = None,
 ) -> None:
-    """Publish the consistency outcomes as JSON and CSV. Aggregates only."""
+    """Publish consistency outcomes for every evaluated pipeline.
+
+    Aggregate counts only; no individual photograph, score or identity."""
     write_json_artifact(
         aggregate_root / "profile_photo_consistency_metrics.json",
-        {"artifact_type": "profile_photo_consistency_metrics", **dict(consistency)},
+        {
+            "artifact_type": "profile_photo_consistency_metrics",
+            "pipelines": {name: dict(entry) for name, entry in per_pipeline.items()},
+            "outcome_fields": list(CONSISTENCY_OUTCOME_FIELDS),
+            **(dict(provenance) if provenance else {}),
+        },
     )
-    fields = [
-        "consistent_same_person_photographs", "inconsistent_review_candidates",
-        "mismatched_controls_correctly_identified", "mismatched_controls_false_consistent",
-        "extraction_failures", "mismatched_control_extraction_failures",
-        "gallery_reference_unavailable", "photographs_assessed",
-    ]
     with open(aggregate_root / "profile_photo_consistency_metrics.csv", "w", newline="",
               encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["outcome", "count"])
-        for name in fields:
-            writer.writerow([name, consistency.get(name, "")])
+        writer.writerow(["pipeline", "outcome", "count"])
+        for name, entry in per_pipeline.items():
+            for field_name in CONSISTENCY_OUTCOME_FIELDS:
+                writer.writerow([name, field_name, entry.get(field_name, "")])
 
 
 def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
@@ -8414,13 +8445,33 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             ]
 
     if consistency:
+        # Report every evaluated pipeline, and the mismatched controls beside
+        # the same-person outcomes: the control is what shows whether the
+        # threshold separates the two cases at all.
+        per_pipeline = {
+            name: metrics["profile_photo_consistency"]
+            for name, metrics in ((pipeline or {}).get("held_out_metrics") or {}).items()
+            if metrics.get("profile_photo_consistency")
+        } or {MODEL_VERSION: consistency}
+        lines += ["", "## 9. Profile-photo identity consistency", "",
+                  "| Pipeline | Consistent | Inconsistent | Control identified | "
+                  "Control false-consistent | Extraction failures |",
+                  "| --- | --- | --- | --- | --- | --- |"]
+        for name, entry in per_pipeline.items():
+            lines.append(
+                f"| {name} | {entry['consistent_same_person_photographs']} | "
+                f"{entry['inconsistent_review_candidates']} | "
+                f"{entry.get('mismatched_controls_correctly_identified', 'n/a')} | "
+                f"{entry.get('mismatched_controls_false_consistent', 'n/a')} | "
+                f"{entry['extraction_failures']} |"
+            )
         lines += [
-            "", "## 9. Profile-photo identity consistency", "",
-            f"Of {consistency['photographs_assessed']} photographs, "
-            f"{consistency['consistent_same_person_photographs']} were consistent with their "
-            f"profile template, {consistency['inconsistent_review_candidates']} became review "
-            f"candidates, {consistency['extraction_failures']} failed extraction and "
-            f"{consistency['gallery_reference_unavailable']} had no enrolled reference.",
+            "",
+            "The four outcomes are not equivalent. A consistent photograph opens no case. "
+            "An inconsistent one opens a consistency review. A mismatched control is "
+            "correctly identified when it falls below threshold and false-consistent when "
+            "it does not. An extraction failure resolves nothing and is an unresolved "
+            "outcome rather than a decision.",
             "", consistency["interpretation_note"],
         ]
 

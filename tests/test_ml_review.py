@@ -1245,14 +1245,20 @@ def test_the_profile_consistency_artefacts_include_mismatched_controls() -> None
     if not path.is_file():
         pytest.skip("consistency artefact not generated in this checkout")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    # Renamed when the consistency polarity was separated from screening:
-    # a mismatched control is *identified*, not *referred*.
-    for key in ("consistent_same_person_photographs", "inconsistent_review_candidates",
-                "mismatched_controls_correctly_identified",
-                "mismatched_controls_false_consistent", "extraction_failures",
-                "gallery_reference_unavailable"):
-        assert key in payload, key
-    assert "does not prove" in payload["interpretation_note"]
+    # Pipeline-scoped since the comparison publishes both. Renamed when the
+    # consistency polarity was separated from screening: a mismatched control
+    # is *identified*, not *referred*.
+    entries = payload.get("pipelines") or {"primary": payload}
+    for entry in entries.values():
+        for key in ("consistent_same_person_photographs", "inconsistent_review_candidates",
+                    "mismatched_controls_correctly_identified",
+                    "mismatched_controls_false_consistent", "extraction_failures",
+                    "gallery_reference_unavailable"):
+            assert key in entry, key
+    note = payload.get("interpretation_note") or next(iter(entries.values()))[
+        "interpretation_note"
+    ]
+    assert "does not prove" in note
 
 
 def test_the_sex_figures_contain_only_their_own_subgroups() -> None:
@@ -1439,14 +1445,19 @@ def test_consistency_controls_use_the_consistency_polarity() -> None:
     if not path.is_file():
         pytest.skip("consistency artefact not generated")
     payload = json.loads(path.read_text())
-    for key in ("mismatched_controls_correctly_identified",
-                "mismatched_controls_false_consistent",
-                "mismatched_control_extraction_failures"):
-        assert key in payload, key
-    assert "mismatched_controls_correctly_referred" not in payload
-    assert "does not prove" in payload["interpretation_note"]
-    # A consistent photograph must not be described as opening a case.
-    assert "does not open a case" in payload["outcome_policy"]
+    entries = payload.get("pipelines") or {"primary": payload}
+    for entry in entries.values():
+        for key in ("mismatched_controls_correctly_identified",
+                    "mismatched_controls_false_consistent",
+                    "mismatched_control_extraction_failures"):
+            assert key in entry, key
+        assert "mismatched_controls_correctly_referred" not in entry
+        # A consistent photograph must not be described as opening a case.
+        assert "does not open a case" in entry["outcome_policy"]
+    note = payload.get("interpretation_note") or next(iter(entries.values()))[
+        "interpretation_note"
+    ]
+    assert "does not prove" in note
 
 
 def test_experiment_eight_subgroups_use_the_full_replicate_count() -> None:
@@ -1584,4 +1595,32 @@ def test_captions_do_not_claim_every_outcome_opens_review() -> None:
     text = captions.read_text(encoding="utf-8")
     assert "Every outcome opens human review only" not in text
     assert "opens no case" in text
+    assert "resolves nothing" in text
+
+
+def test_consistency_artefacts_cover_every_evaluated_pipeline() -> None:
+    metrics = _AGG / "pipeline_comparison_metrics.json"
+    path = _AGG / "profile_photo_consistency_metrics.json"
+    if not (metrics.is_file() and path.is_file()):
+        pytest.skip("artefacts not generated")
+    evaluated = json.loads(metrics.read_text())["evaluated"] == "yes"
+    payload = json.loads(path.read_text())
+    assert "pipelines" in payload
+    if evaluated:
+        assert len(payload["pipelines"]) == 2
+    rows = list(csv.DictReader(open(_AGG / "profile_photo_consistency_metrics.csv",
+                                    encoding="utf-8")))
+    assert "pipeline" in rows[0]
+    assert len({r["pipeline"] for r in rows}) == len(payload["pipelines"])
+
+
+def test_the_report_shows_the_mismatched_controls() -> None:
+    """Without the control the reader sees only how often same-person photographs
+    pass, with no evidence the threshold discriminates at all."""
+    report = _AGG / "RESEARCH_REPORT.md"
+    if not report.is_file():
+        pytest.skip("report not generated")
+    text = report.read_text(encoding="utf-8")
+    assert "Control identified" in text and "Control false-consistent" in text
+    assert "A consistent photograph opens no case" in text
     assert "resolves nothing" in text
