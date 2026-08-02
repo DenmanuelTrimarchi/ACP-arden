@@ -7815,16 +7815,36 @@ def _write_figure_captions(
         "",
         f"**Experiment 8 status:** `{pipeline['status'] if pipeline else 'not run'}`.",
         "",
-        "## Implementation layers (Figures A-D)",
+        "## Result order",
         "",
-        "The five layers are measured on the same BFW open-set protocol and are therefore "
-        "directly comparable, in the order the project developed them:",
+        "Captions follow the order in which the study developed, so each layer's intent is "
+        "visible before the pretrained comparison.",
         "",
-        "1. Single-image gallery, transferred 1:1 threshold",
-        "2. Three-image gallery, transferred 1:1 threshold",
-        "3. Three-image gallery, BFW development calibration",
-        "4. Logistic-regression review classifier",
-        "5. SCRFD + ArcFace, its own BFW development calibration",
+        "### 1. LFW 1:1 verification",
+        "",
+        "Pairwise verification with the frozen threshold, reported as accuracy, FMR and "
+        "FNMR over scored pairs. A 1:1 quantity that never appears on an FPIR axis: one "
+        "comparison, no competing candidates, no ranking. Conditional on scored pairs.",
+        "",
+        "### 2. CPLFW cross-pose evaluation",
+        "",
+        "The same frozen threshold on raw cross-pose images. Conditional accuracy only, "
+        "always quoted with its extraction-failure rate; cross-pose detection rather than "
+        "comparison is the dominant effect.",
+        "",
+        "## Implementation layers (results 3-6)",
+        "",
+        "The five layers share the BFW open-set protocol and are directly comparable, in "
+        "the order the project developed them:",
+        "",
+        "3. Single-image gallery, transferred 1:1 threshold",
+        "4. Three-image gallery, transferred 1:1 threshold — higher TPIR but **higher "
+        "FPIR**; a mean template sits nearer the centre of the embedding space and is "
+        "closer to everyone, so this layer is not an improvement",
+        "5. Three-image gallery, BFW development calibration — the reduction in false "
+        "reviews comes from calibration, not from the representation",
+        "6. Logistic-regression review classifier, frozen probability threshold",
+        "7. SCRFD + ArcFace, its own frozen BFW development calibration",
         "",
         "LFW and CPLFW are 1:1 verification and are deliberately absent from this series: "
         "mixing an FMR into an FPIR axis would compare different quantities.",
@@ -7859,26 +7879,45 @@ def _write_figure_captions(
 
     lines += [
         "",
-        "## Sex-separated figures (Figures G-I)",
+        "## 7-8. Female and male subgroup evaluation",
         "",
-        "Sex is an evaluation dimension only and is never a classifier feature or threshold "
-        "input. The female panel covers asian, black, indian and white females; the male "
-        "panel covers the same four categories. Both use identical axes, units and ordering "
-        "so they compare fairly.",
+        "Sex is an evaluation dimension only: never a classifier feature, threshold input, "
+        "calibration variable, or reason to apply a different decision policy. The female "
+        "panel covers asian, black, indian and white females; the male panel covers the "
+        "same four categories. Both use identical metric order, axis limits (0-100%), units "
+        "and interval format so they compare fairly.",
         "",
         "- **female_subgroup_pipeline_comparison** / **male_subgroup_pipeline_comparison** — "
-        "FPIR and TPIR@1 with 95% identity-cluster intervals.",
+        "FPIR (lower better), TPIR@1 and TPIR@5 (higher better), mated coverage and "
+        "non-mated coverage, each with 95% identity-cluster bounds.",
         "- **female_male_aggregate_comparison** — pooled from underlying identity outcomes, "
-        "not by averaging subgroup percentages, which would weight a small subgroup as "
+        "not by averaging four subgroup percentages, which would weight a small subgroup as "
         "heavily as a large one.",
         "",
-        "These benchmark categories do not represent every identity or any real "
-        "dating-application population.",
+        "These are binary dataset categories. They do not represent the full range of "
+        "gender identities, every identity, or any real dating-application population.",
         "",
-        "## Pipeline figures",
+        "## 9. Profile-photo consistency analysis",
         "",
-        "- **pipeline_coverage_and_latency** — coverage beside latency, so a stronger "
-        "pipeline's cost is not omitted.",
+        "A same-identity probe stands for a photograph belonging to the enrolled person; a "
+        "non-mated probe is the mismatched control, where referral is the correct outcome.",
+        "",
+        "> A non-match indicates that the photograph is inconsistent with the enrolled "
+        "facial template under the evaluated model and threshold. It does not prove that "
+        "the photograph belongs to another person or that fraud occurred.",
+        "",
+        "## 10-11. Pipeline comparison and the latency trade-off",
+        "",
+        "- **pipeline_coverage_and_latency** — both pipelines once Experiment 8 is "
+        "evaluated, each with its own frozen development threshold; the SFace threshold is "
+        "never applied to ArcFace. A complete-pipeline comparison: detection, alignment, "
+        "preprocessing and embedding width all differ, so no difference is attributable to "
+        "the embedding model alone.",
+        "- **implementation_layers_performance_latency** — end-to-end detection against "
+        "latency, point size being false reviews per 1,000. Latency excludes one-time model "
+        "loading. A stronger pipeline is not free and its cost is shown, not omitted.",
+        "",
+        "## 12. Limitations",
         "",
         "## Limitations common to every figure",
         "",
@@ -8362,12 +8401,18 @@ def generate_figures(
             members = sorted(k for k in rows if k.endswith(suffix))
             if not members:
                 continue
-            fig, axes = plt.subplots(1, 2, figsize=(10.0, 4.6), sharey=True)
+            # Identical metric order, axis limits and units in both panels so
+            # the companion figures compare fairly.
+            sex_metrics = (
+                ("fpir", "FPIR\n(lower better)"),
+                ("tpir_rank1", "TPIR@1\n(higher better)"),
+                ("tpir_rank5", "TPIR@5\n(higher better)"),
+                ("mated_probe_coverage", "Mated\ncoverage"),
+                ("non_mated_probe_coverage", "Non-mated\ncoverage"),
+            )
+            fig, axes = plt.subplots(1, len(sex_metrics), figsize=(15.0, 4.4), sharey=True)
             positions = np.arange(len(members))
-            for ax, metric, title in (
-                (axes[0], "fpir", "FPIR (lower is better)"),
-                (axes[1], "tpir_rank1", "TPIR@1 (higher is better)"),
-            ):
+            for ax, (metric, title) in zip(axes, sex_metrics):
                 centre = [_percent(float(rows[m][metric])) for m in members]
                 lower = [max(centre[i] - _percent(float(rows[members[i]][f"{metric}_lower_95"])), 0)
                          for i in range(len(members))]
@@ -8377,12 +8422,13 @@ def generate_figures(
                             color="#4C72B0")
                 ax.set_xticks(positions)
                 ax.set_xticklabels([m.replace(suffix[1:], "") for m in members],
-                                   rotation=30, ha="right", fontsize=8)
-                ax.set_title(title, fontsize=10); ax.grid(axis="y", alpha=0.3)
-                # Shared scale so the companion figures compare fairly.
+                                   rotation=35, ha="right", fontsize=7)
+                ax.set_title(title, fontsize=9); ax.grid(axis="y", alpha=0.3)
                 ax.set_ylim(0, 100)
-            axes[0].set_ylabel("Per cent (95% CI)")
-            fig.suptitle(f"{sex.capitalize()} subgroup performance (BFW held-out test)")
+            axes[0].set_ylabel("Per cent (95% identity-cluster CI)")
+            fig.suptitle(
+                f"{sex.capitalize()} subgroup performance, BFW held-out test", y=1.02
+            )
             path = figures_root / f"{sex}_subgroup_pipeline_comparison.png"
             _save_figure(fig, path); plt.close(fig); written.append(path)
 

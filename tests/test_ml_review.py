@@ -1306,3 +1306,33 @@ def test_estimator_arguments_are_typed_constants_not_dictionary_lookups() -> Non
     assert acp.ML_REVIEW_HYPERPARAMETERS["l1_ratio"] == 0.0
     assert acp.ML_REVIEW_HYPERPARAMETERS["C"] == 1.0
     assert acp.ML_REVIEW_HYPERPARAMETERS["max_iter"] == 1000
+
+
+def test_the_sex_figures_show_every_required_metric() -> None:
+    """Both companion figures must carry FPIR, TPIR@1, TPIR@5 and both
+    coverages, on identical axes, so they can be compared fairly."""
+    for sex in ("female", "male"):
+        path = _FIG / f"{sex}_subgroup_pipeline_comparison.svg"
+        if not path.is_file():
+            pytest.skip("figures not generated in this checkout")
+        text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        for metric in ("fpir", "tpir@1", "tpir@5", "mated", "non-mated"):
+            assert metric in text, f"{sex} figure missing {metric}"
+
+
+def test_the_captions_follow_the_required_result_order() -> None:
+    captions = _FIG / "FIGURE_CAPTIONS.md"
+    if not captions.is_file():
+        pytest.skip("captions not generated in this checkout")
+    text = captions.read_text(encoding="utf-8")
+    order = ["1. LFW 1:1 verification", "2. CPLFW cross-pose evaluation",
+             "7-8. Female and male subgroup evaluation",
+             "9. Profile-photo consistency analysis",
+             "10-11. Pipeline comparison", "12. Limitations"]
+    positions = []
+    for heading in order:
+        assert heading in text, heading
+        positions.append(text.index(heading))
+    assert positions == sorted(positions), "captions are out of the required order"
+    # The 1:1 and 1:N distinction must be explicit.
+    assert "never appears on an FPIR axis" in text
