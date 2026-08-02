@@ -1,21 +1,34 @@
 {
   "artifact_type": "ml_review_test_metrics",
   "classifier": {
-    "end_to_end_duplicate_detection_rate": 0.885,
-    "false_reviews_per_1000_non_mated": 5.246589716684155,
-    "fnir_rank1": 0.060509554140127375,
-    "fpir": 0.005246589716684155,
-    "mated_probes_correctly_referred": 885,
-    "mated_probes_not_referred": 57,
-    "non_mated_probes_correctly_not_referred": 2844,
-    "non_mated_probes_incorrectly_referred": 15,
-    "probability_threshold": 0.662958449216,
+    "conditional_duplicate_detection_rate": 0.9426751592356688,
+    "end_to_end_duplicate_detection_rate": 0.888,
+    "extraction_coverage": 0.95075,
+    "false_reviews_per_1000_non_mated": 6.990562740300594,
+    "fnir_rank1": 0.0573248407643312,
+    "fnir_rank5": 0.056263269639065805,
+    "fpir": 0.006990562740300594,
+    "gallery_reference_unavailable": 10,
+    "intended_mated_probes": 1000,
+    "intended_non_mated_probes": 3000,
+    "mated_correct_rank1_referred": 888,
+    "mated_correct_rank5_referred": 889,
+    "mated_extraction_coverage": 0.942,
+    "mated_extraction_failures": 58,
+    "mated_not_referred": 53,
+    "mated_wrong_identity_referred": 1,
+    "non_mated_correctly_not_referred": 2841,
+    "non_mated_extraction_coverage": 0.9536666666666667,
+    "non_mated_extraction_failures": 139,
+    "non_mated_incorrectly_referred": 20,
+    "probability_threshold": 0.571337650641,
     "scored_mated_probes": 942,
-    "scored_non_mated_probes": 2859,
-    "tpir_rank1": 0.9394904458598726
+    "scored_non_mated_probes": 2861,
+    "tpir_rank1": 0.9426751592356688,
+    "tpir_rank5": 0.9437367303609342
   },
-  "classifier_decision_latency_mean_ms": 4.1524071955229614e-05,
-  "classifier_decision_latency_p95_ms": 4.1524071955229614e-05,
+  "classifier_decision_latency_mean_ms": 3.738285621758938e-05,
+  "classifier_decision_latency_p95_ms": 3.738285621758938e-05,
   "classifier_hyperparameters": {
     "C": 1.0,
     "class_weight": "balanced",
@@ -33,12 +46,12 @@
     "rates": {
       "cmc_rank1": 0.9808917197452229,
       "cmc_rank5": 0.9904458598726115,
-      "false_reviews_per_1000_non_mated": 5.246589716684155,
+      "false_reviews_per_1000_non_mated": 5.242922055225446,
       "fnir_rank1": 0.07430997876857748,
       "fnir_rank5": 0.07430997876857748,
-      "fpir": 0.005246589716684155,
+      "fpir": 0.005242922055225445,
       "scored_mated_probes": 942,
-      "scored_non_mated_probes": 2859,
+      "scored_non_mated_probes": 2861,
       "threshold": 0.477117869159,
       "tpir_rank1": 0.9256900212314225,
       "tpir_rank5": 0.9256900212314225
@@ -55,21 +68,21 @@
     "intended_non_mated_probes": 3000,
     "mated_extraction_failure_rate": 0.058,
     "method": "three_image_open_set_calibrated",
-    "non_mated_extraction_failure_rate": 0.047,
+    "non_mated_extraction_failure_rate": 0.04633333333333333,
     "partition": "test",
     "probe_failure_breakdown": {
       "gallery_reference_unavailable": 10,
-      "zero_faces": 189
+      "zero_faces": 187
     },
     "scored_mated_probes": 942,
-    "scored_non_mated_probes": 2859,
-    "similarity_comparisons": 752598,
-    "top1_search_time_mean_ms": 0.8587636303766286,
-    "top1_search_time_p95_ms": 0.8994579984573647,
-    "top5_search_time_mean_ms": 0.8777942802766887,
-    "top5_search_time_p95_ms": 0.9209589916281402
+    "scored_non_mated_probes": 2861,
+    "similarity_comparisons": 752994,
+    "top1_search_time_mean_ms": 0.8643573125656704,
+    "top1_search_time_p95_ms": 0.9084538964089006,
+    "top5_search_time_mean_ms": 0.8834380009936479,
+    "top5_search_time_p95_ms": 0.9298707038396969
   },
-  "created_at": "2026-08-01T16:50:47.432207+00:00",
+  "created_at": "2026-08-02T01:45:37.725026+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -105,7 +118,7 @@
   "excluded_records": {
     "missing_feature": 0,
     "outside_partition": 0,
-    "unscored": 199
+    "unscored": 197
   },
   "feature_definitions": {
     "gallery_size": "Enrolled identities searched, which scales impostor exposure.",
@@ -126,7 +139,7 @@
     "Extraction failures are reported separately and are never counted as genuine negative decisions."
   ],
   "opaque_id_version": "hmac-sha256-v1",
-  "operating_probability_threshold": 0.662958449216,
+  "operating_probability_threshold": 0.571337650641,
   "pipeline": {
     "comparison_scope": "Complete pipeline: detection, preprocessing and embedding. A difference between pipelines cannot be attributed to the embedding model alone.",
     "detector_name": "OpenCV YuNet 2023mar",
@@ -175,12 +188,12 @@
   "success_criteria": {
     "criteria_declared_before_test": true,
     "end_to_end_detection_within_2pp_of_threshold_method": {
-      "actual": -0.013000000000000012,
+      "actual": -0.016000000000000014,
       "outcome": "achieved",
       "target": 0.02
     },
     "fewer_false_reviews_than_threshold_method": {
-      "actual": 0.0,
+      "actual": -1.7476406850751482,
       "outcome": "not_achieved",
       "target": 0.0
     },
@@ -190,7 +203,7 @@
       "target": 0.9
     },
     "primary_fpir_at_or_below_1_percent": {
-      "actual": 0.005246589716684155,
+      "actual": 0.006990562740300594,
       "outcome": "achieved",
       "target": 0.01
     },
@@ -200,7 +213,7 @@
       "target": 0.9
     },
     "tpir_rank1_at_least_90_percent": {
-      "actual": 0.9394904458598726,
+      "actual": 0.9426751592356688,
       "outcome": "achieved",
       "target": 0.9
     }

@@ -36,7 +36,7 @@ Extraction coverage and search latency for the primary pipeline. Coverage denomi
 
 ## Note on Figure 1
 
-The classifier and the calibrated threshold referred the same 15 non-mated searches in error, so their bars are equal by measurement rather than by rounding.
+The classifier and the calibrated threshold referred the same 20 non-mated searches in error, so their bars are equal by measurement rather than by rounding.
 
 ## Note on the absent comparison
 

@@ -31,7 +31,10 @@ sensitivity to same-identity duplicate profiles. It does **not** claim that
 duplicate-profile detection is solved.
 
 This is not a dating application, not a fraud detector, and not a new
-face-recognition model. Nothing here is trained or fine-tuned, no website is
+face-recognition model. **No face-detection or face-recognition network is
+trained or fine-tuned**; those models are pretrained and frozen. Experiment 7
+trains a small logistic-regression review classifier using BFW development
+identities only, and no test identity is used during training. No website is
 scraped, and no account is ever banned, rejected, accused or classified as a
 scam. A similarity above the operating threshold opens a case for a human
 reviewer and nothing more.

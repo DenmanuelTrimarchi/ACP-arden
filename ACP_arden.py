@@ -4585,7 +4585,7 @@ def subgroup_open_set_metrics(
     results: Sequence[OpenSetSearchResult],
     *,
     threshold: float,
-    bootstrap: bool = False,
+    replicates: int = BOOTSTRAP_REPLICATES,
     seed: int = DEFAULT_RANDOM_SEED,
 ) -> Dict[str, Dict[str, Any]]:
     per_subgroup: Dict[str, Dict[str, Any]] = {}
@@ -4596,27 +4596,26 @@ def subgroup_open_set_metrics(
         rates = open_set_rates_at_threshold(rows, threshold)
         mated = [r for r in rows if r.role == "mated_probe"]
         non_mated = [r for r in rows if r.role == "non_mated_probe"]
-        entry: Dict[str, Any] = {
-            "fpir": rates["fpir"],
-            "fnir_rank1": rates["fnir_rank1"],
-            "tpir_rank1": rates["tpir_rank1"],
-            "mated_probe_coverage": (
-                sum(1 for r in mated if r.failure_code is None) / len(mated)
-                if mated
-                else float("nan")
-            ),
-            "non_mated_probe_coverage": (
-                sum(1 for r in non_mated if r.failure_code is None) / len(non_mated)
-                if non_mated
-                else float("nan")
-            ),
-            "scored_mated_probes": rates["scored_mated_probes"],
-            "scored_non_mated_probes": rates["scored_non_mated_probes"],
-        }
-        if bootstrap:
-            entry["confidence_intervals"] = cluster_bootstrap_intervals(
-                rows, threshold=threshold, seed=seed
-            )
+        intervals = cluster_bootstrap_intervals(
+            rows, threshold=threshold, replicates=replicates, seed=seed
+        )
+        entry: Dict[str, Any] = {}
+        for metric in ("fpir", "fnir_rank1", "fnir_rank5", "tpir_rank1", "tpir_rank5"):
+            entry[metric] = rates[metric]
+            band = intervals.get(metric, {})
+            entry[f"{metric}_lower_95"] = band.get("lower_95", float("nan"))
+            entry[f"{metric}_upper_95"] = band.get("upper_95", float("nan"))
+        for label, rows_of_role in (("mated_probe_coverage", mated),
+                                    ("non_mated_probe_coverage", non_mated)):
+            scored = sum(1 for r in rows_of_role if r.failure_code is None)
+            entry[label] = scored / len(rows_of_role) if rows_of_role else float("nan")
+            band = intervals.get("extraction_coverage", {})
+            entry[f"{label}_lower_95"] = band.get("lower_95", float("nan"))
+            entry[f"{label}_upper_95"] = band.get("upper_95", float("nan"))
+        entry["scored_mated_probes"] = rates["scored_mated_probes"]
+        entry["scored_non_mated_probes"] = rates["scored_non_mated_probes"]
+        entry["intended_mated_probes"] = len(mated)
+        entry["intended_non_mated_probes"] = len(non_mated)
         per_subgroup[subgroup] = entry
     return per_subgroup
 
@@ -4952,9 +4951,21 @@ def run_open_set_experiment(
     )
 
     per_subgroup = subgroup_open_set_metrics(
-        proposed_test.search_results, threshold=frozen_threshold, seed=seed
+        proposed_test.search_results, threshold=frozen_threshold,
+        replicates=max(200, bootstrap_replicates // 4), seed=seed,
     )
     _write_subgroup_csv(output_root / "bfw_subgroup_metrics.csv", per_subgroup)
+    write_json_artifact(
+        output_root / "bfw_subgroup_confidence_intervals.json",
+        {
+            "artifact_type": "bfw_subgroup_confidence_intervals",
+            "resampling_unit": "identity (cluster bootstrap, subgroup-stratified)",
+            "replicates": max(200, bootstrap_replicates // 4),
+            "operating_threshold": frozen_threshold,
+            "subgroups": per_subgroup,
+            **provenance,
+        },
+    )
     _write_method_comparison_csv(
         output_root / "open_set_method_comparison.csv",
         control_test=control_test,
@@ -4999,22 +5010,10 @@ def _write_subgroup_csv(path: Path, per_subgroup: Mapping[str, Mapping[str, Any]
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(
-            [
-                "subgroup", "fpir", "fnir_rank1", "tpir_rank1",
-                "mated_probe_coverage", "non_mated_probe_coverage",
-                "scored_mated_probes", "scored_non_mated_probes",
-            ]
-        )
+        writer.writerow(_SUBGROUP_CSV_COLUMNS)
         for subgroup in sorted(per_subgroup):
             row = per_subgroup[subgroup]
-            writer.writerow(
-                [
-                    subgroup, row["fpir"], row["fnir_rank1"], row["tpir_rank1"],
-                    row["mated_probe_coverage"], row["non_mated_probe_coverage"],
-                    row["scored_mated_probes"], row["scored_non_mated_probes"],
-                ]
-            )
+            writer.writerow([subgroup] + [row.get(n, "") for n in _SUBGROUP_CSV_COLUMNS[1:]])
 
 
 def _write_method_comparison_csv(
@@ -5372,18 +5371,32 @@ ARCFACE_LICENCE_NOTE = (
     "deployed to real users, makes no commercial decisions, and neither sells, licenses "
     "nor redistributes the pretrained weights. The evaluation is local and non-commercial "
     "and publishes only aggregate metrics, so it falls within those research terms. The "
-    "models were created and trained externally by the InsightFace project; this project "
-    "trains and fine-tunes nothing. The MIT licence covering InsightFace source code does "
+    "models were created and trained externally by the InsightFace project; no "
+    "face-recognition network is trained or fine-tuned here. The MIT licence covering "
+    "InsightFace source code does "
     "not automatically extend to every pretrained weight file, and no ownership of the "
     "models, their training data or their weights is claimed here."
 )
 
-ARCFACE_USE_STATEMENT = (
-    "The InsightFace pipeline was evaluated solely for non-commercial MSc research. The "
+# Tense follows the real status: the past tense is only correct once held-out
+# metrics exist, so the wording is generated rather than fixed.
+ARCFACE_USE_STATEMENT_NOT_RUN = (
+    "The InsightFace pipeline is intended for evaluation solely within non-commercial MSc "
+    "research. The pretrained model files are stored outside the public repository and are "
+    "not redistributed. The project publishes only aggregate benchmark results and "
+    "provides full attribution to the original model, software and research publications."
+)
+
+ARCFACE_USE_STATEMENT_EVALUATED = (
+    "The InsightFace pipeline was evaluated solely within non-commercial MSc research. The "
     "pretrained model files were stored outside the public repository and were not "
     "redistributed. The project publishes only aggregate benchmark results and provides "
     "full attribution to the original model, software and research publications."
 )
+
+
+def arcface_use_statement(evaluated: bool) -> str:
+    return ARCFACE_USE_STATEMENT_EVALUATED if evaluated else ARCFACE_USE_STATEMENT_NOT_RUN
 
 
 class PipelineUnavailableError(RuntimeError):
@@ -5576,7 +5589,7 @@ def pipeline_comparison_status(
             "preconditions": preconditions["checks"],
             "substitute_model_used": False,
             "licence_note": ARCFACE_LICENCE_NOTE,
-            "use_statement": ARCFACE_USE_STATEMENT,
+            "use_statement": arcface_use_statement(False),
         }
     description = arcface_pipeline_description(config)
     return {
@@ -5586,7 +5599,7 @@ def pipeline_comparison_status(
         "preconditions": preconditions["checks"],
         "substitute_model_used": False,
         "licence_note": ARCFACE_LICENCE_NOTE,
-        "use_statement": ARCFACE_USE_STATEMENT,
+        "use_statement": arcface_use_statement(True),
     }
 
 
@@ -5704,14 +5717,38 @@ class MlReviewError(RuntimeError):
 
 @dataclass(frozen=True)
 class ReviewFeatureRow:
-    """One search rendered as classifier input plus its supervision label."""
+    """One search rendered as classifier input plus its supervision label.
+
+    ``correct_rank`` and ``correct_similarity`` are evaluation metadata drawn
+    from benchmark ground truth. They are never placed in the feature vector."""
 
     sample_id: str
     identity_hash: str
     subgroup: str
     role: str
     features: Dict[str, float]
-    label: int  # 1 = should open a human-review case, 0 = should not
+    # The label represents a correct rank-one referral.
+    label: int
+    correct_rank: Optional[int] = None
+    correct_similarity: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class ReviewIdentityOutcome:
+    """Complete intended protocol outcome for one identity.
+
+    Retained so the end-to-end denominator keeps probes that never produced a
+    score; filtering to scored rows would silently make it conditional."""
+
+    identity_hash: str
+    subgroup: str
+    intended_mated: int
+    scored_mated: int
+    intended_non_mated: int
+    scored_non_mated: int
+    mated_extraction_failures: int
+    non_mated_extraction_failures: int
+    gallery_reference_unavailable: int
 
 
 def split_development_identities_for_classifier(
@@ -5794,7 +5831,10 @@ def build_review_feature_rows(
             excluded["missing_feature"] += 1
             continue
 
-        # A mated search should be referred; a non-mated search should not.
+        # Ground truth is used for supervision, never as an input feature.
+        # A referral to the wrong identity is not a true identification, so a
+        # mated probe is positive only when its own identity ranks first.
+        positive = result.role == "mated_probe" and result.correct_rank == 1
         rows.append(
             ReviewFeatureRow(
                 sample_id=result.sample_id,
@@ -5802,7 +5842,9 @@ def build_review_feature_rows(
                 subgroup=result.subgroup,
                 role=result.role,
                 features={name: float(values[name]) for name in ML_REVIEW_FEATURES},
-                label=1 if result.role == "mated_probe" else 0,
+                label=1 if positive else 0,
+                correct_rank=result.correct_rank,
+                correct_similarity=result.correct_similarity,
             )
         )
     return rows, excluded
@@ -5898,47 +5940,137 @@ def fit_review_classifier(rows: Sequence[ReviewFeatureRow]) -> ReviewClassifier:
     )
 
 
+def build_review_identity_outcomes(
+    results: Sequence[OpenSetSearchResult],
+) -> Dict[str, ReviewIdentityOutcome]:
+    """Aggregate the complete intended outcome per identity.
+
+    Retain failed probes in the end-to-end denominator; excluding them would
+    turn an end-to-end rate into a conditional one."""
+    scratch: Dict[str, Dict[str, Any]] = {}
+    for result in results:
+        row = scratch.setdefault(
+            result.identity_hash,
+            {"subgroup": result.subgroup, "intended_mated": 0, "scored_mated": 0,
+             "intended_non_mated": 0, "scored_non_mated": 0, "mated_fail": 0,
+             "non_mated_fail": 0, "unavailable": 0},
+        )
+        scored = result.failure_code is None and result.top_similarity is not None
+        if result.role == "mated_probe":
+            row["intended_mated"] += 1
+            row["scored_mated"] += scored
+            if not scored:
+                row["mated_fail"] += 1
+                if result.failure_code == GALLERY_REFERENCE_UNAVAILABLE:
+                    row["unavailable"] += 1
+        elif result.role == "non_mated_probe":
+            row["intended_non_mated"] += 1
+            row["scored_non_mated"] += scored
+            if not scored:
+                row["non_mated_fail"] += 1
+    return {
+        identity: ReviewIdentityOutcome(
+            identity_hash=identity, subgroup=row["subgroup"],
+            intended_mated=row["intended_mated"], scored_mated=row["scored_mated"],
+            intended_non_mated=row["intended_non_mated"],
+            scored_non_mated=row["scored_non_mated"],
+            mated_extraction_failures=row["mated_fail"],
+            non_mated_extraction_failures=row["non_mated_fail"],
+            gallery_reference_unavailable=row["unavailable"],
+        )
+        for identity, row in sorted(scratch.items())
+    }
+
+
 def review_rates_at_probability(
     rows: Sequence[ReviewFeatureRow],
     probabilities: np.ndarray,
     threshold: float,
     *,
-    intended_mated: Optional[int] = None,
+    outcomes: Optional[Mapping[str, ReviewIdentityOutcome]] = None,
 ) -> Dict[str, Any]:
-    """FPIR, TPIR and the confusion counts at one probability threshold.
+    """Rank-aware FPIR, TPIR and the decision counts at one threshold.
 
-    Denominators match the threshold method exactly so the two are comparable:
-    only scored searches enter, and extraction failures are accounted
-    separately rather than folded into the negatives."""
-    mated_referred = mated_missed = non_mated_referred = non_mated_correct = 0
+    Require the correct identity at rank one: a mated probe referred to some
+    other identity is a referral, but it is not an identification."""
+    rank1 = rank5 = wrong_identity = not_referred = 0
+    non_mated_referred = non_mated_correct = 0
     for row, probability in zip(rows, probabilities):
         referred = bool(probability >= threshold)
-        if row.label == 1:
-            mated_referred += referred
-            mated_missed += not referred
+        if row.role == "mated_probe":
+            if not referred:
+                not_referred += 1
+                continue
+            if row.correct_rank == 1:
+                rank1 += 1
+                rank5 += 1
+            elif row.correct_rank is not None and row.correct_rank <= 5:
+                rank5 += 1
+                wrong_identity += 1
+            else:
+                wrong_identity += 1
         else:
             non_mated_referred += referred
             non_mated_correct += not referred
 
-    scored_mated = mated_referred + mated_missed
+    scored_mated = rank1 + wrong_identity + not_referred
     scored_non_mated = non_mated_referred + non_mated_correct
     fpir = non_mated_referred / scored_non_mated if scored_non_mated else float("nan")
-    tpir1 = mated_referred / scored_mated if scored_mated else float("nan")
+    tpir1 = rank1 / scored_mated if scored_mated else float("nan")
+    tpir5 = rank5 / scored_mated if scored_mated else float("nan")
+
+    # Intended denominators come from the protocol, not the surviving rows.
+    intended_mated = (
+        sum(o.intended_mated for o in outcomes.values()) if outcomes else scored_mated
+    )
+    intended_non_mated = (
+        sum(o.intended_non_mated for o in outcomes.values()) if outcomes else scored_non_mated
+    )
+    mated_failures = (
+        sum(o.mated_extraction_failures for o in outcomes.values()) if outcomes else 0
+    )
+    non_mated_failures = (
+        sum(o.non_mated_extraction_failures for o in outcomes.values()) if outcomes else 0
+    )
+    unavailable = (
+        sum(o.gallery_reference_unavailable for o in outcomes.values()) if outcomes else 0
+    )
     return {
         "probability_threshold": threshold,
         "fpir": fpir,
         "tpir_rank1": tpir1,
+        "tpir_rank5": tpir5,
         "fnir_rank1": 1.0 - tpir1 if tpir1 == tpir1 else float("nan"),
+        "fnir_rank5": 1.0 - tpir5 if tpir5 == tpir5 else float("nan"),
         "false_reviews_per_1000_non_mated": fpir * 1000.0 if fpir == fpir else float("nan"),
-        "mated_probes_correctly_referred": mated_referred,
-        "mated_probes_not_referred": mated_missed,
-        "non_mated_probes_incorrectly_referred": non_mated_referred,
-        "non_mated_probes_correctly_not_referred": non_mated_correct,
+        "mated_correct_rank1_referred": rank1,
+        "mated_correct_rank5_referred": rank5,
+        "mated_wrong_identity_referred": wrong_identity,
+        "mated_not_referred": not_referred,
+        "non_mated_incorrectly_referred": non_mated_referred,
+        "non_mated_correctly_not_referred": non_mated_correct,
         "scored_mated_probes": scored_mated,
         "scored_non_mated_probes": scored_non_mated,
-        "end_to_end_duplicate_detection_rate": (
-            mated_referred / intended_mated if intended_mated else float("nan")
+        "intended_mated_probes": intended_mated,
+        "intended_non_mated_probes": intended_non_mated,
+        "mated_extraction_failures": mated_failures,
+        "non_mated_extraction_failures": non_mated_failures,
+        "gallery_reference_unavailable": unavailable,
+        "mated_extraction_coverage": (
+            scored_mated / intended_mated if intended_mated else float("nan")
         ),
+        "non_mated_extraction_coverage": (
+            scored_non_mated / intended_non_mated if intended_non_mated else float("nan")
+        ),
+        "extraction_coverage": (
+            (scored_mated + scored_non_mated) / (intended_mated + intended_non_mated)
+            if (intended_mated + intended_non_mated)
+            else float("nan")
+        ),
+        "end_to_end_duplicate_detection_rate": (
+            rank1 / intended_mated if intended_mated else float("nan")
+        ),
+        "conditional_duplicate_detection_rate": tpir1,
     }
 
 
@@ -6009,32 +6141,59 @@ def review_cluster_bootstrap(
     *,
     replicates: int = BOOTSTRAP_REPLICATES,
     seed: int = DEFAULT_RANDOM_SEED,
-    intended_mated: Optional[int] = None,
+    outcomes: Optional[Mapping[str, ReviewIdentityOutcome]] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Identity-cluster bootstrap over classifier decisions."""
+    """Identity-cluster bootstrap over classifier decisions.
+
+    Resample identities with their complete protocol outcomes, so a replicate's
+    end-to-end denominator counts probes that failed extraction as well as
+    those that were scored."""
     by_identity: Dict[str, List[int]] = {}
     subgroup_of: Dict[str, str] = {}
     for index, row in enumerate(rows):
         by_identity.setdefault(row.identity_hash, []).append(index)
         subgroup_of[row.identity_hash] = row.subgroup
+    # An identity whose every probe failed contributes no feature row, yet still
+    # belongs in the denominator, so it must be resampled too.
+    if outcomes:
+        for identity, outcome in outcomes.items():
+            by_identity.setdefault(identity, [])
+            subgroup_of.setdefault(identity, outcome.subgroup)
 
     strata: Dict[str, List[str]] = {}
     for identity_hash in sorted(by_identity):
         strata.setdefault(subgroup_of[identity_hash], []).append(identity_hash)
 
-    tracked = ("fpir", "tpir_rank1", "fnir_rank1", "end_to_end_duplicate_detection_rate")
+    tracked = (
+        "fpir", "tpir_rank1", "tpir_rank5", "fnir_rank1", "fnir_rank5",
+        "end_to_end_duplicate_detection_rate", "extraction_coverage",
+        "mated_extraction_coverage", "non_mated_extraction_coverage",
+    )
     samples: Dict[str, List[float]] = {name: [] for name in tracked}
     rng = random.Random(seed)
     for _ in range(replicates):
         indices: List[int] = []
+        drawn_identities: List[str] = []
         for _subgroup, members in sorted(strata.items()):
             for _ in range(len(members)):
-                indices.extend(by_identity[members[rng.randrange(len(members))]])
+                chosen = members[rng.randrange(len(members))]
+                drawn_identities.append(chosen)
+                indices.extend(by_identity[chosen])
         drawn = [rows[i] for i in indices]
-        drawn_probabilities = probabilities[np.asarray(indices, dtype=int)]
-        replicate_mated = sum(1 for r in drawn if r.label == 1)
+        drawn_probabilities = probabilities[np.asarray(indices, dtype=int)] if indices else (
+            np.asarray([], dtype=float)
+        )
+        replicate_outcomes: Optional[Dict[str, ReviewIdentityOutcome]] = None
+        if outcomes:
+            # Accumulate per draw, since one identity may be drawn repeatedly.
+            totals: Dict[str, ReviewIdentityOutcome] = {}
+            for position, identity in enumerate(drawn_identities):
+                outcome = outcomes.get(identity)
+                if outcome is not None:
+                    totals[f"{identity}:{position}"] = outcome
+            replicate_outcomes = totals
         rates = review_rates_at_probability(
-            drawn, drawn_probabilities, threshold, intended_mated=replicate_mated
+            drawn, drawn_probabilities, threshold, outcomes=replicate_outcomes
         )
         for name in tracked:
             value = rates.get(name, float("nan"))
@@ -6060,34 +6219,48 @@ def review_subgroup_metrics(
     *,
     replicates: int = BOOTSTRAP_REPLICATES,
     seed: int = DEFAULT_RANDOM_SEED,
+    outcomes: Optional[Mapping[str, ReviewIdentityOutcome]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Per-subgroup rates with confidence intervals.
 
-    Subgroup is an analysis dimension only; it is never a classifier input."""
+    Subgroup is used for evaluation, never prediction."""
     per_subgroup: Dict[str, Dict[str, Any]] = {}
     for subgroup in BFW_SUBGROUPS:
         indices = [i for i, r in enumerate(rows) if r.subgroup == subgroup]
-        if not indices:
+        subset_outcomes = (
+            {k: v for k, v in outcomes.items() if v.subgroup == subgroup} if outcomes else None
+        )
+        if not indices and not subset_outcomes:
             continue
         subset = [rows[i] for i in indices]
-        subset_probabilities = probabilities[np.asarray(indices, dtype=int)]
-        rates = review_rates_at_probability(subset, subset_probabilities, threshold)
-        intervals = review_cluster_bootstrap(
-            subset, subset_probabilities, threshold, replicates=replicates, seed=seed
+        subset_probabilities = (
+            probabilities[np.asarray(indices, dtype=int)] if indices
+            else np.asarray([], dtype=float)
         )
-        per_subgroup[subgroup] = {
-            "fpir": rates["fpir"],
-            "fpir_lower_95": intervals["fpir"]["lower_95"],
-            "fpir_upper_95": intervals["fpir"]["upper_95"],
-            "fnir_rank1": rates["fnir_rank1"],
-            "fnir_rank1_lower_95": intervals["fnir_rank1"]["lower_95"],
-            "fnir_rank1_upper_95": intervals["fnir_rank1"]["upper_95"],
-            "tpir_rank1": rates["tpir_rank1"],
-            "tpir_rank1_lower_95": intervals["tpir_rank1"]["lower_95"],
-            "tpir_rank1_upper_95": intervals["tpir_rank1"]["upper_95"],
-            "scored_mated_probes": rates["scored_mated_probes"],
-            "scored_non_mated_probes": rates["scored_non_mated_probes"],
-        }
+        rates = review_rates_at_probability(
+            subset, subset_probabilities, threshold, outcomes=subset_outcomes
+        )
+        intervals = review_cluster_bootstrap(
+            subset, subset_probabilities, threshold, replicates=replicates, seed=seed,
+            outcomes=subset_outcomes,
+        )
+        entry: Dict[str, Any] = {}
+        for metric in ("fpir", "fnir_rank1", "fnir_rank5", "tpir_rank1", "tpir_rank5"):
+            entry[metric] = rates[metric]
+            entry[f"{metric}_lower_95"] = intervals[metric]["lower_95"]
+            entry[f"{metric}_upper_95"] = intervals[metric]["upper_95"]
+        for metric, key in (
+            ("mated_probe_coverage", "mated_extraction_coverage"),
+            ("non_mated_probe_coverage", "non_mated_extraction_coverage"),
+        ):
+            entry[metric] = rates[key]
+            entry[f"{metric}_lower_95"] = intervals[key]["lower_95"]
+            entry[f"{metric}_upper_95"] = intervals[key]["upper_95"]
+        entry["scored_mated_probes"] = rates["scored_mated_probes"]
+        entry["scored_non_mated_probes"] = rates["scored_non_mated_probes"]
+        entry["intended_mated_probes"] = rates["intended_mated_probes"]
+        entry["intended_non_mated_probes"] = rates["intended_non_mated_probes"]
+        per_subgroup[subgroup] = entry
     return per_subgroup
 
 
@@ -6280,6 +6453,15 @@ def run_ml_review_experiment(
         development.search_results, identities=set(calibration_ids),
         identity_of_sample=identity_of_sample,
     )
+    calibration_outcomes = {
+        identity_hash: outcome
+        for identity_hash, outcome in build_review_identity_outcomes(
+            [
+                r for r in development.search_results
+                if identity_of_sample.get(r.sample_id) in set(calibration_ids)
+            ]
+        ).items()
+    }
 
     classifier = fit_review_classifier(training_rows)
     calibration_matrix, _ = _feature_matrix(calibration_rows)
@@ -6357,7 +6539,8 @@ def run_ml_review_experiment(
          "calibration_operating_points": {
              str(t): review_rates_at_probability(
                  calibration_rows, calibration_probabilities,
-                 operating_points[str(t)]["probability_threshold"])
+                 operating_points[str(t)]["probability_threshold"],
+                 outcomes=calibration_outcomes)
              for t in FPIR_TARGETS},
          "training_rows": len(training_rows),
          "calibration_rows": len(calibration_rows)},
@@ -6376,9 +6559,10 @@ def run_ml_review_experiment(
     per_decision_ms = (decision_elapsed / len(test_rows) * 1000.0) if test_rows else float("nan")
 
     coverage = open_set_coverage(test_run)
-    intended_mated = coverage["intended_mated_probes"]
+    # Retain failed probes in the intended denominator.
+    test_outcomes = build_review_identity_outcomes(test_run.search_results)
     classifier_rates = review_rates_at_probability(
-        test_rows, test_probabilities, frozen_probability, intended_mated=intended_mated
+        test_rows, test_probabilities, frozen_probability, outcomes=test_outcomes
     )
 
     # The comparator, on identical identities, gallery, probes and accounting.
@@ -6389,11 +6573,11 @@ def run_ml_review_experiment(
 
     intervals = review_cluster_bootstrap(
         test_rows, test_probabilities, frozen_probability,
-        replicates=bootstrap_replicates, seed=seed, intended_mated=intended_mated,
+        replicates=bootstrap_replicates, seed=seed, outcomes=test_outcomes,
     )
     per_subgroup = review_subgroup_metrics(
         test_rows, test_probabilities, frozen_probability,
-        replicates=max(200, bootstrap_replicates // 4), seed=seed,
+        replicates=max(200, bootstrap_replicates // 4), seed=seed, outcomes=test_outcomes,
     )
 
     test_payload = {
@@ -6470,6 +6654,23 @@ def _feature_definitions() -> Dict[str, str]:
     }
 
 
+# Shared column order for both experiments' subgroup files, so a reader can
+# compare them directly.
+_SUBGROUP_CSV_COLUMNS = (
+    "subgroup",
+    "fpir", "fpir_lower_95", "fpir_upper_95",
+    "fnir_rank1", "fnir_rank1_lower_95", "fnir_rank1_upper_95",
+    "fnir_rank5", "fnir_rank5_lower_95", "fnir_rank5_upper_95",
+    "tpir_rank1", "tpir_rank1_lower_95", "tpir_rank1_upper_95",
+    "tpir_rank5", "tpir_rank5_lower_95", "tpir_rank5_upper_95",
+    "mated_probe_coverage", "mated_probe_coverage_lower_95", "mated_probe_coverage_upper_95",
+    "non_mated_probe_coverage", "non_mated_probe_coverage_lower_95",
+    "non_mated_probe_coverage_upper_95",
+    "scored_mated_probes", "scored_non_mated_probes",
+    "intended_mated_probes", "intended_non_mated_probes",
+)
+
+
 def _write_review_csvs(
     output_root: Path, classifier_rates: Mapping[str, Any], baseline_rates: Mapping[str, Any],
     baseline_detection: Mapping[str, Any], per_subgroup: Mapping[str, Mapping[str, Any]],
@@ -6478,30 +6679,26 @@ def _write_review_csvs(
     with open(output_root / "ml_review_method_comparison.csv", "w", newline="",
               encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["method", "fpir", "tpir_rank1", "false_reviews_per_1000_non_mated",
+        writer.writerow(["method", "fpir", "tpir_rank1", "tpir_rank5",
+                         "false_reviews_per_1000_non_mated",
                          "end_to_end_duplicate_detection_rate"])
         writer.writerow(["three_image_open_set_calibrated", baseline_rates["fpir"],
-                         baseline_rates["tpir_rank1"],
+                         baseline_rates["tpir_rank1"], baseline_rates["tpir_rank5"],
                          baseline_rates["false_reviews_per_1000_non_mated"],
                          baseline_detection["end_to_end_duplicate_detection_rate"]])
         writer.writerow([ML_REVIEW_METHOD, classifier_rates["fpir"],
-                         classifier_rates["tpir_rank1"],
+                         classifier_rates["tpir_rank1"], classifier_rates["tpir_rank5"],
                          classifier_rates["false_reviews_per_1000_non_mated"],
                          classifier_rates["end_to_end_duplicate_detection_rate"]])
 
     with open(output_root / "ml_review_subgroup_metrics.csv", "w", newline="",
               encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["subgroup", "fpir", "fpir_lower_95", "fpir_upper_95", "fnir_rank1",
-                         "fnir_rank1_lower_95", "fnir_rank1_upper_95", "tpir_rank1",
-                         "tpir_rank1_lower_95", "tpir_rank1_upper_95",
-                         "scored_mated_probes", "scored_non_mated_probes"])
+        columns = _SUBGROUP_CSV_COLUMNS
+        writer.writerow(columns)
         for subgroup in sorted(per_subgroup):
             r = per_subgroup[subgroup]
-            writer.writerow([subgroup, r["fpir"], r["fpir_lower_95"], r["fpir_upper_95"],
-                             r["fnir_rank1"], r["fnir_rank1_lower_95"], r["fnir_rank1_upper_95"],
-                             r["tpir_rank1"], r["tpir_rank1_lower_95"], r["tpir_rank1_upper_95"],
-                             r["scored_mated_probes"], r["scored_non_mated_probes"]])
+            writer.writerow([subgroup] + [r.get(name, "") for name in columns[1:]])
 
     # Aggregate only: no per-image score, identifier or path is published.
     referred = int(sum(1 for p in probabilities if p >= threshold))
@@ -6536,14 +6733,18 @@ def render_ml_review_report(
         "",
         "## Held-out comparison",
         "",
-        "| Method | FPIR | TPIR@1 | False reviews / 1,000 |",
-        "| --- | --- | --- | --- |",
+        "| Method | FPIR | TPIR@1 | TPIR@5 | False reviews / 1,000 |",
+        "| --- | --- | --- | --- | --- |",
         f"| Calibrated similarity threshold | {format_percentage(b['fpir'])} | "
-        f"{format_percentage(b['tpir_rank1'])} | "
+        f"{format_percentage(b['tpir_rank1'])} | {format_percentage(b['tpir_rank5'])} | "
         f"{format_number(b['false_reviews_per_1000_non_mated'], 1)} |",
         f"| Logistic-regression classifier | {format_percentage(c['fpir'])} | "
-        f"{format_percentage(c['tpir_rank1'])} | "
+        f"{format_percentage(c['tpir_rank1'])} | {format_percentage(c['tpir_rank5'])} | "
         f"{format_number(c['false_reviews_per_1000_non_mated'], 1)} |",
+        "",
+        "Both use the same rank-aware TPIR definition: the correct identity must be "
+        "ranked first (or within five) *and* above the operating point. A referral to "
+        "another identity is not an identification.",
         "",
         f"Classifier FPIR 95% CI {format_percentage(intervals['fpir']['lower_95'])} – "
         f"{format_percentage(intervals['fpir']['upper_95'])}; TPIR@1 95% CI "
@@ -6553,10 +6754,15 @@ def render_ml_review_report(
         "",
         "### Decision counts",
         "",
-        f"- Mated probes referred: {c['mated_probes_correctly_referred']}; not referred: "
-        f"{c['mated_probes_not_referred']}",
-        f"- Non-mated probes referred in error: {c['non_mated_probes_incorrectly_referred']}; "
-        f"correctly not referred: {c['non_mated_probes_correctly_not_referred']}",
+        f"- Mated probes referred with the correct identity at rank one: "
+        f"{c['mated_correct_rank1_referred']}; within rank five: "
+        f"{c['mated_correct_rank5_referred']}",
+        f"- Mated probes referred to the wrong identity (a referral, not an "
+        f"identification): {c['mated_wrong_identity_referred']}",
+        f"- Mated probes not referred: {c['mated_not_referred']}",
+        f"- Non-mated probes referred in error: {c['non_mated_incorrectly_referred']}; "
+        f"correctly not referred: {c['non_mated_correctly_not_referred']}",
+        f"- Gallery-reference-unavailable failures: {c['gallery_reference_unavailable']}",
         f"- Extraction failures (never counted as negatives): "
         f"{coverage['intended_mated_probes'] - coverage['scored_mated_probes']} mated, "
         f"{coverage['intended_non_mated_probes'] - coverage['scored_non_mated_probes']} non-mated",
@@ -6994,7 +7200,7 @@ def _write_figure_captions(
             "## Note on Figure 1",
             "",
             f"The classifier and the calibrated threshold referred the same "
-            f"{c['non_mated_probes_incorrectly_referred']} non-mated searches in error, so "
+            f"{c['non_mated_incorrectly_referred']} non-mated searches in error, so "
             f"their bars are equal by measurement rather than by rounding.",
         ]
     if pipeline and pipeline.get("evaluated") == "no":

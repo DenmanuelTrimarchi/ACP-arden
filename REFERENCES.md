@@ -260,11 +260,15 @@ claimed.
 storage, are excluded from Git and from any release, and are never downloaded
 automatically by the programme.
 
-> The InsightFace pipeline was evaluated solely for non-commercial MSc research.
-> The pretrained model files were stored outside the public repository and were
-> not redistributed. The project publishes only aggregate benchmark results and
-> provides full attribution to the original model, software and research
-> publications.
+> The InsightFace pipeline is intended for evaluation solely within
+> non-commercial MSc research. The pretrained model files are stored outside the
+> public repository and are not redistributed. The project publishes only
+> aggregate benchmark results and provides full attribution to the original
+> model, software and research publications.
+
+The past tense is used only once held-out metrics exist. At the time of writing
+the comparison has not run, for the technical reason recorded in
+`pipeline_comparison_metrics.json`.
 
 ```text
 Title: InsightFace: 2D and 3D Face Analysis Project

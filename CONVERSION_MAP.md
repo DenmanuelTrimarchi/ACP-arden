@@ -52,15 +52,14 @@ methodology, and are deliberately not part of the runnable artefact:
 
 | Component | Status |
 |---|---|
-| Matplotlib evidence-figure rendering | Reference-only — not included |
 | Rendered command-output screenshot pack and its indices | Reference-only — not included |
 | Evidence manifest and chapter-placement index | Reference-only — not included |
 | Dataset extraction and flattening helpers | Reference-only — not included |
 | Comment-style audit tooling | Reference-only — not included |
 
-Excluding them changes no reported metric: every figure in
-`results/aggregate/` is produced by the pipeline in sections 11 to 15, and the
-evidence tooling only re-renders those numbers for presentation.
+Excluding them changes no reported metric. Figure rendering is no longer among
+them: it is implemented in section 28 and writes PNG and SVG to
+`results/figures/`, drawn from the published JSON and CSV artefacts.
 
 ## Attribution headers
 
@@ -95,7 +94,12 @@ full register, with licences and digests, is `REFERENCES.md`.
 | Pipeline description record and optional ArcFace comparator interface | Section 25 | Added |
 | Review classifier: identity split, features, logistic regression, freezing | Section 26 | Added |
 | Experiment 7 and 8 orchestration, artefacts and reports | Section 27 | Added |
-| Figure generation from published artefacts | Section 28 | Added |
+| Figure generation from machine-readable artefacts | Section 28 | Added |
+| PNG and SVG output | Section 28 | Added |
+| Figure captions and denominator documentation | Section 28 | Added |
+| PNG metadata removal and privacy scanning | Section 28 | Added |
+| Rank-aware review labels and TPIR definitions | Section 26 | Added |
+| Identity-level outcomes for end-to-end denominators | Section 26 | Added |
 
 ## Notes on the added and revised rows
 

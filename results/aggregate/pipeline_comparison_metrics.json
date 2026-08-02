@@ -1,7 +1,7 @@
 {
   "artifact_type": "pipeline_comparison_metrics",
   "comparison_scope": "Complete pretrained pipelines. Detection, landmarking, alignment, preprocessing, embedding dimensionality and runtime all differ, so no difference may be attributed to the embedding model alone.",
-  "created_at": "2026-08-02T00:34:02.897211+00:00",
+  "created_at": "2026-08-02T01:45:37.896849+00:00",
   "dataset_name": "BFW",
   "dependency_versions": {
     "Pillow": "12.3.0",
@@ -12,7 +12,7 @@
   },
   "evaluated": "no",
   "fine_tuning_performed": false,
-  "licence_note": "InsightFace publishes its pretrained models for non-commercial research use. This project is an MSc academic research artefact: it is not a commercial service, is not deployed to real users, makes no commercial decisions, and neither sells, licenses nor redistributes the pretrained weights. The evaluation is local and non-commercial and publishes only aggregate metrics, so it falls within those research terms. The models were created and trained externally by the InsightFace project; this project trains and fine-tunes nothing. The MIT licence covering InsightFace source code does not automatically extend to every pretrained weight file, and no ownership of the models, their training data or their weights is claimed here.",
+  "licence_note": "InsightFace publishes its pretrained models for non-commercial research use. This project is an MSc academic research artefact: it is not a commercial service, is not deployed to real users, makes no commercial decisions, and neither sells, licenses nor redistributes the pretrained weights. The evaluation is local and non-commercial and publishes only aggregate metrics, so it falls within those research terms. The models were created and trained externally by the InsightFace project; no face-recognition network is trained or fine-tuned here. The MIT licence covering InsightFace source code does not automatically extend to every pretrained weight file, and no ownership of the models, their training data or their weights is claimed here.",
   "model_provenance": {
     "created_and_trained_by": "InsightFace project; not trained or fine-tuned here",
     "model_pack": "buffalo_l",
@@ -73,5 +73,5 @@
   "status": "not_run_model_files_not_configured",
   "substitute_model_used": false,
   "training_performed": false,
-  "use_statement": "The InsightFace pipeline was evaluated solely for non-commercial MSc research. The pretrained model files were stored outside the public repository and were not redistributed. The project publishes only aggregate benchmark results and provides full attribution to the original model, software and research publications."
+  "use_statement": "The InsightFace pipeline is intended for evaluation solely within non-commercial MSc research. The pretrained model files are stored outside the public repository and are not redistributed. The project publishes only aggregate benchmark results and provides full attribution to the original model, software and research publications."
 }

@@ -1,6 +1,6 @@
 {
   "artifact_type": "pipeline_comparison_protocol",
-  "created_at": "2026-08-02T00:34:02.928243+00:00",
+  "created_at": "2026-08-02T01:45:37.902499+00:00",
   "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
   "schema_version": 1,
   "seed": 20260727,

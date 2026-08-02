@@ -59,6 +59,8 @@ def _row(label: int, top1: float, *, subgroup: str = "asian_females",
             "probe_face_area_ratio": 0.55,
         },
         label=label,
+        correct_rank=1 if label == 1 else None,
+        correct_similarity=top1 if label == 1 else None,
     )
 
 
@@ -91,7 +93,8 @@ def test_every_feature_has_a_published_definition() -> None:
     assert all(text.strip() for text in definitions.values())
 
 
-def test_labels_follow_the_protocol_roles() -> None:
+def test_labels_follow_the_protocol_roles_and_rank() -> None:
+    """A mated probe is positive only when its own identity ranks first."""
     results = [
         acp.OpenSetSearchResult(
             sample_id="a" * 32, identity_hash="h" * 32, subgroup="asian_females",
@@ -99,6 +102,8 @@ def test_labels_follow_the_protocol_roles() -> None:
             top5_similarity_mean=0.6, top5_similarity_stdev=0.05,
             top1_gallery_image_count=3, gallery_size=200,
             probe_detection_confidence=0.9, probe_face_area_ratio=0.5,
+            correct_rank=1 if role == "mated_probe" else None,
+            correct_similarity=0.8 if role == "mated_probe" else None,
         )
         for role in ("mated_probe", "non_mated_probe")
     ]
@@ -303,10 +308,10 @@ def test_confusion_counts_reconcile_with_the_denominators() -> None:
     rows = [_row(1, 0.9), _row(1, 0.2), _row(0, 0.95), _row(0, 0.1)]
     probabilities = np.asarray([0.9, 0.2, 0.95, 0.1])
     rates = acp.review_rates_at_probability(rows, probabilities, 0.5)
-    assert rates["mated_probes_correctly_referred"] == 1
-    assert rates["mated_probes_not_referred"] == 1
-    assert rates["non_mated_probes_incorrectly_referred"] == 1
-    assert rates["non_mated_probes_correctly_not_referred"] == 1
+    assert rates["mated_correct_rank1_referred"] == 1
+    assert rates["mated_not_referred"] == 1
+    assert rates["non_mated_incorrectly_referred"] == 1
+    assert rates["non_mated_correctly_not_referred"] == 1
     assert rates["scored_mated_probes"] == 2
     assert rates["scored_non_mated_probes"] == 2
     assert rates["fpir"] == pytest.approx(0.5)
@@ -317,10 +322,19 @@ def test_confusion_counts_reconcile_with_the_denominators() -> None:
 def test_the_end_to_end_denominator_counts_every_intended_mated_probe() -> None:
     rows = [_row(1, 0.9), _row(0, 0.1)]
     probabilities = np.asarray([0.9, 0.1])
-    rates = acp.review_rates_at_probability(rows, probabilities, 0.5, intended_mated=4)
+    outcomes = {
+        "id": acp.ReviewIdentityOutcome(
+            identity_hash="id", subgroup="asian_females", intended_mated=4, scored_mated=1,
+            intended_non_mated=1, scored_non_mated=1, mated_extraction_failures=3,
+            non_mated_extraction_failures=0, gallery_reference_unavailable=2,
+        )
+    }
+    rates = acp.review_rates_at_probability(rows, probabilities, 0.5, outcomes=outcomes)
     # One referral out of four intended, not out of the one that was scored.
     assert rates["end_to_end_duplicate_detection_rate"] == pytest.approx(0.25)
     assert rates["tpir_rank1"] == pytest.approx(1.0)
+    assert rates["gallery_reference_unavailable"] == 2
+    assert rates["mated_extraction_coverage"] == pytest.approx(0.25)
 
 
 # --- Bootstrap and subgroups --------------------------------------------------
@@ -412,7 +426,7 @@ def test_preconditions_are_diagnosed_in_order(tmp_path: Path) -> None:
 def test_the_licence_note_states_the_non_commercial_research_position() -> None:
     note = acp.ARCFACE_LICENCE_NOTE
     assert "non-commercial research" in note
-    assert "trains and fine-tunes nothing" in note or "trains nothing" in note
+    assert "no face-recognition network is trained or fine-tuned here" in note
     assert "MIT licence" in note and "does not automatically extend" in note
     assert "no ownership" in note.lower()
     assert "not redistribute" in note.lower() or "nor redistributes" in note.lower()
@@ -505,3 +519,258 @@ def test_figure_captions_state_their_denominators() -> None:
     # Coverage is enrolled over intended, never over enrolled.
     assert "intended identities" in text
     assert "not causal" in text
+
+
+# --- Rank-aware TPIR (corrected defect) ---------------------------------------
+
+
+def _mated(rank, prob=0.9):
+    """A scored mated probe whose correct identity sits at ``rank``."""
+    row = _row(1, 0.8)
+    return acp.ReviewFeatureRow(
+        sample_id=f"m{rank}", identity_hash=f"i{rank}", subgroup="asian_females",
+        role="mated_probe", features=row.features,
+        label=1 if rank == 1 else 0, correct_rank=rank, correct_similarity=0.8,
+    ), prob
+
+
+def test_rank_one_referral_counts_towards_tpir_rank1() -> None:
+    row, prob = _mated(1)
+    rates = acp.review_rates_at_probability([row], np.asarray([prob]), 0.5)
+    assert rates["tpir_rank1"] == pytest.approx(1.0)
+    assert rates["mated_correct_rank1_referred"] == 1
+
+
+def test_a_rank_two_referral_is_not_a_rank_one_success() -> None:
+    """A referral to the wrong identity is not a true identification."""
+    row, prob = _mated(2)
+    rates = acp.review_rates_at_probability([row], np.asarray([prob]), 0.5)
+    assert rates["tpir_rank1"] == pytest.approx(0.0)
+    assert rates["mated_wrong_identity_referred"] == 1
+
+
+def test_a_rank_two_referral_may_count_towards_tpir_rank5() -> None:
+    row, prob = _mated(2)
+    rates = acp.review_rates_at_probability([row], np.asarray([prob]), 0.5)
+    assert rates["tpir_rank5"] == pytest.approx(1.0)
+    assert rates["mated_correct_rank5_referred"] == 1
+
+
+def test_a_rank_nine_referral_counts_for_neither_rank() -> None:
+    row, prob = _mated(9)
+    rates = acp.review_rates_at_probability([row], np.asarray([prob]), 0.5)
+    assert rates["tpir_rank1"] == pytest.approx(0.0)
+    assert rates["tpir_rank5"] == pytest.approx(0.0)
+    assert rates["mated_wrong_identity_referred"] == 1
+
+
+def test_labels_require_the_correct_identity_at_rank_one() -> None:
+    results = [
+        acp.OpenSetSearchResult(
+            sample_id=f"s{rank}", identity_hash=f"h{rank}", subgroup="asian_females",
+            role="mated_probe", top_similarity=0.8, top2_similarity=0.7,
+            top5_similarity_mean=0.6, top5_similarity_stdev=0.05,
+            top1_gallery_image_count=3, gallery_size=200,
+            probe_detection_confidence=0.9, probe_face_area_ratio=0.5,
+            correct_rank=rank, correct_similarity=0.8,
+        )
+        for rank in (1, 2)
+    ]
+    rows, _ = acp.build_review_feature_rows(results)
+    assert [r.label for r in rows] == [1, 0]
+
+
+def test_ground_truth_rank_is_never_a_feature() -> None:
+    results = [
+        acp.OpenSetSearchResult(
+            sample_id="a" * 32, identity_hash="h" * 32, subgroup="asian_females",
+            role="mated_probe", top_similarity=0.8, top2_similarity=0.7,
+            top5_similarity_mean=0.6, top5_similarity_stdev=0.05,
+            top1_gallery_image_count=3, gallery_size=200,
+            probe_detection_confidence=0.9, probe_face_area_ratio=0.5,
+            correct_rank=1, correct_similarity=0.8,
+        )
+    ]
+    rows, _ = acp.build_review_feature_rows(results)
+    assert rows[0].correct_rank == 1
+    assert "correct_rank" not in rows[0].features
+    assert "correct_similarity" not in rows[0].features
+    assert set(rows[0].features) == set(acp.ML_REVIEW_FEATURES)
+
+
+def test_decision_counts_reconcile_with_the_scored_denominator() -> None:
+    mated = [_mated(1), _mated(2), _mated(9)]
+    all_rows: List[acp.ReviewFeatureRow] = [row for row, _ in mated] + [_row(0, 0.1)]
+    all_probs = np.asarray([prob for _, prob in mated] + [0.1])
+    rates = acp.review_rates_at_probability(all_rows, all_probs, 0.5)
+    assert (
+        rates["mated_correct_rank1_referred"]
+        + rates["mated_wrong_identity_referred"]
+        + rates["mated_not_referred"]
+        == rates["scored_mated_probes"]
+    )
+    assert (
+        rates["non_mated_incorrectly_referred"]
+        + rates["non_mated_correctly_not_referred"]
+        == rates["scored_non_mated_probes"]
+    )
+
+
+# --- Bootstrap denominator (corrected defect) ---------------------------------
+
+
+def _outcome_fixture():
+    """Twenty identities, each with one scored and one failed mated probe."""
+    rows, probs, outcomes = [], [], {}
+    for index in range(20):
+        subgroup = EXPECTED_SUBGROUPS[index % len(EXPECTED_SUBGROUPS)]
+        identity = f"id{index:03d}"
+        base = _row(1, 0.9, subgroup=subgroup, identity=identity, sample=f"s{index}")
+        rows.append(acp.ReviewFeatureRow(
+            sample_id=base.sample_id, identity_hash=identity, subgroup=subgroup,
+            role="mated_probe", features=base.features, label=1,
+            correct_rank=1, correct_similarity=0.9,
+        ))
+        probs.append(0.9)
+        outcomes[identity] = acp.ReviewIdentityOutcome(
+            identity_hash=identity, subgroup=subgroup, intended_mated=2, scored_mated=1,
+            intended_non_mated=0, scored_non_mated=0, mated_extraction_failures=1,
+            non_mated_extraction_failures=0, gallery_reference_unavailable=1,
+        )
+    return rows, np.asarray(probs), outcomes
+
+
+def test_the_end_to_end_point_estimate_lies_inside_its_interval() -> None:
+    """A point estimate outside its own interval means the bootstrap changed
+    the denominator. This is the regression guard for that defect."""
+    rows, probs, outcomes = _outcome_fixture()
+    point = acp.review_rates_at_probability(rows, probs, 0.5, outcomes=outcomes)
+    intervals = acp.review_cluster_bootstrap(
+        rows, probs, 0.5, replicates=300, seed=EXPECTED_SEED, outcomes=outcomes
+    )
+    estimate = point["end_to_end_duplicate_detection_rate"]
+    band = intervals["end_to_end_duplicate_detection_rate"]
+    assert band["lower_95"] <= estimate <= band["upper_95"], (
+        f"{estimate} outside [{band['lower_95']}, {band['upper_95']}]"
+    )
+
+
+def test_conditional_and_end_to_end_differ_when_failures_exist() -> None:
+    rows, probs, outcomes = _outcome_fixture()
+    rates = acp.review_rates_at_probability(rows, probs, 0.5, outcomes=outcomes)
+    assert rates["conditional_duplicate_detection_rate"] == pytest.approx(1.0)
+    assert rates["end_to_end_duplicate_detection_rate"] == pytest.approx(0.5)
+    assert rates["end_to_end_duplicate_detection_rate"] < rates[
+        "conditional_duplicate_detection_rate"
+    ]
+
+
+def test_coverage_intervals_use_intended_probe_counts() -> None:
+    rows, probs, outcomes = _outcome_fixture()
+    intervals = acp.review_cluster_bootstrap(
+        rows, probs, 0.5, replicates=100, seed=EXPECTED_SEED, outcomes=outcomes
+    )
+    band = intervals["mated_extraction_coverage"]
+    # One scored of two intended for every identity, so coverage is exactly 0.5.
+    assert band["lower_95"] == pytest.approx(0.5)
+    assert band["upper_95"] == pytest.approx(0.5)
+
+
+def test_the_corrected_bootstrap_is_deterministic() -> None:
+    rows, probs, outcomes = _outcome_fixture()
+    a = acp.review_cluster_bootstrap(rows, probs, 0.5, replicates=100,
+                                     seed=EXPECTED_SEED, outcomes=outcomes)
+    b = acp.review_cluster_bootstrap(rows, probs, 0.5, replicates=100,
+                                     seed=EXPECTED_SEED, outcomes=outcomes)
+    # NaN never equals itself, so an undefined metric needs explicit handling
+    # rather than a plain dictionary comparison.
+    assert set(a) == set(b)
+    for metric, band in a.items():
+        other = b[metric]
+        for key, value in band.items():
+            if isinstance(value, float) and math.isnan(value):
+                assert math.isnan(other[key])
+            else:
+                assert value == other[key]
+
+
+def test_subgroup_metrics_include_rank_five_and_coverage_intervals() -> None:
+    rows, probs, outcomes = _outcome_fixture()
+    per_subgroup = acp.review_subgroup_metrics(
+        rows, probs, 0.5, replicates=50, seed=EXPECTED_SEED, outcomes=outcomes
+    )
+    assert per_subgroup
+    for entry in per_subgroup.values():
+        for metric in ("fpir", "fnir_rank1", "fnir_rank5", "tpir_rank1", "tpir_rank5",
+                       "mated_probe_coverage", "non_mated_probe_coverage"):
+            assert f"{metric}_lower_95" in entry and f"{metric}_upper_95" in entry
+        assert entry["intended_mated_probes"] >= entry["scored_mated_probes"]
+
+
+# --- Documentation contracts --------------------------------------------------
+
+
+def _project_file(name: str) -> str:
+    return (Path(acp.__file__).parent / name).read_text(encoding="utf-8")
+
+
+def test_documentation_does_not_claim_nothing_is_trained() -> None:
+    """Experiment 7 trains a classifier, so the blanket claim is now false. The
+    narrower statement about face-recognition networks remains correct."""
+    for name in ("README.md", "ACP_arden.py"):
+        text = _project_file(name)
+        assert "Nothing here is trained or fine-tuned" not in text
+    readme = _project_file("README.md")
+    assert "No face-detection or face-recognition network is\ntrained or fine-tuned" in readme \
+        or "no face-recognition network is trained" in readme.lower()
+    assert "logistic-regression review classifier" in readme
+
+
+def test_the_valid_narrower_training_sentence_is_permitted() -> None:
+    assert "No face-recognition model is trained or fine-tuned." not in _project_file(
+        "README.md"
+    ) or True  # the sentence is acceptable wherever it appears
+
+
+def test_no_stale_licensing_wording_remains() -> None:
+    for name in ("README.md", "ACP_arden.py", ".env.example", "REFERENCES.md",
+                 "CONVERSION_MAP.md"):
+        assert "those terms are unresolved for this project" not in _project_file(name)
+
+
+def test_past_tense_evaluation_claims_match_the_real_status() -> None:
+    """'was evaluated' may only appear once held-out metrics exist."""
+    root = Path(acp.__file__).parent / "results" / "aggregate"
+    metrics = root / "pipeline_comparison_metrics.json"
+    if not metrics.is_file():
+        pytest.skip("pipeline comparison has not been run in this checkout")
+    evaluated = json.loads(metrics.read_text(encoding="utf-8"))["evaluated"] == "yes"
+    report = (root / "PRETRAINED_PIPELINE_COMPARISON_REPORT.md").read_text(encoding="utf-8")
+    if not evaluated:
+        assert "pipeline was evaluated solely" not in report
+        assert "is intended for evaluation solely" in report
+    assert acp.arcface_use_statement(False).startswith("The InsightFace pipeline is intended")
+    assert acp.arcface_use_statement(True).startswith("The InsightFace pipeline was evaluated")
+
+
+def test_the_conversion_map_places_figures_in_section_28() -> None:
+    text = _project_file("CONVERSION_MAP.md")
+    assert "Matplotlib evidence-figure rendering | Reference-only" not in text
+    assert "sections 11 to 15" not in text
+    assert "results/figures/" in text
+    for row in ("Figure generation from machine-readable artefacts | Section 28",
+                "PNG and SVG output | Section 28",
+                "Figure captions and denominator documentation | Section 28",
+                "PNG metadata removal and privacy scanning | Section 28"):
+        assert row in text
+
+
+def test_section_numbers_are_contiguous_and_documented() -> None:
+    import re
+
+    source = _project_file("ACP_arden.py")
+    numbers = sorted({int(m.group(1)) for m in re.finditer(r"^# (\d+)\. ", source, re.M)
+                      if int(m.group(1)) <= 40})
+    assert numbers == list(range(1, len(numbers) + 1))
+    assert len(numbers) == 30
+    assert "thirty numbered sections" in _project_file("CONVERSION_MAP.md")

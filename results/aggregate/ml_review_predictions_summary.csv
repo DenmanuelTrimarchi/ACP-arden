@@ -1,6 +1,6 @@
 statistic,value
-scored_records,3801
-referred_for_review,900
-not_referred,2901
-probability_threshold,0.662958449216
-mean_probability,0.2817240146787468
+scored_records,3803
+referred_for_review,909
+not_referred,2894
+probability_threshold,0.571337650641
+mean_probability,0.25884105600652907
