@@ -366,7 +366,11 @@ def test_subgroup_is_never_used_as_a_predictor() -> None:
 # --- Experiment 8: pipeline comparison ----------------------------------------
 
 
-def test_an_unlicensed_pipeline_records_the_declared_not_run_status(tmp_path: Path) -> None:
+def test_an_unconfigured_pipeline_reports_a_technical_status_not_a_licensing_one(
+    tmp_path: Path,
+) -> None:
+    """Commercial-use restrictions are irrelevant to non-commercial academic
+    research, so a licensing status must never stand in for a missing file."""
     config = acp.EnvironmentConfig(
         data_root=None, protocol_root=None, model_root=None,
         cplfw_raw_root=None, cache_root=None, arcface_model_root=None,
@@ -374,7 +378,44 @@ def test_an_unlicensed_pipeline_records_the_declared_not_run_status(tmp_path: Pa
     status = acp.pipeline_comparison_status(config)
     assert status["comparison_run"] is False
     assert status["substitute_model_used"] is False
-    assert acp.PIPELINE_STATUS_NOT_RUN == "not_run_licensing_unresolved"
+    assert status["status"] == acp.PIPELINE_STATUS_NOT_CONFIGURED
+    assert "licens" not in status["status"]
+    assert not hasattr(acp, "PIPELINE_STATUS_NOT_RUN")
+
+
+def test_the_status_vocabulary_separates_technical_from_terms_blockers() -> None:
+    assert acp.PIPELINE_STATUS_EVALUATED == "evaluated_non_commercial_academic_research"
+    for name in (acp.PIPELINE_STATUS_NOT_CONFIGURED, acp.PIPELINE_STATUS_SOURCE_UNVERIFIED,
+                 acp.PIPELINE_STATUS_DIGEST_NOT_PINNED,
+                 acp.PIPELINE_STATUS_DEPENDENCIES_MISSING):
+        assert name.startswith("not_run_") and "licens" not in name
+    # A terms status exists but is reserved for genuinely unclear research terms.
+    assert acp.PIPELINE_STATUS_TERMS_UNCLEAR == "not_run_research_terms_not_established"
+
+
+def test_preconditions_are_diagnosed_in_order(tmp_path: Path) -> None:
+    """A configured root with the files present but no pinned digests must
+    report the digest blocker, not the configuration one."""
+    (tmp_path / acp.ARCFACE_DETECTOR_FILENAME).write_bytes(b"placeholder")
+    (tmp_path / acp.ARCFACE_RECOGNITION_FILENAME).write_bytes(b"placeholder")
+    config = acp.EnvironmentConfig(
+        data_root=None, protocol_root=None, model_root=None,
+        cplfw_raw_root=None, cache_root=None, arcface_model_root=tmp_path,
+    )
+    diagnosis = acp.arcface_preconditions(config)
+    assert diagnosis["status"] == acp.PIPELINE_STATUS_DIGEST_NOT_PINNED
+    assert diagnosis["checks"]["model_files_present"] is True
+    assert diagnosis["checks"]["digests_pinned"] is False
+    assert diagnosis["checks"]["research_terms_established"] is True
+
+
+def test_the_licence_note_states_the_non_commercial_research_position() -> None:
+    note = acp.ARCFACE_LICENCE_NOTE
+    assert "non-commercial research" in note
+    assert "trains and fine-tunes nothing" in note or "trains nothing" in note
+    assert "MIT licence" in note and "does not automatically extend" in note
+    assert "no ownership" in note.lower()
+    assert "not redistribute" in note.lower() or "nor redistributes" in note.lower()
 
 
 def test_unpinned_stronger_model_files_are_refused(tmp_path: Path) -> None:

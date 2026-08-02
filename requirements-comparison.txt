@@ -1,24 +1,40 @@
-# Dependencies for the OPTIONAL higher-capacity pipeline comparison only
-# (InsightFace SCRFD/RetinaFace detection + ArcFace buffalo_l recognition).
+# Dependencies for the OPTIONAL Experiment 8 pipeline comparison
+# (InsightFace SCRFD detection + ArcFace buffalo_l recognition).
 #
-# Deliberately kept out of requirements.txt. The mandatory YuNet + SFace
-# evaluation, the five baseline experiments, the BFW open-set experiment and the
-# whole test suite run without anything below, and forcing these into the base
-# installation would overstate what a published result depends on.
+# Deliberately kept out of requirements.txt. The five baseline experiments, the
+# BFW open-set experiment, the review classifier and the whole test suite run
+# without anything below, and forcing these into the base installation would
+# overstate what a published result depends on.
+#
+# LICENSING. InsightFace publishes its pretrained models for non-commercial
+# research use, and this artefact is non-commercial MSc academic research, so
+# that use is within those terms. Commercial-use restrictions are not a blocker
+# here. The models are created and trained by the InsightFace project; nothing
+# in this repository trains or fine-tunes them, no weight file is redistributed
+# or committed, and no ownership is claimed. The MIT licence covering
+# InsightFace source code does not automatically extend to the weight files.
 #
 # NOT PINNED, and deliberately so. Every other requirements file in this project
-# pins versions read from the project virtual environment after a green run.
+# records versions read from the project virtual environment after a green run.
 # These packages are not installed here, so any version written below would be a
 # guess rather than a record. Pin them from the environment that actually
-# produced a comparison result, at the point such a result exists.
+# produces a comparison result, at the point such a result exists.
 #
-# Before installing, note that the comparison is currently reported as NOT RUN:
-# InsightFace publishes its pretrained recognition models for non-commercial
-# research use and directs users to contact the project regarding licensing of
-# the recognition models. Resolve those terms first. The SHA-256 digests of the
-# exact approved weight files must then be pinned in source
-# (ARCFACE_DETECTOR_SHA256, ARCFACE_RECOGNITION_SHA256); they are never accepted
-# as command-line arguments.
+# Before the comparison can run, all of the following must hold. The programme
+# reports whichever is outstanding as a precise technical status, never as a
+# licensing obstacle:
+#
+#   1. The official buffalo_l pack is obtained from the InsightFace project and
+#      stored in private local research storage, outside this repository.
+#   2. FACE_ARCFACE_MODEL_ROOT points at that directory.
+#   3. det_10g.onnx and w600k_r50.onnx are both present.
+#   4. Their SHA-256 digests are pinned in source as ARCFACE_DETECTOR_SHA256 and
+#      ARCFACE_RECOGNITION_SHA256. Digests are never accepted as command-line
+#      arguments for a reportable evaluation.
+#   5. The packages below are installed.
+#
+# Nothing is downloaded automatically at any point: the loader passes
+# download=False and an explicit local root.
 
 # onnxruntime==<pin from the environment that produced the result>
 # insightface==<pin from the environment that produced the result>

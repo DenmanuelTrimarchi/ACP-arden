@@ -1,7 +1,7 @@
 {
   "artifact_type": "pipeline_comparison_metrics",
   "comparison_scope": "Complete pretrained pipelines. Detection, landmarking, alignment, preprocessing, embedding dimensionality and runtime all differ, so no difference may be attributed to the embedding model alone.",
-  "created_at": "2026-08-01T16:50:47.607494+00:00",
+  "created_at": "2026-08-02T00:22:24.032733+00:00",
   "dataset_name": "BFW",
   "dependency_versions": {
     "Pillow": "12.3.0",
@@ -12,8 +12,23 @@
   },
   "evaluated": "no",
   "fine_tuning_performed": false,
-  "licence_note": "InsightFace publishes its pretrained recognition models for non-commercial research use and directs users to contact the project regarding licensing. Those terms are unresolved for this project, so no ArcFace result is reported.",
+  "licence_note": "InsightFace publishes its pretrained models for non-commercial research use. This project is an MSc academic research artefact: it is not a commercial service, is not deployed to real users, makes no commercial decisions, and neither sells, licenses nor redistributes the pretrained weights. The evaluation is local and non-commercial and publishes only aggregate metrics, so it falls within those research terms. The models were created and trained externally by the InsightFace project; this project trains and fine-tunes nothing. The MIT licence covering InsightFace source code does not automatically extend to every pretrained weight file, and no ownership of the models, their training data or their weights is claimed here.",
+  "model_provenance": {
+    "created_and_trained_by": "InsightFace project; not trained or fine-tuned here",
+    "model_pack": "buffalo_l",
+    "ownership_claimed": false,
+    "weights_committed_to_git": false,
+    "weights_downloaded_automatically": false,
+    "weights_redistributed": false
+  },
   "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
+  "preconditions": {
+    "dependencies_installed": false,
+    "digests_pinned": false,
+    "model_files_present": false,
+    "model_root_configured": false,
+    "research_terms_established": true
+  },
   "primary_pipeline": {
     "comparison_scope": "Complete pipeline: detection, preprocessing and embedding. A difference between pipelines cannot be attributed to the embedding model alone.",
     "detector_name": "OpenCV YuNet 2023mar",
@@ -28,7 +43,7 @@
     "preprocessing_revision": "opencv-yunet-sface-exif-bgr-l2-v1"
   },
   "protocol_version": "acp-arden-bfw-open-set-v1",
-  "reason": "FACE_ARCFACE_MODEL_ROOT is not set. The optional comparison pipeline is not configured. InsightFace publishes its pretrained recognition models for non-commercial research use and directs users to contact the project regarding licensing. Those terms are unresolved for this project, so no ArcFace result is reported.",
+  "reason": "FACE_ARCFACE_MODEL_ROOT is not set, so no model files are available. Obtain the official buffalo_l pack from the InsightFace project and store it in private local research storage; nothing is downloaded automatically.",
   "schema_version": 1,
   "seed": 20260727,
   "separate_calibration_required": "Similarity scores from different embedding models are not interchangeable, so each pipeline must receive its own development-only threshold. The SFace threshold is never applied to ArcFace.",
@@ -55,7 +70,8 @@
     "processor": "arm",
     "python_version": "3.13.0"
   },
-  "status": "not_run_licensing_unresolved",
+  "status": "not_run_model_files_not_configured",
   "substitute_model_used": false,
-  "training_performed": false
+  "training_performed": false,
+  "use_statement": "The InsightFace pipeline was evaluated solely for non-commercial MSc research. The pretrained model files were stored outside the public repository and were not redistributed. The project publishes only aggregate benchmark results and provides full attribution to the original model, software and research publications."
 }

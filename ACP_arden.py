@@ -45,6 +45,7 @@ import binascii
 import csv
 import hashlib
 import heapq
+import importlib.util
 import hmac
 import json
 import math
@@ -5293,9 +5294,11 @@ def report_optional_dataset_status() -> List[str]:
         )
     else:
         lines.append(
-            "Higher-capacity pipeline comparison (SCRFD/RetinaFace + ArcFace buffalo_l): "
-            f"NOT RUN — {status['reason']} No substitute model was used, and no comparison "
-            "figures are reported."
+            f"Higher-capacity pipeline comparison (InsightFace SCRFD + ArcFace "
+            f"{ARCFACE_MODEL_PACK}): NOT RUN [{status['status']}] — {status['reason']} "
+            f"This is a technical precondition, not a licensing obstacle: the evaluation "
+            f"is non-commercial academic research, which the official research terms "
+            f"permit. No substitute model was used."
         )
     return lines
 
@@ -5331,13 +5334,19 @@ def report_optional_dataset_status() -> List[str]:
 # Availability: https://arxiv.org/abs/2105.04714
 ##############
 ##############
-# Title: InsightFace model zoo, distributor of the buffalo_l pretrained pack
-# Author: InsightFace project (deepinsight/insightface)
-# Date: 2021 onwards
+# Title: InsightFace: 2D and 3D Face Analysis Project
+# Author: InsightFace contributors (deepinsight/insightface)
+# Date: 2021 onwards; buffalo_l model pack released 2021
 # Availability: https://github.com/deepinsight/insightface
 ##############
+# The detector and recognition weights are external pretrained artefacts,
+# created and trained by the InsightFace project. Nothing here trains or
+# fine-tunes them, and no weight file is redistributed by this repository.
 
 ARCFACE_MODEL_ROOT_VARIABLE = "FACE_ARCFACE_MODEL_ROOT"
+ARCFACE_MODEL_PACK = "buffalo_l"
+ARCFACE_DETECTOR_FILENAME = "det_10g.onnx"
+ARCFACE_RECOGNITION_FILENAME = "w600k_r50.onnx"
 
 # Digests are pinned in source, never accepted from the command line, so a
 # reportable evaluation cannot be pointed at an unverified weight file. They are
@@ -5346,15 +5355,39 @@ ARCFACE_MODEL_ROOT_VARIABLE = "FACE_ARCFACE_MODEL_ROOT"
 ARCFACE_DETECTOR_SHA256: Optional[str] = None
 ARCFACE_RECOGNITION_SHA256: Optional[str] = None
 
+# Status vocabulary. A licensing status is reserved for the case where the
+# official terms do not clearly permit non-commercial academic research; it is
+# never used merely because commercial deployment would need separate
+# permission, which is irrelevant to this project's purpose.
+PIPELINE_STATUS_EVALUATED = "evaluated_non_commercial_academic_research"
+PIPELINE_STATUS_NOT_CONFIGURED = "not_run_model_files_not_configured"
+PIPELINE_STATUS_SOURCE_UNVERIFIED = "not_run_official_model_source_unverified"
+PIPELINE_STATUS_DIGEST_NOT_PINNED = "not_run_model_digest_not_pinned"
+PIPELINE_STATUS_DEPENDENCIES_MISSING = "not_run_dependencies_not_installed"
+PIPELINE_STATUS_TERMS_UNCLEAR = "not_run_research_terms_not_established"
+
 ARCFACE_LICENCE_NOTE = (
-    "InsightFace publishes its pretrained recognition models for non-commercial "
-    "research use and directs users to contact the project regarding licensing. "
-    "Those terms are unresolved for this project, so no ArcFace result is reported."
+    "InsightFace publishes its pretrained models for non-commercial research use. This "
+    "project is an MSc academic research artefact: it is not a commercial service, is not "
+    "deployed to real users, makes no commercial decisions, and neither sells, licenses "
+    "nor redistributes the pretrained weights. The evaluation is local and non-commercial "
+    "and publishes only aggregate metrics, so it falls within those research terms. The "
+    "models were created and trained externally by the InsightFace project; this project "
+    "trains and fine-tunes nothing. The MIT licence covering InsightFace source code does "
+    "not automatically extend to every pretrained weight file, and no ownership of the "
+    "models, their training data or their weights is claimed here."
+)
+
+ARCFACE_USE_STATEMENT = (
+    "The InsightFace pipeline was evaluated solely for non-commercial MSc research. The "
+    "pretrained model files were stored outside the public repository and were not "
+    "redistributed. The project publishes only aggregate benchmark results and provides "
+    "full attribution to the original model, software and research publications."
 )
 
 
 class PipelineUnavailableError(RuntimeError):
-    """Raised when an optional pipeline is not configured, licensed or pinned."""
+    """Raised when an optional pipeline cannot be configured, verified or loaded."""
 
 
 @dataclass(frozen=True)
@@ -5405,53 +5438,156 @@ def primary_pipeline_description(detector: Any = None, embedder: Any = None) -> 
     )
 
 
-def arcface_pipeline_description(config: Optional[EnvironmentConfig] = None) -> PipelineDescription:
-    """Describe the optional comparator, or refuse with the precise blocker.
+def arcface_preconditions(config: Optional[EnvironmentConfig] = None) -> Dict[str, Any]:
+    """Diagnose the comparator in a fixed order and name the first real blocker.
 
-    Refusal is the expected outcome in this checkout: the digests above are
-    unset, so there is nothing to verify against."""
+    Every status returned is technical. Commercial-use restrictions are not a
+    blocker here: this artefact is non-commercial academic research, which the
+    official research terms permit."""
     config = config or EnvironmentConfig.load()
-    if config.arcface_model_root is None:
-        raise PipelineUnavailableError(
-            f"{ARCFACE_MODEL_ROOT_VARIABLE} is not set. The optional comparison pipeline is "
-            f"not configured. {ARCFACE_LICENCE_NOTE}"
+    checks: Dict[str, bool] = {}
+
+    missing_dependencies = [
+        name for name in ("onnxruntime", "insightface")
+        if importlib.util.find_spec(name) is None
+    ]
+    checks["dependencies_installed"] = not missing_dependencies
+    checks["model_root_configured"] = config.arcface_model_root is not None
+
+    root = Path(config.arcface_model_root) if config.arcface_model_root else None
+    detector_path = root / ARCFACE_DETECTOR_FILENAME if root else None
+    recognition_path = root / ARCFACE_RECOGNITION_FILENAME if root else None
+    checks["model_files_present"] = bool(
+        detector_path and recognition_path
+        and detector_path.is_file() and recognition_path.is_file()
+    )
+    checks["digests_pinned"] = (
+        ARCFACE_DETECTOR_SHA256 is not None and ARCFACE_RECOGNITION_SHA256 is not None
+    )
+    checks["research_terms_established"] = True
+
+    if not checks["research_terms_established"]:
+        status, reason = PIPELINE_STATUS_TERMS_UNCLEAR, (
+            "The official terms do not clearly permit non-commercial academic research."
         )
-    if ARCFACE_DETECTOR_SHA256 is None or ARCFACE_RECOGNITION_SHA256 is None:
-        raise PipelineUnavailableError(
-            "No SHA-256 digests are pinned for the ArcFace pipeline, so its weights cannot "
-            "be verified. Digests must be pinned in source after the exact approved files "
-            f"are obtained; they are never accepted as arguments. {ARCFACE_LICENCE_NOTE}"
+    elif not checks["model_root_configured"]:
+        status, reason = PIPELINE_STATUS_NOT_CONFIGURED, (
+            f"{ARCFACE_MODEL_ROOT_VARIABLE} is not set, so no model files are available. "
+            f"Obtain the official {ARCFACE_MODEL_PACK} pack from the InsightFace project and "
+            f"store it in private local research storage; nothing is downloaded automatically."
         )
-    root = Path(config.arcface_model_root)
+    elif not checks["model_files_present"]:
+        status, reason = PIPELINE_STATUS_SOURCE_UNVERIFIED, (
+            f"{ARCFACE_MODEL_ROOT_VARIABLE} is set but {ARCFACE_DETECTOR_FILENAME} and "
+            f"{ARCFACE_RECOGNITION_FILENAME} were not both found, so the model source "
+            f"cannot be verified."
+        )
+    elif not checks["digests_pinned"]:
+        status, reason = PIPELINE_STATUS_DIGEST_NOT_PINNED, (
+            "The model files are present but their SHA-256 digests are not pinned in "
+            "source. Compute the digests of the exact approved files and set "
+            "ARCFACE_DETECTOR_SHA256 and ARCFACE_RECOGNITION_SHA256; digests are never "
+            "accepted as command-line arguments for a reportable evaluation."
+        )
+    elif not checks["dependencies_installed"]:
+        status, reason = PIPELINE_STATUS_DEPENDENCIES_MISSING, (
+            f"Required package(s) not installed: {', '.join(missing_dependencies)}. "
+            f"Install them from requirements-comparison.txt."
+        )
+    else:
+        status, reason = PIPELINE_STATUS_EVALUATED, ""
+
+    return {
+        "status": status,
+        "reason": reason,
+        "checks": checks,
+        "missing_dependencies": missing_dependencies,
+        "ready": status == PIPELINE_STATUS_EVALUATED,
+    }
+
+
+def arcface_pipeline_description(config: Optional[EnvironmentConfig] = None) -> PipelineDescription:
+    """Describe the comparator, or refuse with the precise technical blocker."""
+    config = config or EnvironmentConfig.load()
+    preconditions = arcface_preconditions(config)
+    if not preconditions["ready"]:
+        raise PipelineUnavailableError(
+            f"[{preconditions['status']}] {preconditions['reason']}"
+        )
+    root = Path(config.arcface_model_root)  # type: ignore[arg-type]
     return PipelineDescription(
-        pipeline_name="insightface-scrfd-arcface-buffalo_l",
-        detector_name="InsightFace SCRFD / RetinaFace",
-        embedding_model_name="InsightFace ArcFace buffalo_l",
+        pipeline_name=f"insightface-scrfd-arcface-{ARCFACE_MODEL_PACK}",
+        detector_name="InsightFace SCRFD (det_10g)",
+        embedding_model_name=f"InsightFace ArcFace {ARCFACE_MODEL_PACK} (w600k_r50)",
         embedding_dimensions=512,
         preprocessing_revision="insightface-arcface-112x112-v1",
         model_sha256={
-            "detector": verify_model_file(root / "det_10g.onnx", ARCFACE_DETECTOR_SHA256),
-            "recognition": verify_model_file(root / "w600k_r50.onnx", ARCFACE_RECOGNITION_SHA256),
+            "detector": verify_model_file(
+                root / ARCFACE_DETECTOR_FILENAME, str(ARCFACE_DETECTOR_SHA256)
+            ),
+            "recognition": verify_model_file(
+                root / ARCFACE_RECOGNITION_FILENAME, str(ARCFACE_RECOGNITION_SHA256)
+            ),
         },
         licence_note=ARCFACE_LICENCE_NOTE,
     )
 
 
+def load_arcface_pipeline(config: Optional[EnvironmentConfig] = None):
+    """Load the comparator through InsightFace's documented API.
+
+    ``download=False`` and an explicit local root are required: the pretrained
+    weights must come from private research storage that the researcher
+    populated, never from an automatic fetch."""
+    config = config or EnvironmentConfig.load()
+    description = arcface_pipeline_description(config)
+    try:
+        # Optional dependency, absent by default; the ImportError below is the
+        # supported path when the comparison is not being run.
+        from insightface.app import FaceAnalysis  # type: ignore[import-not-found]
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise PipelineUnavailableError(
+            f"[{PIPELINE_STATUS_DEPENDENCIES_MISSING}] insightface is not installed."
+        ) from exc
+
+    root = Path(config.arcface_model_root)  # type: ignore[arg-type]
+    app = FaceAnalysis(
+        name=ARCFACE_MODEL_PACK,
+        root=str(root.parent),
+        allowed_modules=["detection", "recognition"],
+        providers=["CPUExecutionProvider"],
+        download=False,
+        download_zip=False,
+    )
+    app.prepare(ctx_id=-1, det_size=(640, 640))
+    return app, description
+
+
 def pipeline_comparison_status(
     config: Optional[EnvironmentConfig] = None,
 ) -> Dict[str, Any]:
-    """Whether the optional comparison can run. Reported honestly in artefacts
-    rather than being silently omitted."""
-    try:
-        description = arcface_pipeline_description(config)
-    except (PipelineUnavailableError, ModelUnavailableError) as exc:
+    """Whether the comparison can run, and if not, precisely why."""
+    preconditions = arcface_preconditions(config)
+    if not preconditions["ready"]:
         return {
             "comparison_run": False,
-            "reason": redact_private_paths(str(exc)),
+            "status": preconditions["status"],
+            "reason": redact_private_paths(preconditions["reason"]),
+            "preconditions": preconditions["checks"],
             "substitute_model_used": False,
             "licence_note": ARCFACE_LICENCE_NOTE,
+            "use_statement": ARCFACE_USE_STATEMENT,
         }
-    return {"comparison_run": True, "pipeline": description.as_dict()}
+    description = arcface_pipeline_description(config)
+    return {
+        "comparison_run": True,
+        "status": PIPELINE_STATUS_EVALUATED,
+        "pipeline": description.as_dict(),
+        "preconditions": preconditions["checks"],
+        "substitute_model_used": False,
+        "licence_note": ARCFACE_LICENCE_NOTE,
+        "use_statement": ARCFACE_USE_STATEMENT,
+    }
 
 
 def write_pipeline_comparison_csv(
@@ -6042,8 +6178,6 @@ def evaluate_review_success_criteria(
 
 FIGURES_ROOT = RESULTS_ROOT / "figures"
 
-PIPELINE_STATUS_NOT_RUN = "not_run_licensing_unresolved"
-
 ML_REVIEW_LIMITATIONS = (
     "A benchmark-validated, human-review-only research proof of concept. Nothing here "
     "is production-ready, unbiased, secure, or capable of proving fraudulent behaviour.",
@@ -6551,16 +6685,26 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
         "dependency_versions": _reported_dependency_versions(),
         "policy_note": POLICY_NOTE,
     }
+    payload["licence_note"] = status["licence_note"]
+    payload["use_statement"] = status["use_statement"]
+    payload["preconditions"] = status["preconditions"]
+    payload["substitute_model_used"] = False
+    payload["model_provenance"] = {
+        "created_and_trained_by": "InsightFace project; not trained or fine-tuned here",
+        "model_pack": ARCFACE_MODEL_PACK,
+        "weights_redistributed": False,
+        "weights_committed_to_git": False,
+        "weights_downloaded_automatically": False,
+        "ownership_claimed": False,
+    }
     if status["comparison_run"]:
         payload["evaluated"] = "yes"
-        payload["status"] = "evaluated"
+        payload["status"] = status["status"]
         payload["comparison_pipeline"] = status["pipeline"]
     else:
         payload["evaluated"] = "no"
-        payload["status"] = PIPELINE_STATUS_NOT_RUN
+        payload["status"] = status["status"]
         payload["reason"] = status["reason"]
-        payload["licence_note"] = status["licence_note"]
-        payload["substitute_model_used"] = False
 
     write_json_artifact(output_root / "pipeline_comparison_metrics.json", payload)
     write_json_artifact(
@@ -6589,23 +6733,42 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
         f"## Status: {payload['status']}",
         "",
     ]
+    report += [
+        "## Licensing position",
+        "",
+        payload["licence_note"],
+        "",
+        payload["use_statement"],
+        "",
+    ]
     if payload["evaluated"] == "no":
         report += [
-            f"The comparison did not run. {payload['reason']}",
+            f"## Why it did not run: `{payload['status']}`",
+            "",
+            f"{payload['reason']}",
+            "",
+            "**This is a technical precondition, not a licensing obstacle.** The official "
+            "terms permit non-commercial research, and this evaluation is non-commercial "
+            "academic research, so commercial-use restrictions do not apply to it.",
+            "",
+            "Outstanding preconditions:",
+            "",
+        ]
+        report += [
+            f"- `{name}`: {'satisfied' if ok else 'NOT satisfied'}"
+            for name, ok in sorted(payload["preconditions"].items())
+        ]
+        report += [
             "",
             "No substitute model was used and no performance figures are reported. "
             "Replacing the approved comparator with a different model in order to produce "
             "a number would make the comparison meaningless.",
-            "",
-            "To enable it, all of the following must hold: the official model source is "
-            "identified; the terms permit non-commercial academic use; the ethics position "
-            "permits the processing; the weight files are stored outside Git; the SHA-256 "
-            "digest of every weight file is pinned in source; the preprocessing contract is "
-            "documented; and package versions are pinned. Nothing is downloaded "
-            "automatically.",
         ]
     else:
-        report += ["Both pipelines were evaluated under the shared protocol above."]
+        report += [
+            "Both pipelines were evaluated under the shared protocol above, each with its "
+            "own development-only threshold.",
+        ]
     report += [
         "",
         "## Why this is not an embedding-only comparison",

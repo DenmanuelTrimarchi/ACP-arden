@@ -866,7 +866,10 @@ def test_a_configured_comparator_without_pinned_digests_is_refused(tmp_path: Pat
     )
     with pytest.raises(acp.PipelineUnavailableError) as raised:
         acp.arcface_pipeline_description(config)
-    assert "pinned" in str(raised.value).lower()
+    # The files are absent here, so the source cannot be verified; either way
+    # the blocker reported must be technical rather than a licensing one.
+    message = str(raised.value)
+    assert "not_run_" in message and "licens" not in message.split("]")[0]
     assert acp.ARCFACE_DETECTOR_SHA256 is None
     assert acp.ARCFACE_RECOGNITION_SHA256 is None
 

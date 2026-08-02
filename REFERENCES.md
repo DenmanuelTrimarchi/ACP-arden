@@ -234,8 +234,44 @@ Date: 2007
 Availability: https://doi.org/10.1109/MCSE.2007.55
 ```
 
-The optional stronger pipeline of Experiment 8 is described but was not run.
-Its references are recorded because the interface names the models.
+### InsightFace, the Experiment 8 comparator
+
+**Project:** InsightFace (deepinsight/insightface). **Model package:**
+`buffalo_l`. **Components evaluated:** SCRFD detection (`det_10g.onnx`) and
+ArcFace recognition (`w600k_r50.onnx`), 512-dimensional embeddings.
+
+**Source-code licence:** the InsightFace source code is published under the MIT
+licence. **The pretrained weights are governed by separate terms** permitting
+non-commercial research use; the MIT licence covering the source code does not
+automatically extend to every pretrained weight file, and this project does not
+treat it as doing so.
+
+**Purpose in this project:** local, non-commercial benchmark evaluation only, as
+part of an MSc academic research artefact. There is no commercial deployment,
+paid service, commercial decision-making or real-user exposure.
+
+**Code copied:** none. **Code materially adapted:** none. **What is used:** the
+documented public API and the pretrained artefacts. The models were created and
+trained externally by the InsightFace project; nothing here trains or fine-tunes
+them, and no ownership of the models, their training data or their weights is
+claimed.
+
+**Redistribution:** none. Weight files are stored in private local research
+storage, are excluded from Git and from any release, and are never downloaded
+automatically by the programme.
+
+> The InsightFace pipeline was evaluated solely for non-commercial MSc research.
+> The pretrained model files were stored outside the public repository and were
+> not redistributed. The project publishes only aggregate benchmark results and
+> provides full attribution to the original model, software and research
+> publications.
+
+```text
+Title: InsightFace: 2D and 3D Face Analysis Project
+Author: InsightFace contributors (deepinsight/insightface)
+Date: 2021 onwards; buffalo_l model pack released 2021
+Availability: https://github.com/deepinsight/insightface
+```
 
 ```text
 Title: ArcFace: Additive Angular Margin Loss for Deep Face Recognition

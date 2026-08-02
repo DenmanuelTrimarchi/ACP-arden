@@ -425,21 +425,43 @@ appears in the research conclusions.
 
 #### Higher-capacity pipeline comparison (`FACE_ARCFACE_MODEL_ROOT`)
 
-The interface is implemented; the comparison is reported as **not run**. The
-InsightFace pretrained recognition models are licensed for non-commercial
-research and the project directs users to contact it regarding licensing, and
-those terms are unresolved here. No substitute model is used.
+The comparator is InsightFace SCRFD (`det_10g`) plus ArcFace `buffalo_l`
+(`w600k_r50`), 512-dimensional. The adapter is implemented and loads through
+InsightFace's documented API with automatic download disabled.
 
-Setting the variable is not sufficient. The SHA-256 digests of the approved
-weight files must also be pinned in source (`ARCFACE_DETECTOR_SHA256`,
-`ARCFACE_RECOGNITION_SHA256`), because a reportable evaluation never accepts
-digests as command-line arguments. Optional dependencies live in
-`requirements-comparison.txt`, deliberately unpinned until an environment
-actually produces a result.
+**Licensing position.** InsightFace publishes its pretrained models for
+non-commercial research use. This artefact is MSc academic research: not a
+commercial service, not deployed to real users, making no commercial decisions,
+and neither selling, licensing nor redistributing the weights. The evaluation is
+local and publishes only aggregate metrics, so it sits within those research
+terms. Commercial-use restrictions are **not** a blocker here, because this
+project has no commercial purpose.
 
-Any such comparison is a **complete-pipeline** comparison — detector,
-preprocessing and embedding all differ — so a difference can never be
-attributed to the embedding model alone.
+The models were created and trained externally by the InsightFace project;
+nothing here trains or fine-tunes them. The MIT licence covering InsightFace
+source code does not automatically extend to every pretrained weight file, and
+no ownership of the models, their training data or their weights is claimed.
+
+**Current status: `not_run_model_files_not_configured`** — a technical
+precondition, not a licensing obstacle. To enable the comparison:
+
+1. Obtain the official `buffalo_l` pack from the InsightFace project and store
+   it in private local research storage, outside this repository.
+2. Set `FACE_ARCFACE_MODEL_ROOT` to that directory.
+3. Compute the SHA-256 digest of each weight file and pin it in source
+   (`ARCFACE_DETECTOR_SHA256`, `ARCFACE_RECOGNITION_SHA256`). Digests are never
+   accepted as command-line arguments for a reportable evaluation.
+4. Install `requirements-comparison.txt`.
+
+Nothing is downloaded automatically at any point. When all preconditions hold
+the status becomes `evaluated_non_commercial_academic_research`.
+
+Each pipeline receives its own development-only threshold, because similarity
+scores from different embedding models are not interchangeable — the SFace
+threshold is never applied to ArcFace. Any such comparison is a
+**complete-pipeline** comparison: detection, landmarking, alignment,
+preprocessing, embedding dimensionality and runtime all differ, so no difference
+could be attributed to the embedding model alone.
 
 ### Pre-declared success criteria
 
@@ -492,10 +514,11 @@ order, scaler mean and scale. No pickle is written or read.
 > extraction coverage, open-set duplicate detection and subgroup consistency
 > compared with YuNet + SFace under the same BFW protocol?
 
-Reported as **`not_run_licensing_unresolved`**. The InsightFace recognition
-models are published for non-commercial research with a direction to contact the
-project about licensing, and that position is unresolved here. No substitute
-model was used and no figures are invented.
+Currently **`not_run_model_files_not_configured`** — a technical precondition,
+not a licensing obstacle. The official terms permit non-commercial research, and
+this MSc artefact is exactly that, so commercial-use restrictions do not apply.
+The weights are simply not present locally. No substitute model was used and no
+figures are invented.
 
 Each pipeline would receive its own development-only threshold, because
 similarity scores from different embedding models are not interchangeable — the

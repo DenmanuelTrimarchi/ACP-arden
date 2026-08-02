@@ -1,9 +1,9 @@
 {
   "artifact_type": "pipeline_comparison_protocol",
-  "created_at": "2026-08-01T16:50:47.612372+00:00",
+  "created_at": "2026-08-02T00:22:24.063364+00:00",
   "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
   "schema_version": 1,
   "seed": 20260727,
   "shared_protocol": "Both pipelines would use the same BFW identities, development/test split, subgroup stratification, gallery image count, mated and non-mated probes, target FPIR, bootstrap procedure, seed, success criteria and failure taxonomy.",
-  "status": "not_run_licensing_unresolved"
+  "status": "not_run_model_files_not_configured"
 }
