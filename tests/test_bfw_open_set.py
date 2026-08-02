@@ -903,3 +903,62 @@ def test_an_unrecognised_policy_status_is_distinguished_from_a_wrong_one() -> No
     with pytest.raises(acp.OpenSetPolicyError) as unknown:
         acp.require_frozen_open_set_policy({"status": "banana", "operating_points": operating})
     assert "not a recognised open-set status" in str(unknown.value)
+
+
+# --- Experiment 6 subgroup confidence intervals -------------------------------
+
+
+def _subgroup_search_results():
+    """Two identities per subgroup, one mated and one non-mated each."""
+    rows = []
+    for index, subgroup in enumerate(EXPECTED_SUBGROUPS):
+        rows.append(acp.OpenSetSearchResult(
+            sample_id=f"m{index:031d}", identity_hash=f"{index:032d}", subgroup=subgroup,
+            role="mated_probe", top_similarity=0.8, correct_rank=1, correct_similarity=0.8,
+        ))
+        rows.append(acp.OpenSetSearchResult(
+            sample_id=f"f{index:031d}", identity_hash=f"{index:032d}", subgroup=subgroup,
+            role="mated_probe", failure_code="zero_faces",
+        ))
+        rows.append(acp.OpenSetSearchResult(
+            sample_id=f"n{index:031d}", identity_hash=f"x{index:031d}", subgroup=subgroup,
+            role="non_mated_probe", top_similarity=0.2,
+        ))
+    return rows
+
+
+def test_every_experiment_six_subgroup_carries_intervals_and_coverage() -> None:
+    per_subgroup = acp.subgroup_open_set_metrics(
+        _subgroup_search_results(), threshold=0.5, replicates=40, seed=EXPECTED_SEED
+    )
+    assert set(per_subgroup) == set(EXPECTED_SUBGROUPS)
+    for entry in per_subgroup.values():
+        for metric in ("fpir", "fnir_rank1", "fnir_rank5", "tpir_rank1", "tpir_rank5",
+                       "mated_probe_coverage", "non_mated_probe_coverage"):
+            assert metric in entry
+            assert f"{metric}_lower_95" in entry
+            assert f"{metric}_upper_95" in entry
+
+
+def test_experiment_six_subgroup_sample_counts_reconcile() -> None:
+    """Scored probes may never exceed intended, and the failed mated probe in
+    the fixture must show as the difference."""
+    per_subgroup = acp.subgroup_open_set_metrics(
+        _subgroup_search_results(), threshold=0.5, replicates=20, seed=EXPECTED_SEED
+    )
+    for entry in per_subgroup.values():
+        assert entry["intended_mated_probes"] == 2
+        assert entry["scored_mated_probes"] == 1
+        assert entry["intended_non_mated_probes"] == 1
+        assert entry["scored_non_mated_probes"] == 1
+        assert entry["scored_mated_probes"] <= entry["intended_mated_probes"]
+        assert entry["mated_probe_coverage"] == pytest.approx(0.5)
+
+
+def test_the_experiment_six_subgroup_csv_carries_the_full_schema() -> None:
+    path = Path(acp.__file__).parent / "results" / "aggregate" / "bfw_subgroup_metrics.csv"
+    if not path.is_file():
+        pytest.skip("the open-set experiment has not been run in this checkout")
+    header = next(csv.reader(open(path, encoding="utf-8")))
+    assert tuple(header) == acp._SUBGROUP_CSV_COLUMNS
+    assert len(header) == 26

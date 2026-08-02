@@ -930,3 +930,31 @@ def test_the_comparison_artefact_carries_full_provenance() -> None:
     assert not missing, f"missing provenance: {missing}"
     if payload["evaluated"] == "no":
         assert payload["reason"]
+
+
+def test_missing_dependencies_produce_the_dependency_status(tmp_path: Path, monkeypatch) -> None:
+    """With files present and digests pinned, an absent package is the blocker."""
+    (tmp_path / acp.ARCFACE_DETECTOR_FILENAME).write_bytes(b"placeholder")
+    (tmp_path / acp.ARCFACE_RECOGNITION_FILENAME).write_bytes(b"placeholder")
+    monkeypatch.setattr(acp, "ARCFACE_DETECTOR_SHA256", "a" * 64)
+    monkeypatch.setattr(acp, "ARCFACE_RECOGNITION_SHA256", "b" * 64)
+    config = acp.EnvironmentConfig(
+        data_root=None, protocol_root=None, model_root=None,
+        cplfw_raw_root=None, cache_root=None, arcface_model_root=tmp_path,
+    )
+    diagnosis = acp.arcface_preconditions(config)
+    # onnxruntime and insightface are absent in this environment.
+    assert diagnosis["status"] == acp.PIPELINE_STATUS_DEPENDENCIES_MISSING
+    assert diagnosis["missing_dependencies"]
+    assert diagnosis["checks"]["digests_pinned"] is True
+    assert diagnosis["checks"]["model_files_present"] is True
+
+
+def test_experiment_seven_subgroup_sample_counts_reconcile() -> None:
+    rows, probs, outcomes = _outcome_fixture()
+    per_subgroup = acp.review_subgroup_metrics(
+        rows, probs, 0.5, replicates=20, seed=EXPECTED_SEED, outcomes=outcomes
+    )
+    for entry in per_subgroup.values():
+        assert entry["scored_mated_probes"] <= entry["intended_mated_probes"]
+        assert entry["scored_non_mated_probes"] <= entry["intended_non_mated_probes"]
