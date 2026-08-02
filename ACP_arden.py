@@ -8048,19 +8048,23 @@ def _write_figure_captions(
         "",
         "## Same-person and profile-photo figures (Figures E-F)",
         "",
-        "- **mated_non_mated_similarity_distributions** — aggregate histograms only. No "
-        "individual score, identifier or path is published.",
+        "- **mated_non_mated_similarity_distributions** — one panel per evaluated "
+        "pipeline, each marking its own frozen threshold. Mated scores are similarity to "
+        "the probe's own enrolled template; non-mated scores are top-1 similarity against "
+        "a gallery the person is not in. Aggregate histograms only: bin edges and counts, "
+        "never an individual score, identifier or path.",
     ]
     if consistency:
         lines.append(
-            f"- **profile_photo_consistency_outcomes** — over "
-            f"{consistency['photographs_assessed']} photographs: "
-            f"{consistency['consistent_same_person_photographs']} consistent, "
-            f"{consistency['inconsistent_review_candidates']} review candidates, "
-            f"{consistency['extraction_failures']} extraction failures. "
-            f"An inconsistent result is **not** proof of photo theft or fraud: pose, "
-            f"lighting, occlusion, image quality, age difference, detection failure and "
-            f"model error all produce it. Every outcome opens human review only."
+            f"- **profile_photo_consistency_outcomes** — every evaluated pipeline, over "
+            f"{consistency['photographs_assessed']} photographs per pipeline. Outcomes are "
+            f"not equivalent: a **consistent** photograph opens no case; an "
+            f"**inconsistent** one opens a consistency review; a **mismatched control** is "
+            f"correctly identified when it falls below threshold and false-consistent "
+            f"when it does not; an **extraction failure** resolves nothing and is a "
+            f"separate unresolved outcome rather than a decision. An inconsistent result "
+            f"is **not** proof of photo theft or fraud: pose, lighting, occlusion, image "
+            f"quality, age difference, detection failure and model error all produce it."
         )
 
     lines += [
@@ -8572,20 +8576,81 @@ def generate_figures(
         path = figures_root / "implementation_layers_performance_latency.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)
 
+    # --- Figure E: mated and non-mated similarity distributions --------------
+    held_out_all = (pipeline or {}).get("held_out_metrics") or {}
+    with_histograms = {
+        n: m for n, m in held_out_all.items() if m.get("similarity_histograms")
+    }
+    if with_histograms:
+        names = sorted(with_histograms, key=lambda n: "opencv" not in n)
+        fig, axes = plt.subplots(1, len(names), figsize=(6.0 * len(names), 4.4), sharey=True)
+        axes = np.atleast_1d(axes)
+        for ax, name in zip(axes, names):
+            metrics = with_histograms[name]
+            hists = metrics["similarity_histograms"]
+            for key, label, colour in (
+                ("mated_correct_identity", "Mated (correct identity)", "#4C72B0"),
+                ("non_mated_top1", "Non-mated (top-1)", "#DD8452"),
+            ):
+                h = hists.get(key) or {}
+                counts, edges = h.get("counts") or [], h.get("bin_edges") or []
+                if not counts:
+                    continue
+                centres = [(edges[i] + edges[i + 1]) / 2 for i in range(len(counts))]
+                ax.bar(centres, counts, width=(edges[1] - edges[0]), alpha=0.6,
+                       label=f"{label} (n={h.get('n', 0)})", color=colour)
+            threshold = metrics["development_threshold"]
+            ax.axvline(threshold, color="black", linestyle="--", linewidth=1.2,
+                       label=f"Frozen threshold {threshold:.3f}")
+            ax.set_xlabel("Cosine similarity")
+            ax.set_title(name.split("-")[0], fontsize=10)
+            ax.legend(fontsize=7)
+            ax.grid(axis="y", alpha=0.3)
+        axes[0].set_ylabel("Probe count")
+        fig.suptitle(
+            "Mated and non-mated similarity distributions, each pipeline at its own "
+            "frozen threshold (aggregate histograms; no individual score published)",
+            y=1.02, fontsize=10,
+        )
+        path = figures_root / "mated_non_mated_similarity_distributions.png"
+        _save_figure(fig, path); plt.close(fig); written.append(path)
+
     # --- Figure F: profile-photo consistency ---------------------------------
+    per_pipeline_consistency = {
+        n: m["profile_photo_consistency"] for n, m in held_out_all.items()
+        if m.get("profile_photo_consistency")
+    }
     consistency_path = aggregate_root / "profile_photo_consistency.json"
-    if consistency_path.is_file():
-        c = read_json_artifact(consistency_path)
-        labels = ["Consistent\nsame-person", "Inconsistent\nreview candidate",
-                  "Extraction\nfailure", "Gallery reference\nunavailable"]
-        values = [c["consistent_same_person_photographs"], c["inconsistent_review_candidates"],
-                  c["extraction_failures"], c["gallery_reference_unavailable"]]
-        fig, ax = plt.subplots(figsize=(8.0, 4.8))
-        ax.bar(labels, values, color=["#55A868", "#DD8452", "#C44E52", "#8172B3"])
-        ax.set_ylabel(f"Photographs (n={c['photographs_assessed']})")
-        ax.set_title("Profile-photo identity consistency — outcomes open human review only")
-        for index, value in enumerate(values):
-            ax.text(index, value, str(value), ha="center", va="bottom", fontsize=8)
+    if not per_pipeline_consistency and consistency_path.is_file():
+        per_pipeline_consistency = {MODEL_VERSION: read_json_artifact(consistency_path)}
+
+    if per_pipeline_consistency:
+        names = sorted(per_pipeline_consistency, key=lambda n: "opencv" not in n)
+        outcomes = [
+            ("consistent_same_person_photographs", "Consistent\nsame-person"),
+            ("inconsistent_review_candidates", "Inconsistent\nreview candidate"),
+            ("mismatched_controls_correctly_identified", "Control correctly\nidentified"),
+            ("mismatched_controls_false_consistent", "Control\nfalse-consistent"),
+            ("extraction_failures", "Extraction\nfailure"),
+            ("gallery_reference_unavailable", "Reference\nunavailable"),
+        ]
+        fig, ax = plt.subplots(figsize=(11.0, 5.0))
+        positions = np.arange(len(outcomes))
+        width = 0.8 / max(len(names), 1)
+        for index, name in enumerate(names):
+            entry = per_pipeline_consistency[name]
+            offset = (index - (len(names) - 1) / 2) * width
+            values = [entry.get(key, 0) for key, _ in outcomes]
+            ax.bar(positions + offset, values, width, label=name.split("-")[0],
+                   color=("#4C72B0", "#DD8452")[index % 2])
+        ax.set_xticks(positions)
+        ax.set_xticklabels([label for _, label in outcomes], fontsize=7)
+        ax.set_ylabel("Photographs")
+        ax.set_title(
+            "Profile-photo consistency outcomes — an inconsistent result is a review "
+            "signal, not proof of photo theft or fraud"
+        )
+        ax.legend(fontsize=8)
         ax.grid(axis="y", alpha=0.3)
         path = figures_root / "profile_photo_consistency_outcomes.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)

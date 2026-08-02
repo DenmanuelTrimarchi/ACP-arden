@@ -1534,3 +1534,54 @@ def test_the_readme_reports_the_experiment_eight_outcome() -> None:
     payload = json.loads(metrics.read_text())["held_out_metrics"]
     arcface = payload["insightface-scrfd-arcface-buffalo_l"]["rates"]
     assert f"{arcface['fpir'] * 100:.2f}%" in readme
+
+
+def test_the_similarity_distribution_figure_exists_and_marks_thresholds() -> None:
+    """Required by the reporting contract and previously never drawn, despite
+    the histogram data being published."""
+    metrics = _AGG / "pipeline_comparison_metrics.json"
+    if not metrics.is_file() or json.loads(metrics.read_text())["evaluated"] != "yes":
+        pytest.skip("comparison not evaluated")
+    path = _FIG / "mated_non_mated_similarity_distributions.svg"
+    assert path.is_file(), "the distribution figure was not generated"
+    text = path.read_text(encoding="utf-8", errors="ignore").lower()
+    assert "opencv" in text and "insightface" in text
+    assert "mated" in text and "non-mated" in text
+    assert "frozen threshold" in text
+
+
+def test_the_consistency_figure_compares_both_pipelines() -> None:
+    metrics = _AGG / "pipeline_comparison_metrics.json"
+    if not metrics.is_file() or json.loads(metrics.read_text())["evaluated"] != "yes":
+        pytest.skip("comparison not evaluated")
+    text = (_FIG / "profile_photo_consistency_outcomes.svg").read_text(
+        encoding="utf-8", errors="ignore"
+    ).lower()
+    assert "opencv" in text and "insightface" in text
+    # The control outcomes must use the consistency vocabulary.
+    assert "identified" in text and "false-consistent" in text
+    assert "not proof" in text
+
+
+def test_similarity_histograms_publish_no_individual_scores() -> None:
+    metrics = _AGG / "pipeline_comparison_metrics.json"
+    if not metrics.is_file():
+        pytest.skip("comparison not generated")
+    payload = json.loads(metrics.read_text())
+    for pipeline_metrics in (payload.get("held_out_metrics") or {}).values():
+        for histogram in (pipeline_metrics.get("similarity_histograms") or {}).values():
+            # Bin edges and counts only: an individual score is never published.
+            assert set(histogram) <= {"bin_edges", "counts", "n"}
+            assert len(histogram["counts"]) == len(histogram["bin_edges"]) - 1
+
+
+def test_captions_do_not_claim_every_outcome_opens_review() -> None:
+    """A consistent photograph opens no case and an extraction failure resolves
+    nothing, so the blanket phrasing is wrong for the consistency policy."""
+    captions = _FIG / "FIGURE_CAPTIONS.md"
+    if not captions.is_file():
+        pytest.skip("captions not generated")
+    text = captions.read_text(encoding="utf-8")
+    assert "Every outcome opens human review only" not in text
+    assert "opens no case" in text
+    assert "resolves nothing" in text

@@ -43,8 +43,8 @@ LFW and CPLFW are 1:1 verification and are deliberately absent from this series:
 
 ## Same-person and profile-photo figures (Figures E-F)
 
-- **mated_non_mated_similarity_distributions** — aggregate histograms only. No individual score, identifier or path is published.
-- **profile_photo_consistency_outcomes** — over 1000 photographs: 872 consistent, 70 review candidates, 48 extraction failures. An inconsistent result is **not** proof of photo theft or fraud: pose, lighting, occlusion, image quality, age difference, detection failure and model error all produce it. Every outcome opens human review only.
+- **mated_non_mated_similarity_distributions** — one panel per evaluated pipeline, each marking its own frozen threshold. Mated scores are similarity to the probe's own enrolled template; non-mated scores are top-1 similarity against a gallery the person is not in. Aggregate histograms only: bin edges and counts, never an individual score, identifier or path.
+- **profile_photo_consistency_outcomes** — every evaluated pipeline, over 1000 photographs per pipeline. Outcomes are not equivalent: a **consistent** photograph opens no case; an **inconsistent** one opens a consistency review; a **mismatched control** is correctly identified when it falls below threshold and false-consistent when it does not; an **extraction failure** resolves nothing and is a separate unresolved outcome rather than a decision. An inconsistent result is **not** proof of photo theft or fraud: pose, lighting, occlusion, image quality, age difference, detection failure and model error all produce it.
 
 ## 7-8. Female and male subgroup evaluation
 
