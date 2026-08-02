@@ -511,6 +511,31 @@ counted, never imputed.
 The model is published as plain JSON numerics — coefficients, intercept, feature
 order, scaler mean and scale. No pickle is written or read.
 
+**TPIR is rank-aware.** A mated probe counts as a rank-one identification only
+when its own identity is ranked first *and* the probability clears the operating
+point. A referral to some other identity is a referral, not an identification,
+and is reported separately as `mated_wrong_identity_referred`. The comparator
+uses the same definition, so the two are directly comparable.
+
+#### Held-out outcome — the primary hypothesis was not achieved
+
+The hypothesis was that the classifier would **reduce** false review referrals
+while retaining detection. It did not. On the held-out partition it refers *more*
+innocent registrations than the calibrated threshold, while identifying more
+duplicates:
+
+| | Calibrated threshold | Classifier |
+| --- | --- | --- |
+| FPIR | 0.52% | 0.70% |
+| TPIR@1 | 92.57% | 94.27% |
+| TPIR@5 | 92.57% | 94.37% |
+| False reviews / 1,000 | 5.25 | 7.00 |
+
+Five of six pre-declared criteria are achieved; `fewer_false_reviews_than_threshold_method`
+is **not achieved**. Machine learning did not improve the outcome this project
+set out to improve. The figures above are a snapshot of
+`ml_review_test_metrics.json`, which remains the source of truth.
+
 ### Experiment 8 — stronger pretrained pipeline
 
 > Does a stronger pretrained detection and face-embedding pipeline improve
@@ -593,6 +618,17 @@ For the supplementary open-set experiment specifically:
   with one measured over nearly all of it, which is why the code refuses to
   print one without the other.
 - Duplicate-profile detection is **not** solved by anything here.
+
+## What this artefact is
+
+> ACP-arden is a benchmark-validated, human-review-only academic research proof
+> of concept. No face-recognition network is trained or fine-tuned. A small
+> logistic-regression review classifier is trained on identity-disjoint BFW
+> development data and evaluated on untouched held-out identities.
+
+It is **not** production-ready, not unbiased, not fully secure, not capable of
+proving fraud, and not capable of automatically banning anyone. It is not
+complete: Experiment 8 has produced no real held-out metrics.
 
 ## Attribution and licence
 

@@ -992,3 +992,21 @@ def test_the_published_threshold_matches_the_frozen_policy() -> None:
     assert policy["status"] == EXPECTED_FROZEN_STATUS
     frozen = policy["operating_points"][str(EXPECTED_PRIMARY_FPIR_TARGET)]["probability_threshold"]
     assert test["operating_probability_threshold"] == pytest.approx(frozen)
+
+
+def test_the_readme_states_the_negative_outcome_and_makes_no_improvement_claim() -> None:
+    """The classifier did not reduce false referrals, so the documentation must
+    not imply machine learning improved the project."""
+    readme = _project_file("README.md")
+    assert "primary hypothesis was not achieved" in readme.lower()
+    assert "benchmark-validated, human-review-only" in readme
+    for forbidden in ("production-ready artefact", "unbiased", "proves fraud"):
+        # These appear only inside the explicit disclaimer sentence.
+        if forbidden in readme:
+            assert "not " + forbidden in readme or "not unbiased" in readme
+
+
+def test_the_readme_documents_rank_aware_tpir() -> None:
+    readme = _project_file("README.md")
+    assert "rank-aware" in readme.lower()
+    assert "mated_wrong_identity_referred" in readme
