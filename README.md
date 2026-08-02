@@ -466,6 +466,34 @@ default of 640 detects nothing on BFW's ~100-pixel crops. The input size is
 pinned to 320; the detection threshold stays at the published default, so
 coverage is not inflated by lowering the decision bar.
 
+#### Held-out outcome — extraction, not ranking
+
+Status **`evaluated_non_commercial_academic_research`**. Both pipelines scored once on the same held-out
+identities, each under its own frozen development threshold:
+
+| | YuNet + SFace | SCRFD + ArcFace |
+| --- | --- | --- |
+| Frozen threshold | 0.477118 | 0.393958 |
+| FPIR | 0.52% | **0.13%** |
+| TPIR@1 | 92.57% | **96.80%** |
+| False reviews / 1,000 | 5.25 | **1.34** |
+| End-to-end detection | 87.20% | **96.70%** |
+| Gallery coverage | 99.00% | **100.00%** |
+| Complete-pipeline latency | **22.0 ms** | 96.0 ms |
+
+**The difference is extraction, not ranking.** YuNet failed to detect a face in
+189 images; SCRFD failed in
+2. CMC rank-1 is near-identical
+(98.09% against 98.40%), so both
+models rank about equally well *given* an embedding. ArcFace's advantage comes
+overwhelmingly from succeeding on BFW's small, awkward crops — bought with
+roughly 4.4× the per-image cost and five times the disk.
+
+It also fails differently: 12
+multiple-face detections where YuNet had
+0. Neither network is trained or
+fine-tuned, and no difference is attributable to the embedding model alone.
+
 ### Pre-declared success criteria
 
 Declared in source before the held-out test was run, and reported as achieved,

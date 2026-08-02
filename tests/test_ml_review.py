@@ -1517,3 +1517,20 @@ def test_the_canonical_cache_round_trips_without_biometric_data() -> None:
     restored = acp.load_canonical_run(path)
     assert restored is not None
     assert acp.canonical_run_digest(restored) == payload["canonical_run_digest"]
+
+
+def test_the_readme_reports_the_experiment_eight_outcome() -> None:
+    """The README described the comparison's setup but not its result, which
+    invites the reader to infer one. It must state the outcome and the
+    mechanism behind it."""
+    metrics = _AGG / "pipeline_comparison_metrics.json"
+    if not metrics.is_file() or json.loads(metrics.read_text())["evaluated"] != "yes":
+        pytest.skip("comparison not evaluated")
+    readme = _project_file("README.md")
+    assert "evaluated_non_commercial_academic_research" in readme
+    assert "extraction, not ranking" in readme
+    # The stronger pipeline's cost must be stated, not just its benefit.
+    assert "Complete-pipeline latency" in readme
+    payload = json.loads(metrics.read_text())["held_out_metrics"]
+    arcface = payload["insightface-scrfd-arcface-buffalo_l"]["rates"]
+    assert f"{arcface['fpir'] * 100:.2f}%" in readme
