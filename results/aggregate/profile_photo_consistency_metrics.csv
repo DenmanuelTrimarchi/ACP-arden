@@ -1,0 +1,9 @@
+outcome,count
+consistent_same_person_photographs,871
+inconsistent_review_candidates,71
+mismatched_controls_correctly_referred,19
+mismatched_controls_not_referred,2844
+extraction_failures,48
+mismatched_control_extraction_failures,137
+gallery_reference_unavailable,10
+photographs_assessed,1000

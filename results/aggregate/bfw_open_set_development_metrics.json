@@ -1,6 +1,6 @@
 {
   "artifact_type": "bfw_open_set_development_metrics",
-  "created_at": "2026-08-02T01:35:22.905369+00:00",
+  "created_at": "2026-08-02T17:15:33.221254+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
@@ -38,11 +38,20 @@
     "single_image_pairwise_threshold": {
       "conditional_duplicate_detection_rate": 0.9080459770114943,
       "coverage": {
+        "complete_pipeline_latency_mean_ms": 15.059278237913418,
+        "complete_pipeline_latency_p95_ms": 19.44637481356039,
+        "detection_latency_mean_ms": 3.0126056670782058,
+        "detection_latency_p95_ms": 6.5620163979474455,
+        "embedding_latency_mean_ms": 11.130459950640711,
+        "embedding_latency_p95_ms": 12.461725203320384,
         "enrolled_gallery_identities": 199,
         "gallery_enrolment_coverage": 0.995,
         "gallery_enrolment_failure_count": 1,
         "gallery_enrolment_failure_rate": 0.005,
         "gallery_size": 199,
+        "image_load_latency_mean_ms": 0.9162126201945006,
+        "image_load_latency_p95_ms": 1.7344495921861378,
+        "images_timed": 4017,
         "intended_gallery_identities": 200,
         "intended_mated_probes": 1000,
         "intended_non_mated_probes": 3000,
@@ -57,10 +66,10 @@
         "scored_mated_probes": 957,
         "scored_non_mated_probes": 2861,
         "similarity_comparisons": 759782,
-        "top1_search_time_mean_ms": 0.8656878811911587,
-        "top1_search_time_p95_ms": 0.909540981228929,
-        "top5_search_time_mean_ms": 0.8849263003976814,
-        "top5_search_time_p95_ms": 0.9307275802711956
+        "top1_search_time_mean_ms": 0.8875815303828016,
+        "top1_search_time_p95_ms": 0.9911330867907963,
+        "top5_search_time_mean_ms": 0.908177501945893,
+        "top5_search_time_p95_ms": 1.0126787616172805
       },
       "end_to_end_duplicate_detection_rate": 0.869,
       "operating_threshold": 0.3630116835391414,
@@ -94,11 +103,20 @@
         "tpir_rank5": 0.9624608967674662
       },
       "coverage": {
+        "complete_pipeline_latency_mean_ms": 14.90519063066796,
+        "complete_pipeline_latency_p95_ms": 19.06686423899373,
+        "detection_latency_mean_ms": 3.001225162923953,
+        "detection_latency_p95_ms": 6.4187812531599775,
+        "embedding_latency_mean_ms": 11.058364603520753,
+        "embedding_latency_p95_ms": 12.308812743867747,
         "enrolled_gallery_identities": 199,
         "gallery_enrolment_coverage": 0.995,
         "gallery_enrolment_failure_count": 1,
         "gallery_enrolment_failure_rate": 0.005,
         "gallery_size": 199,
+        "image_load_latency_mean_ms": 0.8456008642232549,
+        "image_load_latency_p95_ms": 1.6821974859340116,
+        "images_timed": 4406,
         "intended_gallery_identities": 200,
         "intended_mated_probes": 1000,
         "intended_non_mated_probes": 3000,
@@ -113,10 +131,10 @@
         "scored_mated_probes": 959,
         "scored_non_mated_probes": 2861,
         "similarity_comparisons": 760180,
-        "top1_search_time_mean_ms": 0.8681340865575689,
-        "top1_search_time_p95_ms": 0.911760416056495,
-        "top5_search_time_mean_ms": 0.8872343839209585,
-        "top5_search_time_p95_ms": 0.9333770562079735
+        "top1_search_time_mean_ms": 0.882217813524264,
+        "top1_search_time_p95_ms": 0.9534839278785511,
+        "top5_search_time_mean_ms": 0.9021956813539969,
+        "top5_search_time_p95_ms": 0.975004123756662
       },
       "operating_points": {
         "0.001": {

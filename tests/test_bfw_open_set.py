@@ -14,6 +14,7 @@ accuracy. No figure produced here is a research result.
 from __future__ import annotations
 
 import csv
+import json
 import math
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -671,11 +672,10 @@ def test_an_undefined_metric_is_not_measurable_rather_than_a_pass() -> None:
 # --- Optional extensions ------------------------------------------------------
 
 
-def test_absent_optional_datasets_are_reported_as_skipped_not_fabricated() -> None:
-    lines = acp.report_optional_dataset_status()
-    joined = "\n".join(lines)
-    assert "ArcFace" in joined or "buffalo_l" in joined
-    assert "NOT RUN" in joined or "SKIPPED" in joined
+def test_optional_pipeline_status_is_reported_either_way() -> None:
+    joined = "\n".join(acp.report_optional_dataset_status())
+    assert "pipeline comparison" in joined.lower()
+    assert "NOT RUN" in joined or "configured and verified" in joined
 
 
 def test_agedb_is_not_implemented_anywhere() -> None:
@@ -857,21 +857,22 @@ def test_an_unconfigured_comparator_is_reported_not_run(tmp_path: Path) -> None:
     assert "non-commercial" in status["licence_note"]
 
 
-def test_a_configured_comparator_without_pinned_digests_is_refused(tmp_path: Path) -> None:
+def test_a_configured_comparator_with_unapproved_files_is_refused(tmp_path: Path) -> None:
     """Digests are pinned in source and never accepted as arguments, so an
     unverified weight file cannot reach a reportable evaluation."""
     config = acp.EnvironmentConfig(
         data_root=None, protocol_root=None, model_root=None,
         cplfw_raw_root=None, cache_root=None, arcface_model_root=tmp_path,
     )
-    with pytest.raises(acp.PipelineUnavailableError) as raised:
+    # The files are absent here, so the source cannot be verified; the blocker
+    # reported must be technical rather than a licensing one.
+    with pytest.raises((acp.PipelineUnavailableError, acp.ModelUnavailableError)) as raised:
         acp.arcface_pipeline_description(config)
-    # The files are absent here, so the source cannot be verified; either way
-    # the blocker reported must be technical rather than a licensing one.
-    message = str(raised.value)
-    assert "not_run_" in message and "licens" not in message.split("]")[0]
-    assert acp.ARCFACE_DETECTOR_SHA256 is None
-    assert acp.ARCFACE_RECOGNITION_SHA256 is None
+    assert "licens" not in str(raised.value).lower().split("]")[0]
+    # The digests are pinned to the supplied local pack, so a file that is not
+    # the approved one is refused on its hash rather than for being unpinned.
+    assert acp.ARCFACE_DETECTOR_SHA256 is not None
+    assert acp.ARCFACE_RECOGNITION_SHA256 is not None
 
 
 def test_the_comparison_csv_records_absence_rather_than_omitting_it(tmp_path: Path) -> None:
@@ -962,3 +963,52 @@ def test_the_experiment_six_subgroup_csv_carries_the_full_schema() -> None:
     header = next(csv.reader(open(path, encoding="utf-8")))
     assert tuple(header) == acp._SUBGROUP_CSV_COLUMNS
     assert len(header) == 26
+
+
+def test_mated_and_non_mated_coverage_use_distinct_bootstrap_series() -> None:
+    """The combined extraction-coverage interval must not be reused for both
+    roles: that produced point estimates outside their own intervals."""
+    rows = _subgroup_search_results()
+    intervals = acp.cluster_bootstrap_intervals(
+        rows, threshold=0.5, replicates=200, seed=EXPECTED_SEED
+    )
+    assert "mated_extraction_coverage" in intervals
+    assert "non_mated_extraction_coverage" in intervals
+    # The fixture gives 1 of 2 mated scored and 1 of 1 non-mated scored, so the
+    # two series must not coincide.
+    assert intervals["mated_extraction_coverage"]["lower_95"] != pytest.approx(
+        intervals["non_mated_extraction_coverage"]["lower_95"]
+    )
+
+
+def test_every_subgroup_coverage_estimate_lies_inside_its_own_interval() -> None:
+    per_subgroup = acp.subgroup_open_set_metrics(
+        _subgroup_search_results(), threshold=0.5, replicates=300, seed=EXPECTED_SEED
+    )
+    for subgroup, entry in per_subgroup.items():
+        for metric in ("mated_probe_coverage", "non_mated_probe_coverage",
+                       "fpir", "tpir_rank1", "tpir_rank5"):
+            point = entry[metric]
+            low, high = entry[f"{metric}_lower_95"], entry[f"{metric}_upper_95"]
+            if point != point:
+                continue
+            assert low <= point <= high, f"{subgroup}/{metric}: {point} outside [{low}, {high}]"
+
+
+def test_mated_coverage_uses_only_mated_intended_probes() -> None:
+    per_subgroup = acp.subgroup_open_set_metrics(
+        _subgroup_search_results(), threshold=0.5, replicates=50, seed=EXPECTED_SEED
+    )
+    for entry in per_subgroup.values():
+        # One scored of two intended mated; one of one non-mated.
+        assert entry["mated_probe_coverage"] == pytest.approx(0.5)
+        assert entry["non_mated_probe_coverage"] == pytest.approx(1.0)
+
+
+def test_the_published_subgroup_run_uses_the_full_replicate_count() -> None:
+    path = (Path(acp.__file__).parent / "results" / "aggregate"
+            / "bfw_subgroup_confidence_intervals.json")
+    if not path.is_file():
+        pytest.skip("the open-set experiment has not been run in this checkout")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["replicates"] == acp.BOOTSTRAP_REPLICATES == 2000

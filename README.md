@@ -426,45 +426,45 @@ execution mode and no result file, and contract tests assert that none returns.
 It is recorded here only so the git history is interpretable. No AgeDB claim
 appears in the research conclusions.
 
-#### Higher-capacity pipeline comparison (`FACE_ARCFACE_MODEL_ROOT`)
+#### Complete-pipeline comparison (`FACE_ARCFACE_MODEL_ROOT`)
 
-The comparator is InsightFace SCRFD (`det_10g`) plus ArcFace `buffalo_l`
-(`w600k_r50`), 512-dimensional. The adapter is implemented and loads through
-InsightFace's documented API with automatic download disabled.
+Experiment 8 compares two **complete pipelines** — detection, alignment,
+preprocessing and embedding — over the identical BFW protocol:
 
-**Licensing position.** InsightFace publishes its pretrained models for
-non-commercial research use. This artefact is MSc academic research: not a
-commercial service, not deployed to real users, making no commercial decisions,
-and neither selling, licensing nor redistributing the weights. The evaluation is
-local and publishes only aggregate metrics, so it sits within those research
-terms. Commercial-use restrictions are **not** a blocker here, because this
-project has no commercial purpose.
+| | Pipeline A | Pipeline B |
+| --- | --- | --- |
+| Detector | OpenCV YuNet 2023mar | InsightFace SCRFD `det_10g` |
+| Recognition | OpenCV SFace 2021dec | InsightFace ArcFace `w600k_r50` |
+| Embedding width | 128 | 512 |
 
-The models were created and trained externally by the InsightFace project;
-nothing here trains or fine-tunes them. The MIT licence covering InsightFace
-source code does not automatically extend to every pretrained weight file, and
-no ownership of the models, their training data or their weights is claimed.
+Each receives **its own development-only threshold**, frozen before the held-out
+identities are scored. Similarity scores from different embedding models are not
+interchangeable, so the SFace threshold is never applied to ArcFace. Neither
+network is trained or fine-tuned. No difference may be attributed to the
+embedding model alone, because the detector and preprocessing differ too.
 
-**Current status: `not_run_model_files_not_configured`** — a technical
-precondition, not a licensing obstacle. To enable the comparison:
+**Licensing.** InsightFace publishes its pretrained models for non-commercial
+research use, and this artefact is non-commercial MSc academic research, so that
+use falls within those terms. The models were created and trained externally;
+the MIT licence covering InsightFace source code does not automatically extend
+to the weight files, and no ownership of the models, their training data or
+their weights is claimed.
 
-1. Obtain the official `buffalo_l` pack from the InsightFace project and store
-   it in private local research storage, outside this repository.
-2. Set `FACE_ARCFACE_MODEL_ROOT` to that directory.
-3. Compute the SHA-256 digest of each weight file and pin it in source
-   (`ARCFACE_DETECTOR_SHA256`, `ARCFACE_RECOGNITION_SHA256`). Digests are never
-   accepted as command-line arguments for a reportable evaluation.
-4. Install `requirements-comparison.txt`.
+**Setup.** Obtain the official `buffalo_l` pack, store it in local research
+storage outside version control, point `FACE_ARCFACE_MODEL_ROOT` at the
+directory *directly* containing `det_10g.onnx` and `w600k_r50.onnx`, pin both
+SHA-256 digests in source, and install `requirements-comparison.txt`.
 
-Nothing is downloaded automatically at any point. When all preconditions hold
-the status becomes `evaluated_non_commercial_academic_research`.
+Nothing is downloaded automatically. Each ONNX file is loaded by its exact
+verified path through `insightface.model_zoo`; `FaceAnalysis` is deliberately
+not used, because it resolves models through a cache directory and fetches the
+pack over the network when that directory is empty — which would both download
+automatically and evaluate files other than the pinned ones.
 
-Each pipeline receives its own development-only threshold, because similarity
-scores from different embedding models are not interchangeable — the SFace
-threshold is never applied to ArcFace. Any such comparison is a
-**complete-pipeline** comparison: detection, landmarking, alignment,
-preprocessing, embedding dimensionality and runtime all differ, so no difference
-could be attributed to the embedding model alone.
+One preprocessing note: SCRFD rescales input to a fixed square, and InsightFace's
+default of 640 detects nothing on BFW's ~100-pixel crops. The input size is
+pinned to 320; the detection threshold stays at the published default, so
+coverage is not inflated by lowering the decision bar.
 
 ### Pre-declared success criteria
 

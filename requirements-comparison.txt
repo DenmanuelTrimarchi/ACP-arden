@@ -14,11 +14,8 @@
 # or committed, and no ownership is claimed. The MIT licence covering
 # InsightFace source code does not automatically extend to the weight files.
 #
-# NOT PINNED, and deliberately so. Every other requirements file in this project
-# records versions read from the project virtual environment after a green run.
-# These packages are not installed here, so any version written below would be a
-# guess rather than a record. Pin them from the environment that actually
-# produces a comparison result, at the point such a result exists.
+# Pinned from the environment that produced the published comparison result,
+# in the same way as every other requirements file in this project.
 #
 # Before the comparison can run, all of the following must hold. The programme
 # reports whichever is outstanding as a precise technical status, never as a
@@ -36,5 +33,6 @@
 # Nothing is downloaded automatically at any point: the loader passes
 # download=False and an explicit local root.
 
-# onnxruntime==<pin from the environment that produced the result>
-# insightface==<pin from the environment that produced the result>
+# Pinned from the project virtual environment after a successful evaluation.
+insightface==1.0.1
+onnxruntime==1.28.0

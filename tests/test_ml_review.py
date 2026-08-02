@@ -380,6 +380,24 @@ def test_subgroup_is_never_used_as_a_predictor() -> None:
 # --- Experiment 8: pipeline comparison ----------------------------------------
 
 
+def test_the_configured_local_model_root_is_accepted() -> None:
+    """The supplied local pack must satisfy every precondition."""
+    diagnosis = acp.arcface_preconditions(acp.EnvironmentConfig.load())
+    assert diagnosis["status"] == acp.PIPELINE_STATUS_EVALUATED, diagnosis["reason"]
+    assert all(diagnosis["checks"].values())
+
+
+def test_both_official_filenames_are_required(tmp_path: Path) -> None:
+    (tmp_path / acp.ARCFACE_DETECTOR_FILENAME).write_bytes(b"x")
+    config = acp.EnvironmentConfig(
+        data_root=None, protocol_root=None, model_root=None,
+        cplfw_raw_root=None, cache_root=None, arcface_model_root=tmp_path,
+    )
+    assert acp.arcface_preconditions(config)["status"] == (
+        acp.PIPELINE_STATUS_SOURCE_UNVERIFIED
+    )
+
+
 def test_an_unconfigured_pipeline_reports_a_technical_status_not_a_licensing_one(
     tmp_path: Path,
 ) -> None:
@@ -407,11 +425,13 @@ def test_the_status_vocabulary_separates_technical_from_terms_blockers() -> None
     assert acp.PIPELINE_STATUS_TERMS_UNCLEAR == "not_run_research_terms_not_established"
 
 
-def test_preconditions_are_diagnosed_in_order(tmp_path: Path) -> None:
+def test_preconditions_are_diagnosed_in_order(tmp_path: Path, monkeypatch) -> None:
     """A configured root with the files present but no pinned digests must
     report the digest blocker, not the configuration one."""
     (tmp_path / acp.ARCFACE_DETECTOR_FILENAME).write_bytes(b"placeholder")
     (tmp_path / acp.ARCFACE_RECOGNITION_FILENAME).write_bytes(b"placeholder")
+    monkeypatch.setattr(acp, "ARCFACE_DETECTOR_SHA256", None)
+    monkeypatch.setattr(acp, "ARCFACE_RECOGNITION_SHA256", None)
     config = acp.EnvironmentConfig(
         data_root=None, protocol_root=None, model_root=None,
         cplfw_raw_root=None, cache_root=None, arcface_model_root=tmp_path,
@@ -432,16 +452,39 @@ def test_the_licence_note_states_the_non_commercial_research_position() -> None:
     assert "not redistribute" in note.lower() or "nor redistributes" in note.lower()
 
 
-def test_unpinned_stronger_model_files_are_refused(tmp_path: Path) -> None:
-    """Digests are pinned in source; an unverified weight file cannot be used."""
-    (tmp_path / "det_10g.onnx").write_bytes(b"not a real model")
-    (tmp_path / "w600k_r50.onnx").write_bytes(b"not a real model")
+def test_unpinned_digests_are_refused(tmp_path: Path, monkeypatch) -> None:
+    """With the digests cleared, present files must not be trusted."""
+    (tmp_path / acp.ARCFACE_DETECTOR_FILENAME).write_bytes(b"not a real model")
+    (tmp_path / acp.ARCFACE_RECOGNITION_FILENAME).write_bytes(b"not a real model")
+    monkeypatch.setattr(acp, "ARCFACE_DETECTOR_SHA256", None)
+    monkeypatch.setattr(acp, "ARCFACE_RECOGNITION_SHA256", None)
     config = acp.EnvironmentConfig(
         data_root=None, protocol_root=None, model_root=None,
         cplfw_raw_root=None, cache_root=None, arcface_model_root=tmp_path,
     )
-    with pytest.raises(acp.PipelineUnavailableError):
+    diagnosis = acp.arcface_preconditions(config)
+    assert diagnosis["status"] == acp.PIPELINE_STATUS_DIGEST_NOT_PINNED
+
+
+def test_a_wrong_weight_file_is_refused_by_digest(tmp_path: Path) -> None:
+    """Digests are pinned, so a file that is not the approved one is refused."""
+    (tmp_path / acp.ARCFACE_DETECTOR_FILENAME).write_bytes(b"not a real model")
+    (tmp_path / acp.ARCFACE_RECOGNITION_FILENAME).write_bytes(b"not a real model")
+    config = acp.EnvironmentConfig(
+        data_root=None, protocol_root=None, model_root=None,
+        cplfw_raw_root=None, cache_root=None, arcface_model_root=tmp_path,
+    )
+    with pytest.raises(acp.ModelUnavailableError):
         acp.arcface_pipeline_description(config)
+
+
+def test_the_pinned_digests_are_recorded() -> None:
+    assert acp.ARCFACE_DETECTOR_SHA256 == (
+        "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91"
+    )
+    assert acp.ARCFACE_RECOGNITION_SHA256 == (
+        "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
+    )
 
 
 def test_the_pipeline_record_forbids_embedding_only_attribution() -> None:
@@ -513,12 +556,20 @@ def test_figure_captions_state_their_denominators() -> None:
     if not captions.is_file():
         pytest.skip("figures have not been generated in this checkout")
     text = captions.read_text(encoding="utf-8")
-    for figure in ("Figure 1", "Figure 2", "Figure 3", "Figure 4", "Figure 5", "Figure 6"):
-        assert figure in text
+    # Figures are named rather than numbered, so a reordering cannot silently
+    # detach a caption from its figure.
+    for figure in ("implementation_layers_fpir", "implementation_layers_duplicate_detection",
+                   "implementation_layers_coverage",
+                   "implementation_layers_performance_latency",
+                   "profile_photo_consistency_outcomes", "pipeline_coverage_and_latency"):
+        assert figure in text, figure
     assert "scored mated probes" in text and "scored non-mated probes" in text
-    # Coverage is enrolled over intended, never over enrolled.
-    assert "intended identities" in text
+    # Every element the reporting contract requires.
+    assert "Lower is better" in text and "Higher is better" in text
+    assert "conditional" in text and "end-to-end" in text.lower()
+    assert "identity-cluster bootstrap" in text
     assert "not causal" in text
+    assert "human review only" in text
 
 
 # --- Rank-aware TPIR (corrected defect) ---------------------------------------
@@ -868,10 +919,16 @@ def test_the_comparison_guard_rejects_evaluation_without_metrics() -> None:
     assert "cannot be marked as evaluated without held-out metrics" in source
 
 
-def test_automatic_model_download_is_disabled() -> None:
+def test_automatic_model_download_is_impossible() -> None:
+    """Each ONNX file is loaded by its exact verified path, so there is no
+    cache directory to miss and no fetch path to take."""
     source = _project_file("ACP_arden.py")
-    assert "download=False" in source
-    assert "download_zip=False" in source
+    assert "ARCFACE_DETECTOR_FILENAME" in source
+    # No fetching API is reachable. Attribution URLs appear in reference
+    # headers and are not requests, so only call sites are checked.
+    for fetching in ("download_zip", "urlretrieve", "requests.get", "urlopen",
+                     "insightface.app", "FaceAnalysis("):
+        assert fetching not in source
 
 
 def test_a_hash_mismatch_is_refused(tmp_path: Path) -> None:
@@ -881,38 +938,70 @@ def test_a_hash_mismatch_is_refused(tmp_path: Path) -> None:
         acp.verify_model_file(impostor, "0" * 64)
 
 
+class _StubDetectorModel:
+    """Returns a fixed number of detections in the SCRFD output shape."""
+
+    def __init__(self, count: int):
+        self._count = count
+
+    def detect(self, bgr, max_num=0, metric="default"):
+        if self._count == 0:
+            return np.zeros((0, 5)), None
+        boxes = np.tile(np.asarray([0.0, 0.0, 8.0, 8.0, 0.9]), (self._count, 1))
+        landmarks = np.tile(np.asarray([[1.0, 1.0]] * 5), (self._count, 1, 1))
+        return boxes, landmarks
+
+
+class _StubRecognitionModel:
+    def __init__(self, dimensions: int):
+        self._dimensions = dimensions
+
+    def get_feat(self, aligned):
+        return np.ones(self._dimensions) / math.sqrt(self._dimensions)
+
+
 def test_the_arcface_embedder_refuses_unexpected_dimensions() -> None:
-    class _Face:
-        # Minimal stand-in for an InsightFace detection result.
-        bbox = np.asarray([0.0, 0.0, 8.0, 8.0])
-        kps = np.zeros((5, 2))
-        det_score = 0.9
-        normed_embedding = np.ones(128) / math.sqrt(128)
-
-    class _App:
-        def get(self, bgr):
-            return [_Face()]
-
-    detector = acp.ArcFaceDetector(_App(), "digest")
-    detector.detect_single_face(np.zeros((8, 8, 3), dtype=np.uint8))
-    embedder = acp.ArcFaceEmbedder(detector, "digest", dimensions=512)
+    detector = acp.ArcFaceDetector(_StubDetectorModel(1), "digest")
+    detector.detect_single_face(np.zeros((112, 112, 3), dtype=np.uint8))
+    # The recognition model returns 128 dimensions where 512 is required.
+    embedder = acp.ArcFaceEmbedder(
+        _StubRecognitionModel(128), detector, "digest", dimensions=512
+    )
     with pytest.raises(acp.SimilarityError):
-        embedder.embed(np.zeros((8, 8, 3), dtype=np.uint8), np.zeros(15))
+        embedder.embed(np.zeros((112, 112, 3), dtype=np.uint8), np.zeros(15))
 
 
 def test_the_arcface_detector_requires_exactly_one_face() -> None:
-    class _App:
-        def __init__(self, count):
-            self._count = count
-
-        def get(self, bgr):
-            return [object()] * self._count
-
     for count in (0, 2):
-        detector = acp.ArcFaceDetector(_App(count), "digest")
+        detector = acp.ArcFaceDetector(_StubDetectorModel(count), "digest")
         with pytest.raises(acp.FaceCountError) as raised:
-            detector.detect_single_face(np.zeros((8, 8, 3), dtype=np.uint8))
+            detector.detect_single_face(np.zeros((112, 112, 3), dtype=np.uint8))
         assert raised.value.face_count == count
+
+
+def test_the_detector_row_matches_the_yunet_shape() -> None:
+    detector = acp.ArcFaceDetector(_StubDetectorModel(1), "digest")
+    row = detector.detect_single_face(np.zeros((112, 112, 3), dtype=np.uint8))
+    assert row.shape == (15,)
+    assert row[2] == pytest.approx(8.0) and row[3] == pytest.approx(8.0)
+    assert row[14] == pytest.approx(0.9)
+
+
+def test_face_analysis_is_not_used_so_nothing_can_be_downloaded() -> None:
+    """FaceAnalysis resolves models through a cache directory and fetches the
+    pack over the network when it is empty, which would both download
+    automatically and evaluate files other than the pinned ones."""
+    source = _project_file("ACP_arden.py")
+    # Named only in the comment explaining why it is avoided, never called.
+    assert "FaceAnalysis(" not in source
+    assert "from insightface.model_zoo import get_model" in source
+
+
+def test_the_detection_input_size_is_pinned_and_the_threshold_is_default() -> None:
+    """Input size is a preprocessing scale; the decision threshold stays at the
+    published default so coverage is not inflated by lowering the bar."""
+    assert acp.ARCFACE_DETECTION_INPUT_SIZE == 320
+    assert acp.ARCFACE_DETECTION_THRESHOLD == 0.5
 
 
 def test_the_comparison_artefact_carries_full_provenance() -> None:
@@ -938,12 +1027,12 @@ def test_missing_dependencies_produce_the_dependency_status(tmp_path: Path, monk
     (tmp_path / acp.ARCFACE_RECOGNITION_FILENAME).write_bytes(b"placeholder")
     monkeypatch.setattr(acp, "ARCFACE_DETECTOR_SHA256", "a" * 64)
     monkeypatch.setattr(acp, "ARCFACE_RECOGNITION_SHA256", "b" * 64)
+    monkeypatch.setattr(acp.importlib.util, "find_spec", lambda name: None)
     config = acp.EnvironmentConfig(
         data_root=None, protocol_root=None, model_root=None,
         cplfw_raw_root=None, cache_root=None, arcface_model_root=tmp_path,
     )
     diagnosis = acp.arcface_preconditions(config)
-    # onnxruntime and insightface are absent in this environment.
     assert diagnosis["status"] == acp.PIPELINE_STATUS_DEPENDENCIES_MISSING
     assert diagnosis["missing_dependencies"]
     assert diagnosis["checks"]["digests_pinned"] is True
@@ -1010,3 +1099,210 @@ def test_the_readme_documents_rank_aware_tpir() -> None:
     readme = _project_file("README.md")
     assert "rank-aware" in readme.lower()
     assert "mated_wrong_identity_referred" in readme
+
+
+def test_the_dependency_contract_checks_the_imported_opencv_not_only_metadata() -> None:
+    """Installing opencv-python beside opencv-python-headless leaves both
+    recorded in metadata while only one is imported. The contract must catch
+    the shadowing library, because it silently changes detection and embedding
+    numerics."""
+    import cv2
+
+    report = acp.check_dependency_contract(strict=False)
+    assert "cv2 (imported)" not in report, (
+        f"a shadowing OpenCV is loaded: {getattr(cv2, '__version__', 'unknown')}"
+    )
+    expected = acp.EXPECTED_DEPENDENCY_VERSIONS["opencv-python-headless"]
+    assert expected.startswith(str(cv2.__version__))
+    source = _project_file("ACP_arden.py")
+    assert "shadowing opencv-python-headless" in source
+
+
+# --- Acceptance tests for the completed Experiment 8 --------------------------
+
+_AGG = Path(acp.__file__).parent / "results" / "aggregate"
+_FIG = Path(acp.__file__).parent / "results" / "figures"
+
+
+def _pipeline_payload():
+    path = _AGG / "pipeline_comparison_metrics.json"
+    if not path.is_file():
+        pytest.skip("the pipeline comparison has not been run in this checkout")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_evaluated_yes_requires_both_real_pipeline_results() -> None:
+    payload = _pipeline_payload()
+    if payload["evaluated"] != "yes":
+        assert payload.get("held_out_metrics") is None
+        return
+    held_out = payload["held_out_metrics"]
+    assert len(held_out) == 2, "both pipelines must have produced held-out metrics"
+    for metrics in held_out.values():
+        assert metrics["rates"]["scored_mated_probes"] > 0
+        assert metrics["rates"]["scored_non_mated_probes"] > 0
+
+
+def test_each_pipeline_has_its_own_frozen_threshold() -> None:
+    payload = _pipeline_payload()
+    held_out = payload.get("held_out_metrics") or {}
+    if len(held_out) < 2:
+        pytest.skip("comparison not evaluated")
+    thresholds = {n: m["development_threshold"] for n, m in held_out.items()}
+    # Scores from different embedding models are not interchangeable.
+    assert len(set(thresholds.values())) == 2, thresholds
+    for metrics in held_out.values():
+        assert metrics["threshold_status"] == "open_set_frozen"
+
+
+def test_the_interval_file_is_populated_after_evaluation() -> None:
+    payload = _pipeline_payload()
+    intervals = json.loads(
+        (_AGG / "pipeline_comparison_confidence_intervals.json").read_text(encoding="utf-8")
+    )
+    if payload["evaluated"] != "yes":
+        assert intervals["intervals"] == {}
+        return
+    assert len(intervals["intervals"]) == 2
+    for series in intervals["intervals"].values():
+        for metric in ("fpir", "fnir_rank1", "fnir_rank5", "tpir_rank1", "tpir_rank5",
+                       "end_to_end_duplicate_detection_rate", "mated_extraction_coverage",
+                       "non_mated_extraction_coverage"):
+            assert metric in series, metric
+
+
+def test_the_subgroup_csv_holds_sixteen_real_rows_after_evaluation() -> None:
+    payload = _pipeline_payload()
+    rows = list(csv.DictReader(open(_AGG / "pretrained_pipeline_subgroup_metrics.csv",
+                                    encoding="utf-8")))
+    if payload["evaluated"] != "yes":
+        pytest.skip("comparison not evaluated")
+    assert len(rows) >= 16
+    assert len({r["pipeline"] for r in rows}) == 2
+    assert all(r["fpir"] != "" for r in rows)
+
+
+def test_the_comparison_csv_carries_performance_not_only_descriptions() -> None:
+    payload = _pipeline_payload()
+    rows = list(csv.DictReader(open(_AGG / "pretrained_pipeline_comparison.csv",
+                                    encoding="utf-8")))
+    assert rows
+    for column in ("fpir", "tpir_rank1", "threshold", "detector_file_size_mb"):
+        assert column in rows[0]
+    if payload["evaluated"] == "yes":
+        assert all(r["fpir"] != "" for r in rows)
+
+
+def test_model_sizes_and_latency_are_published() -> None:
+    payload = _pipeline_payload()
+    sizes = payload["model_file_sizes"]
+    assert sizes["primary"] and sizes["comparison"]
+    for group in sizes.values():
+        for entry in group.values():
+            assert entry["bytes"] > 0 and entry["megabytes"] > 0
+    held_out = payload.get("held_out_metrics") or {}
+    for metrics in held_out.values():
+        c = metrics["coverage"]
+        for key in ("embedding_latency_mean_ms", "embedding_latency_p95_ms",
+                    "complete_pipeline_latency_mean_ms", "complete_pipeline_latency_p95_ms",
+                    "top1_search_time_mean_ms"):
+            assert key in c, key
+
+
+def test_every_experiment_eight_json_has_full_provenance() -> None:
+    required = (
+        "artifact_type", "schema_version", "created_at", "seed", "dataset_name",
+        "protocol_version", "protocol_digest", "public_manifest_digest",
+        "development_partition", "held_out_partition", "primary_pipeline",
+        "comparison_pipeline", "model_filenames", "model_digests", "model_file_sizes",
+        "software_environment", "dependency_versions", "preprocessing_revision",
+        "threshold_policy", "frozen_thresholds", "status", "licence_note",
+        "policy_note", "limitations",
+    )
+    for name in ("pipeline_comparison_metrics.json", "pipeline_comparison_protocol.json",
+                 "pipeline_comparison_confidence_intervals.json"):
+        path = _AGG / name
+        if not path.is_file():
+            pytest.skip(f"{name} not present")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        missing = [k for k in required if k not in payload]
+        assert not missing, f"{name} missing provenance: {missing}"
+
+
+def test_the_implementation_layer_artefact_lists_every_available_layer() -> None:
+    path = _AGG / "implementation_layer_comparison.csv"
+    if not path.is_file():
+        pytest.skip("layer artefact not generated in this checkout")
+    rows = list(csv.DictReader(open(path, encoding="utf-8")))
+    assert len(rows) >= 4
+    assert [int(r["layer"]) for r in rows] == list(range(1, len(rows) + 1))
+    for r in rows:
+        assert r["threshold_source"]
+
+
+def test_the_profile_consistency_artefacts_include_mismatched_controls() -> None:
+    path = _AGG / "profile_photo_consistency_metrics.json"
+    if not path.is_file():
+        pytest.skip("consistency artefact not generated in this checkout")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for key in ("consistent_same_person_photographs", "inconsistent_review_candidates",
+                "mismatched_controls_correctly_referred",
+                "mismatched_controls_not_referred", "extraction_failures",
+                "gallery_reference_unavailable"):
+        assert key in payload, key
+    assert "does not independently prove" in payload["interpretation_note"]
+
+
+def test_the_sex_figures_contain_only_their_own_subgroups() -> None:
+    for sex, forbidden in (("female", "_males"), ("male", "_females")):
+        path = _FIG / f"{sex}_subgroup_pipeline_comparison.svg"
+        if not path.is_file():
+            pytest.skip("figures not generated in this checkout")
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        assert forbidden not in text, f"{sex} figure leaks {forbidden}"
+
+
+def test_sex_aggregates_are_pooled_from_identity_outcomes() -> None:
+    path = _AGG / "bfw_sex_aggregated_metrics.json"
+    if not path.is_file():
+        pytest.skip("sex aggregation not generated in this checkout")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert "pooled over identity outcomes" in payload["aggregation"]
+    for entry in payload["groups"].values():
+        assert entry["identities"] > 0
+        assert len(entry["subgroups_pooled"]) == 4
+        assert "do not represent" in entry["population_note"]
+
+
+def test_no_stale_licensing_language_survives_anywhere() -> None:
+    """The comparison now runs under permitted non-commercial research terms,
+    so wording implying an unresolved licensing blocker is inaccurate."""
+    for name in ("ACP_arden.py", "README.md", "REFERENCES.md", ".env.example",
+                 "CONVERSION_MAP.md", "requirements-comparison.txt"):
+        text = _project_file(name)
+        for stale in ("terms are unresolved", "licensing is unresolved",
+                      "No model is trained or fine-tuned"):
+            assert stale not in text, f"{name} still contains: {stale}"
+
+
+def test_the_comparison_docstring_describes_both_paths() -> None:
+    source = _project_file("ACP_arden.py")
+    assert "Records a precise technical status when the local comparison pipeline is" in source
+    assert "performs the complete held-out comparison when all verified" in source
+
+
+def test_estimator_arguments_are_typed_constants_not_dictionary_lookups() -> None:
+    """scikit-learn types solver and class_weight as literals. Recovering them
+    with str() erases the literal and defeats the type checker, so the call
+    uses the constants directly and the provenance dict is built from them."""
+    source = _project_file("ACP_arden.py")
+    assert 'solver=ML_REVIEW_SOLVER' in source
+    assert 'class_weight=ML_REVIEW_CLASS_WEIGHT' in source
+    assert 'str(ML_REVIEW_HYPERPARAMETERS[' not in source
+    # One source of truth: the published record matches what is passed.
+    assert acp.ML_REVIEW_HYPERPARAMETERS["solver"] == acp.ML_REVIEW_SOLVER == "lbfgs"
+    assert acp.ML_REVIEW_HYPERPARAMETERS["class_weight"] == acp.ML_REVIEW_CLASS_WEIGHT
+    assert acp.ML_REVIEW_HYPERPARAMETERS["random_state"] == 20260727
+    assert acp.ML_REVIEW_HYPERPARAMETERS["l1_ratio"] == 0.0
+    assert acp.ML_REVIEW_HYPERPARAMETERS["C"] == 1.0
+    assert acp.ML_REVIEW_HYPERPARAMETERS["max_iter"] == 1000

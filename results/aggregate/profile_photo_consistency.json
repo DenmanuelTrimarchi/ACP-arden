@@ -1,5 +1,9 @@
 {
-  "artifact_type": "bfw_open_set_threshold",
+  "artifact_type": "profile_photo_consistency",
+  "consistency_rate": 0.871,
+  "consistency_score_mean": 0.6667370531436376,
+  "consistency_score_median": 0.6907722949296374,
+  "consistent_same_person_photographs": 871,
   "created_at": "2026-08-02T17:15:33.221254+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -24,7 +28,10 @@
     "total_identities": 800,
     "total_images": 20000
   },
-  "developed_on": "BFW development partition (identity-disjoint from test)",
+  "extraction_failures": 48,
+  "gallery_reference_unavailable": 10,
+  "inconsistent_review_candidates": 71,
+  "interpretation_note": "A non-match indicates that the photograph is inconsistent with the profile's enrolled facial template under this model and threshold. It does not independently prove that the photograph belongs to another person. Pose, lighting, occlusion, image quality, age difference, face-detection failure and model error can all produce the same result. Every outcome opens human review only.",
   "limitations": [
     "This remains a proof of concept. No result here proves fraud, misuse or misrepresentation by any person.",
     "No automatic sanction is applied. A score above threshold opens a case for human review and nothing else.",
@@ -34,58 +41,24 @@
     "Confidence intervals describe sampling uncertainty over these benchmark identities only. They do not extend to any other population.",
     "Benchmark demographics do not represent a real dating-application user population, so subgroup figures must not be read as deployment estimates."
   ],
-  "method": "three_image_open_set_calibrated",
   "methodology_revision": "open-set-gallery-accounting-v2",
+  "mismatched_control_extraction_failures": 137,
+  "mismatched_controls_correctly_referred": 19,
+  "mismatched_controls_not_referred": 2844,
   "model_sha256": {
     "sface": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
     "yunet": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
   },
   "model_version": "opencv-sface-2021dec-yunet-2023mar",
   "opaque_id_version": "hmac-sha256-v1",
-  "operating_points": {
-    "0.001": {
-      "candidates_admissible": 389,
-      "candidates_evaluated": 3820,
-      "development_fpir": 0.0006990562740300594,
-      "development_tpir_rank1": 0.40145985401459855,
-      "development_tpir_rank5": 0.40145985401459855,
-      "selected_candidate": "score_0.710967208853",
-      "selection_rule": "Among candidate thresholds whose development FPIR is no greater than the target, select the highest development TPIR at rank 1; ties broken by lower development FPIR, then by higher threshold, then by candidate name, for full determinism.",
-      "target_fpir": 0.001,
-      "threshold": 0.710967208853
-    },
-    "0.003": {
-      "candidates_admissible": 898,
-      "candidates_evaluated": 3820,
-      "development_fpir": 0.0027962250961202375,
-      "development_tpir_rank1": 0.927007299270073,
-      "development_tpir_rank5": 0.927007299270073,
-      "selected_candidate": "score_0.477117869159",
-      "selection_rule": "Among candidate thresholds whose development FPIR is no greater than the target, select the highest development TPIR at rank 1; ties broken by lower development FPIR, then by higher threshold, then by candidate name, for full determinism.",
-      "target_fpir": 0.003,
-      "threshold": 0.477117869159
-    },
-    "0.01": {
-      "candidates_admissible": 941,
-      "candidates_evaluated": 3820,
-      "development_fpir": 0.009786787836420832,
-      "development_tpir_rank1": 0.948905109489051,
-      "development_tpir_rank5": 0.948905109489051,
-      "selected_candidate": "score_0.439414136573",
-      "selection_rule": "Among candidate thresholds whose development FPIR is no greater than the target, select the highest development TPIR at rank 1; ties broken by lower development FPIR, then by higher threshold, then by candidate name, for full determinism.",
-      "target_fpir": 0.01,
-      "threshold": 0.439414136573
-    }
-  },
+  "operating_threshold": 0.477117869159,
+  "photographs_assessed": 1000,
   "pipeline_name": "opencv-sface-2021dec-yunet-2023mar",
   "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
   "preprocessing_revision": "opencv-yunet-sface-exif-bgr-l2-v1",
-  "primary_fpir_target": 0.003,
-  "protocol_digest": "549790b77cfc7abaf1a90748a7ebda86be9e988cb4aaf56af04136566b8191b1",
-  "public_manifest_sha256": "549790b77cfc7abaf1a90748a7ebda86be9e988cb4aaf56af04136566b8191b1",
+  "review_referral_rate": 0.071,
   "schema_version": 1,
   "seed": 20260727,
-  "selection_rule": "Among candidate thresholds whose development FPIR is no greater than the target, select the highest development TPIR at rank 1; ties broken by lower development FPIR, then by higher threshold, then by candidate name, for full determinism.",
   "software_environment": {
     "dependencies": {
       "Pillow": {
@@ -108,6 +81,5 @@
     "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",
     "processor": "arm",
     "python_version": "3.13.0"
-  },
-  "status": "open_set_frozen"
+  }
 }
