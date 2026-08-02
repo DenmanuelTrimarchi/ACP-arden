@@ -3,11 +3,11 @@
   "classifier": {
     "conditional_duplicate_detection_rate": 0.9426751592356688,
     "end_to_end_duplicate_detection_rate": 0.888,
-    "extraction_coverage": 0.95075,
-    "false_reviews_per_1000_non_mated": 6.990562740300594,
+    "extraction_coverage": 0.95025,
+    "false_reviews_per_1000_non_mated": 6.995452955578874,
     "fnir_rank1": 0.0573248407643312,
     "fnir_rank5": 0.056263269639065805,
-    "fpir": 0.006990562740300594,
+    "fpir": 0.006995452955578874,
     "gallery_reference_unavailable": 10,
     "intended_mated_probes": 1000,
     "intended_non_mated_probes": 3000,
@@ -17,18 +17,18 @@
     "mated_extraction_failures": 58,
     "mated_not_referred": 53,
     "mated_wrong_identity_referred": 1,
-    "non_mated_correctly_not_referred": 2841,
-    "non_mated_extraction_coverage": 0.9536666666666667,
-    "non_mated_extraction_failures": 139,
+    "non_mated_correctly_not_referred": 2839,
+    "non_mated_extraction_coverage": 0.953,
+    "non_mated_extraction_failures": 141,
     "non_mated_incorrectly_referred": 20,
-    "probability_threshold": 0.571337650641,
+    "probability_threshold": 0.571466685462,
     "scored_mated_probes": 942,
-    "scored_non_mated_probes": 2861,
+    "scored_non_mated_probes": 2859,
     "tpir_rank1": 0.9426751592356688,
     "tpir_rank5": 0.9437367303609342
   },
-  "classifier_decision_latency_mean_ms": 3.738285621758938e-05,
-  "classifier_decision_latency_p95_ms": 3.738285621758938e-05,
+  "classifier_decision_latency_mean_ms": 5.0754270238727834e-05,
+  "classifier_decision_latency_p95_ms": 5.0754270238727834e-05,
   "classifier_hyperparameters": {
     "C": 1.0,
     "class_weight": "balanced",
@@ -46,12 +46,12 @@
     "rates": {
       "cmc_rank1": 0.9808917197452229,
       "cmc_rank5": 0.9904458598726115,
-      "false_reviews_per_1000_non_mated": 5.242922055225446,
+      "false_reviews_per_1000_non_mated": 5.246589716684155,
       "fnir_rank1": 0.07430997876857748,
       "fnir_rank5": 0.07430997876857748,
-      "fpir": 0.005242922055225445,
+      "fpir": 0.005246589716684155,
       "scored_mated_probes": 942,
-      "scored_non_mated_probes": 2861,
+      "scored_non_mated_probes": 2859,
       "threshold": 0.477117869159,
       "tpir_rank1": 0.9256900212314225,
       "tpir_rank5": 0.9256900212314225
@@ -68,21 +68,21 @@
     "intended_non_mated_probes": 3000,
     "mated_extraction_failure_rate": 0.058,
     "method": "three_image_open_set_calibrated",
-    "non_mated_extraction_failure_rate": 0.04633333333333333,
+    "non_mated_extraction_failure_rate": 0.047,
     "partition": "test",
     "probe_failure_breakdown": {
       "gallery_reference_unavailable": 10,
-      "zero_faces": 187
+      "zero_faces": 189
     },
     "scored_mated_probes": 942,
-    "scored_non_mated_probes": 2861,
-    "similarity_comparisons": 752994,
-    "top1_search_time_mean_ms": 0.8643573125656704,
-    "top1_search_time_p95_ms": 0.9084538964089006,
-    "top5_search_time_mean_ms": 0.8834380009936479,
-    "top5_search_time_p95_ms": 0.9298707038396969
+    "scored_non_mated_probes": 2859,
+    "similarity_comparisons": 752598,
+    "top1_search_time_mean_ms": 0.8915994872214232,
+    "top1_search_time_p95_ms": 0.9454999817535281,
+    "top5_search_time_mean_ms": 0.9117190423057094,
+    "top5_search_time_p95_ms": 0.9676250047050416
   },
-  "created_at": "2026-08-02T01:45:37.725026+00:00",
+  "created_at": "2026-08-02T12:01:40.096074+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -118,7 +118,7 @@
   "excluded_records": {
     "missing_feature": 0,
     "outside_partition": 0,
-    "unscored": 197
+    "unscored": 199
   },
   "feature_definitions": {
     "gallery_size": "Enrolled identities searched, which scales impostor exposure.",
@@ -139,7 +139,7 @@
     "Extraction failures are reported separately and are never counted as genuine negative decisions."
   ],
   "opaque_id_version": "hmac-sha256-v1",
-  "operating_probability_threshold": 0.571337650641,
+  "operating_probability_threshold": 0.571466685462,
   "pipeline": {
     "comparison_scope": "Complete pipeline: detection, preprocessing and embedding. A difference between pipelines cannot be attributed to the embedding model alone.",
     "detector_name": "OpenCV YuNet 2023mar",
@@ -193,7 +193,7 @@
       "target": 0.02
     },
     "fewer_false_reviews_than_threshold_method": {
-      "actual": -1.7476406850751482,
+      "actual": -1.7488632388947192,
       "outcome": "not_achieved",
       "target": 0.0
     },
@@ -203,7 +203,7 @@
       "target": 0.9
     },
     "primary_fpir_at_or_below_1_percent": {
-      "actual": 0.006990562740300594,
+      "actual": 0.006995452955578874,
       "outcome": "achieved",
       "target": 0.01
     },

@@ -1,6 +1,6 @@
 {
   "artifact_type": "ml_review_confidence_intervals",
-  "created_at": "2026-08-02T01:45:37.748694+00:00",
+  "created_at": "2026-08-02T12:01:40.122067+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -41,9 +41,9 @@
       "valid_replicates": 2000
     },
     "extraction_coverage": {
-      "lower_95": 0.9416227991663364,
+      "lower_95": 0.9410753481182216,
       "requested_replicates": 2000,
-      "upper_95": 0.9593984962406015,
+      "upper_95": 0.9588235294117647,
       "valid_replicates": 2000
     },
     "fnir_rank1": {
@@ -59,9 +59,9 @@
       "valid_replicates": 2000
     },
     "fpir": {
-      "lower_95": 0.0029653700528537935,
+      "lower_95": 0.002967331544335997,
       "requested_replicates": 2000,
-      "upper_95": 0.012147466909045892,
+      "upper_95": 0.012156166778365195,
       "valid_replicates": 2000
     },
     "mated_extraction_coverage": {
@@ -71,9 +71,9 @@
       "valid_replicates": 2000
     },
     "non_mated_extraction_coverage": {
-      "lower_95": 0.9431058398366756,
+      "lower_95": 0.9424528301886792,
       "requested_replicates": 2000,
-      "upper_95": 0.9641805296434494,
+      "upper_95": 0.9636069727891156,
       "valid_replicates": 2000
     },
     "tpir_rank1": {

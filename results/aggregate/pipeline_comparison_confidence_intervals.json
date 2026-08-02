@@ -1,6 +1,6 @@
 {
   "artifact_type": "pipeline_comparison_confidence_intervals",
-  "created_at": "2026-08-02T11:47:36.512578+00:00",
+  "created_at": "2026-08-02T11:55:05.220341+00:00",
   "evaluated": "no",
   "intervals": {},
   "note": "Populated only when both pipelines are evaluated. FACE_ARCFACE_MODEL_ROOT is not set, so no model files are available. Obtain the official buffalo_l pack from the InsightFace project and store it in private local research storage; nothing is downloaded automatically.",

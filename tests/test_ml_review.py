@@ -958,3 +958,37 @@ def test_experiment_seven_subgroup_sample_counts_reconcile() -> None:
     for entry in per_subgroup.values():
         assert entry["scored_mated_probes"] <= entry["intended_mated_probes"]
         assert entry["scored_non_mated_probes"] <= entry["intended_non_mated_probes"]
+
+
+def test_threshold_selection_is_reproducible_across_processes() -> None:
+    """The frozen threshold must not drift between runs.
+
+    A threshold that moved run to run would void the freezing guarantee, so
+    selection is pinned here on fixed inputs rather than only end to end."""
+    rows = _training_rows()
+    first = acp.fit_review_classifier(rows)
+    second = acp.fit_review_classifier(rows)
+    assert first.coefficients == pytest.approx(second.coefficients, abs=0.0)
+    assert first.intercept == pytest.approx(second.intercept, abs=0.0)
+
+    matrix, _ = acp._feature_matrix(rows)
+    chosen = [
+        acp.select_review_probability_threshold(
+            rows, model.probabilities(matrix), target_fpir=EXPECTED_PRIMARY_FPIR_TARGET
+        )["probability_threshold"]
+        for model in (first, second)
+    ]
+    assert chosen[0] == chosen[1]
+
+
+def test_the_published_threshold_matches_the_frozen_policy() -> None:
+    """The evaluated threshold must be the one recorded as frozen."""
+    root = Path(acp.__file__).parent / "results" / "aggregate"
+    policy_path, test_path = root / "ml_review_threshold.json", root / "ml_review_test_metrics.json"
+    if not (policy_path.is_file() and test_path.is_file()):
+        pytest.skip("the review experiment has not been run in this checkout")
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    test = json.loads(test_path.read_text(encoding="utf-8"))
+    assert policy["status"] == EXPECTED_FROZEN_STATUS
+    frozen = policy["operating_points"][str(EXPECTED_PRIMARY_FPIR_TARGET)]["probability_threshold"]
+    assert test["operating_probability_threshold"] == pytest.approx(frozen)
