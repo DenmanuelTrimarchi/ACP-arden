@@ -4363,10 +4363,26 @@ def open_set_rates_at_threshold(
 
 # One canonical primary-pipeline run underpins Experiments 6, 7 and 8, the
 # implementation layers and every subgroup breakdown, so the same method can
-# never report two different scored counts. The cache holds decision outcomes
-# and similarity scores only: no embedding, template or other biometric record
-# is written, and it lives under the git-ignored raw directory.
+# never report two different scored counts.
+#
+# The cache holds derived face-comparison scores and decisions. Those are
+# privacy-sensitive: they describe how a face model responded to identifiable
+# people. It holds no raw photograph, face embedding or enrolled template, and
+# it stays local, access-restricted and excluded from Git.
 CANONICAL_RUN_CACHE = RAW_ROOT / "canonical_primary_run.json"
+CANONICAL_CACHE_SCHEMA_VERSION = 2
+
+CANONICAL_CACHE_PRIVACY_NOTE = (
+    "The cache contains privacy-sensitive derived face-comparison scores and decisions, "
+    "but no raw photographs, face embeddings or enrolled templates. It remains local, "
+    "access-restricted and excluded from Git."
+)
+
+# Every non-timing field of a search result contributes to the outcome digest.
+# Timing is excluded because it varies between runs by design.
+_DIGEST_EXCLUDED_FIELDS = frozenset({
+    "top1_time_seconds", "top5_time_seconds",
+})
 
 
 def canonical_cache_path(partition: str, base: Path = CANONICAL_RUN_CACHE) -> Path:
@@ -4377,32 +4393,147 @@ def canonical_cache_path(partition: str, base: Path = CANONICAL_RUN_CACHE) -> Pa
     return base.with_name(f"{base.stem}_{partition}{base.suffix}")
 
 
-def canonical_run_digest(run: OpenSetRunResult) -> str:
-    """Aggregate, non-biometric fingerprint of a run's decision outcomes.
+def canonical_run_context(
+    protocol: OpenSetProtocol,
+    *,
+    partition: str,
+    dataset: Optional[BfwDataset] = None,
+    detector: Any = None,
+    embedder: Any = None,
+) -> Dict[str, Any]:
+    """Every input capable of changing a cached run's result.
 
-    Two runs sharing this digest reached identical extraction and ranking
-    outcomes for every sample."""
-    parts = [
-        f"{r.sample_id}|{r.role}|{r.failure_code or 'ok'}|{r.correct_rank}|"
-        f"{'' if r.top_similarity is None else format(r.top_similarity, '.12f')}"
-        for r in sorted(run.search_results, key=lambda r: r.sample_id)
-    ]
-    parts.append(f"gallery={run.gallery_size}")
-    return sha256_of_text("\n".join(parts))
+    Matching probe identifiers is not sufficient: the same images scored with a
+    different model, detector setting or OpenCV build produce different
+    outcomes, so the whole context is compared before a cache is trusted."""
+    import cv2
+
+    rows = protocol.partition(partition)
+    provenance = bfw_dataset_provenance(dataset) if dataset is not None else {}
+    return {
+        "cache_schema_version": CANONICAL_CACHE_SCHEMA_VERSION,
+        "partition": partition,
+        "dataset_metadata_sha256": provenance.get("metadata_sha256"),
+        "evaluated_image_set_sha256": provenance.get("evaluated_image_set_sha256"),
+        "protocol_version": BFW_PROTOCOL_VERSION,
+        "protocol_digest": sha256_of_text(
+            "\n".join(sorted(f"{e.partition}:{e.role}:{e.sample_id}" for e in protocol.entries))
+        ),
+        "public_manifest_digest": sha256_of_text(
+            "\n".join(sorted(f"{e.partition}:{e.role}:{e.sample_id}" for e in protocol.entries))
+        ),
+        "model_filenames": [YUNET_FILENAME, SFACE_FILENAME],
+        "model_sha256": {
+            "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
+            "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
+        },
+        "preprocessing_revision": PREPROCESSING_REVISION,
+        "detector_input_size": [320, 320],
+        "detector_score_threshold": DETECTOR_SCORE_THRESHOLD,
+        "detector_nms_threshold": DETECTOR_NMS_THRESHOLD,
+        "exactly_one_face_required": True,
+        "embedding_dimensions": EMBEDDING_DIMENSIONS,
+        "gallery_images_per_identity": MULTI_IMAGE_ENROLMENT,
+        "minimum_valid_gallery_images": MULTI_IMAGE_MINIMUM_ENROLMENT,
+        "seed": protocol.seed,
+        "python_version": sys.version.split()[0],
+        "opencv_version": str(getattr(cv2, "__version__", "")),
+        "numpy_version": _package_version("numpy"),
+        "pillow_version": _package_version("Pillow"),
+        "platform": platform.platform(),
+        # Complete role assignments, not just probe identifiers.
+        "gallery_enrolment_samples": sorted(
+            e.sample_id for e in rows if e.role == "gallery_enrolment"
+        ),
+        "mated_probe_samples": sorted(e.sample_id for e in rows if e.role == "mated_probe"),
+        "non_mated_probe_samples": sorted(
+            e.sample_id for e in rows if e.role == "non_mated_probe"
+        ),
+        "intended_gallery_identities": len(
+            {e.identity_hash for e in rows if e.role == "gallery_enrolment"}
+        ),
+        "intended_mated_probes": sum(1 for e in rows if e.role == "mated_probe"),
+        "intended_non_mated_probes": sum(1 for e in rows if e.role == "non_mated_probe"),
+    }
+
+
+def _package_version(name: str) -> Optional[str]:
+    try:
+        return importlib_metadata.version(name)
+    except importlib_metadata.PackageNotFoundError:
+        return None
+
+
+def _canonical_json(payload: Any) -> str:
+    """Stable serialisation: UTF-8, sorted keys, consistent float formatting."""
+    def normalise(value: Any) -> Any:
+        if isinstance(value, float):
+            return format(value, ".12g") if value == value else "nan"
+        if isinstance(value, dict):
+            return {k: normalise(v) for k, v in sorted(value.items())}
+        if isinstance(value, (list, tuple)):
+            return [normalise(v) for v in value]
+        return value
+
+    return json.dumps(normalise(payload), sort_keys=True, ensure_ascii=False,
+                      separators=(",", ":"))
+
+
+def context_digest(context: Mapping[str, Any]) -> str:
+    return sha256_of_text(_canonical_json(context))
+
+
+def canonical_run_digest(run: OpenSetRunResult) -> str:
+    """Digest over every non-timing outcome field.
+
+    Records are sorted before hashing, so an equivalent run in a different
+    order produces the same digest while any changed decision does not."""
+    search_rows = sorted(
+        (
+            {
+                name: getattr(result, name)
+                for name in (f.name for f in fields(result))
+                if name not in _DIGEST_EXCLUDED_FIELDS
+            }
+            for result in run.search_results
+        ),
+        key=lambda row: str(row.get("sample_id")),
+    )
+    # Enrolment outcomes are keyed by identity, not by sample: sorting them on
+    # a missing sample_id would leave them in input order and make the digest
+    # depend on record ordering.
+    enrolment_rows = sorted(
+        (asdict(outcome) for outcome in run.enrolment_outcomes),
+        key=lambda row: str(row.get("identity_hash")),
+    )
+    return sha256_of_text(_canonical_json({
+        "search_results": search_rows,
+        "enrolment_outcomes": enrolment_rows,
+        "gallery_size": run.gallery_size,
+        "comparisons_per_probe": run.comparisons_per_probe,
+        "method": run.method,
+        "partition": run.partition,
+    }))
 
 
 def _search_result_to_row(result: OpenSetSearchResult) -> Dict[str, Any]:
     return {f.name: getattr(result, f.name) for f in fields(result)}
 
 
-def save_canonical_run(run: OpenSetRunResult, path: Path = CANONICAL_RUN_CACHE) -> str:
-    """Persist a run so every derived artefact reads the same outcomes."""
+def save_canonical_run(
+    run: OpenSetRunResult,
+    path: Path = CANONICAL_RUN_CACHE,
+    context: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Persist a run with the context that produced it."""
     digest = canonical_run_digest(run)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schema_version": SCHEMA_VERSION,
+        "cache_schema_version": CANONICAL_CACHE_SCHEMA_VERSION,
         "canonical_run_digest": digest,
+        "canonical_context": dict(context) if context else None,
+        "canonical_context_sha256": context_digest(context) if context else None,
         "created_at": utc_now_iso(),
         "method": run.method,
         "partition": run.partition,
@@ -4411,10 +4542,7 @@ def save_canonical_run(run: OpenSetRunResult, path: Path = CANONICAL_RUN_CACHE) 
         "enrolment_outcomes": [asdict(o) for o in run.enrolment_outcomes],
         "search_results": [_search_result_to_row(r) for r in run.search_results],
         "stage_times_seconds": run.stage_times_seconds,
-        "note": (
-            "Decision outcomes and similarity scores only. No embedding or biometric "
-            "template is stored. Private and git-ignored."
-        ),
+        "privacy_note": CANONICAL_CACHE_PRIVACY_NOTE,
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return digest
@@ -4437,34 +4565,64 @@ def load_canonical_run(path: Path = CANONICAL_RUN_CACHE) -> Optional[OpenSetRunR
     )
 
 
+def cache_invalidation_reason(
+    path: Path, expected_context: Mapping[str, Any]
+) -> Optional[str]:
+    """Why a cache cannot be reused, or None when it can.
+
+    Reports the differing field name only: the values can include private
+    material, so they are never placed in a message."""
+    path = Path(path)
+    if not path.is_file():
+        return "no cached run present"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "cached run could not be read"
+    if payload.get("cache_schema_version") != CANONICAL_CACHE_SCHEMA_VERSION:
+        return "cache schema version differs"
+    stored = payload.get("canonical_context")
+    if not stored:
+        return "cached run carries no context"
+    if context_digest(stored) == context_digest(expected_context):
+        return None
+    differing = sorted(
+        key for key in set(stored) | set(expected_context)
+        if stored.get(key) != expected_context.get(key)
+    )
+    return f"context differs in: {', '.join(differing) or 'unknown field'}"
+
+
 def canonical_primary_run(
     protocol: OpenSetProtocol,
     *,
     partition: str,
     detector: FaceDetector,
     embedder: FaceEmbedder,
+    dataset: Optional[BfwDataset] = None,
     base_cache: Path = CANONICAL_RUN_CACHE,
     refresh: bool = False,
-) -> Tuple[OpenSetRunResult, str]:
+) -> Tuple[OpenSetRunResult, str, Dict[str, Any]]:
     """Return the canonical primary-pipeline run for one partition.
 
-    Recomputed when the cache is absent or stale for this protocol; otherwise
-    reused, so Experiments 6, 7 and 8 cannot diverge and the classifier's
-    frozen threshold does not move between runs."""
+    Rebuilt whenever any input capable of changing the result differs from the
+    cached context, so Experiments 6, 7 and 8 cannot diverge."""
     cache_path = canonical_cache_path(partition, base_cache)
-    expected_samples = {
-        e.sample_id for e in protocol.partition(partition)
-        if e.role in ("mated_probe", "non_mated_probe")
-    }
-    if not refresh:
+    context = canonical_run_context(
+        protocol, partition=partition, dataset=dataset, detector=detector, embedder=embedder
+    )
+    reason = cache_invalidation_reason(cache_path, context)
+    if not refresh and reason is None:
         cached = load_canonical_run(cache_path)
-        if cached is not None and {r.sample_id for r in cached.search_results} == expected_samples:
-            return cached, canonical_run_digest(cached)
+        if cached is not None:
+            return cached, canonical_run_digest(cached), context
+    if reason is not None and not refresh:
+        announce(f"Rebuilding the {partition} canonical run: {reason}")
 
     run = run_open_set_method(
         protocol, partition=partition, method=METHOD_B, detector=detector, embedder=embedder
     )
-    return run, save_canonical_run(run, cache_path)
+    return run, save_canonical_run(run, cache_path, context), context
 
 
 def canonical_primary_test_run(
@@ -4472,13 +4630,14 @@ def canonical_primary_test_run(
     *,
     detector: FaceDetector,
     embedder: FaceEmbedder,
+    dataset: Optional[BfwDataset] = None,
     cache_path: Path = CANONICAL_RUN_CACHE,
     refresh: bool = False,
-) -> Tuple[OpenSetRunResult, str]:
+) -> Tuple[OpenSetRunResult, str, Dict[str, Any]]:
     """Held-out partition convenience wrapper."""
     return canonical_primary_run(
         protocol, partition="test", detector=detector, embedder=embedder,
-        base_cache=cache_path, refresh=refresh,
+        dataset=dataset, base_cache=cache_path, refresh=refresh,
     )
 
 
@@ -5038,8 +5197,9 @@ def run_open_set_experiment(
 
     # --- Method B development and freezing -----------------------------------
     announce("Running Method B (three-image template) on development")
-    proposed_dev, development_digest = canonical_primary_run(
-        protocol, partition="development", detector=detector, embedder=embedder, refresh=True
+    proposed_dev, development_digest, development_context = canonical_primary_run(
+        protocol, partition="development", detector=detector, embedder=embedder,
+        dataset=dataset, refresh=True,
     )
     announce(f"Canonical development run digest {development_digest[:16]}")
 
@@ -5110,11 +5270,16 @@ def run_open_set_experiment(
     control_test = run_open_set_method(
         protocol, partition="test", method=METHOD_A, detector=detector, embedder=embedder
     )
-    proposed_test, canonical_digest = canonical_primary_test_run(
-        protocol, detector=detector, embedder=embedder, refresh=True
+    proposed_test, canonical_digest, test_context = canonical_primary_test_run(
+        protocol, detector=detector, embedder=embedder, dataset=dataset, refresh=True
     )
     announce(f"Canonical primary-pipeline run digest {canonical_digest[:16]}")
     provenance["canonical_run_digest"] = canonical_digest
+    provenance["canonical_test_run_digest"] = canonical_digest
+    provenance["canonical_development_run_digest"] = development_digest
+    provenance["canonical_test_context_sha256"] = context_digest(test_context)
+    provenance["canonical_development_context_sha256"] = context_digest(development_context)
+    provenance["cache_schema_version"] = CANONICAL_CACHE_SCHEMA_VERSION
 
     test_coverage = open_set_coverage(proposed_test)
     primary_rates = open_set_rates_at_threshold(proposed_test.search_results, frozen_threshold)
@@ -5213,7 +5378,11 @@ def run_open_set_experiment(
     consistency = profile_photo_consistency_summary(proposed_test, frozen_threshold)
     write_json_artifact(
         output_root / "profile_photo_consistency.json",
-        {"artifact_type": "profile_photo_consistency", **consistency, **provenance},
+        {"artifact_type": "profile_photo_consistency", **consistency,
+         **{k: v for k, v in provenance.items() if k != "policy_note"},
+         "duplicate_screening_policy_note": (
+             "Applies to gallery screening only, not to profile consistency: " + POLICY_NOTE
+         )},
     )
     write_profile_consistency_artefacts(
         {MODEL_VERSION: consistency}, output_root, provenance=provenance
@@ -5263,6 +5432,14 @@ def run_open_set_experiment(
 # signal. It does not independently establish that the photograph belongs to
 # another person: pose, lighting, occlusion, image quality, age difference,
 # detection failure and model error all produce the same outcome.
+PROFILE_CONSISTENCY_POLICY_NOTE = (
+    "A photograph whose similarity to its own enrolled profile template is below the "
+    "frozen consistency threshold opens an inconsistency review. A score at or above that "
+    "threshold is facially consistent under this model and does not open an inconsistency "
+    "case. An extraction failure is unresolved and must not be treated as either a match "
+    "or mismatch."
+)
+
 PROFILE_CONSISTENCY_NOTE = (
     "A non-match indicates that the photograph is inconsistent with the enrolled facial "
     "template under the evaluated model and threshold. It does not prove that the "
@@ -5320,28 +5497,66 @@ def profile_photo_consistency_summary(
         else:
             controls_false_consistent += 1
 
-    assessed = consistent + inconsistent + extraction_failures + unavailable
+    intended_same_person = consistent + inconsistent + extraction_failures + unavailable
+    scored_same_person = consistent + inconsistent
+    intended_controls = controls_correct + controls_false_consistent + control_failures
+    scored_controls = controls_correct + controls_false_consistent
+
+    def rate(numerator: int, denominator: int) -> float:
+        return numerator / denominator if denominator else float("nan")
+
     return {
         "operating_threshold": threshold,
-        "photographs_assessed": assessed,
+        # Same-person photographs.
+        "intended_same_person_photographs": intended_same_person,
+        "scored_same_person_photographs": scored_same_person,
         "consistent_same_person_photographs": consistent,
-        "inconsistent_review_candidates": inconsistent,
-        "extraction_failures": extraction_failures,
+        "inconsistent_same_person_review_candidates": inconsistent,
+        "same_person_extraction_failures": extraction_failures,
         "gallery_reference_unavailable": unavailable,
+        # Mismatched controls.
+        "intended_mismatched_controls": intended_controls,
+        "scored_mismatched_controls": scored_controls,
         "mismatched_controls_correctly_identified": controls_correct,
         "mismatched_controls_false_consistent": controls_false_consistent,
         "mismatched_control_extraction_failures": control_failures,
-        "consistency_rate": consistent / assessed if assessed else float("nan"),
-        "review_referral_rate": inconsistent / assessed if assessed else float("nan"),
+        # Conditional rates divide by what was scored; end-to-end rates divide
+        # by what the protocol intended, so extraction failures reduce them.
+        "same_person_consistency_rate_conditional": rate(consistent, scored_same_person),
+        "same_person_false_inconsistency_rate_conditional": rate(
+            inconsistent, scored_same_person
+        ),
+        "same_person_consistency_rate_end_to_end": rate(consistent, intended_same_person),
+        "same_person_false_inconsistency_rate_end_to_end": rate(
+            inconsistent, intended_same_person
+        ),
+        "mismatch_detection_rate_conditional": rate(controls_correct, scored_controls),
+        "mismatch_false_consistency_rate_conditional": rate(
+            controls_false_consistent, scored_controls
+        ),
+        "mismatch_detection_rate_end_to_end": rate(controls_correct, intended_controls),
+        "mismatch_false_consistency_rate_end_to_end": rate(
+            controls_false_consistent, intended_controls
+        ),
+        "same_person_extraction_coverage": rate(scored_same_person, intended_same_person),
+        "mismatched_control_extraction_coverage": rate(scored_controls, intended_controls),
+        # Retained under the earlier names so existing readers keep working.
+        "photographs_assessed": intended_same_person,
+        "inconsistent_review_candidates": inconsistent,
+        "extraction_failures": extraction_failures,
+        "consistency_rate": rate(consistent, intended_same_person),
+        "review_referral_rate": rate(inconsistent, intended_same_person),
         "consistency_score_mean": statistics.fmean(scores) if scores else float("nan"),
         "consistency_score_median": statistics.median(scores) if scores else float("nan"),
         "outcome_policy": (
-            "A consistent same-person photograph does not open a case. An inconsistent "
-            "photograph opens a consistency review. An extraction failure resolves nothing "
-            "and is a separate unresolved outcome, not a decision."
+            "A consistent photograph does not open a case. An inconsistent photograph "
+            "opens a consistency review. An extraction failure resolves nothing and is a "
+            "separate unresolved outcome, not a decision."
         ),
         "interpretation_note": PROFILE_CONSISTENCY_NOTE,
-        "policy_note": POLICY_NOTE,
+        # The duplicate-screening note has the opposite referral direction and
+        # must not be attached to a consistency result.
+        "profile_consistency_policy_note": PROFILE_CONSISTENCY_POLICY_NOTE,
     }
 
 
@@ -7004,20 +7219,38 @@ def _provenance_block(
         "preprocessing_revision": PREPROCESSING_REVISION,
         "software_environment": software_environment_report(),
         "dependency_versions": _reported_dependency_versions(),
+        "opencv_distribution": opencv_distribution_report(),
         "opencv_execution": configure_deterministic_opencv(),
         "policy_note": POLICY_NOTE,
         "limitations": list(ML_REVIEW_LIMITATIONS),
     }
 
 
+# Core packages plus every optional dependency the comparison pipeline needs,
+# so an Experiment 8 artefact records the environment that produced it.
+_REPORTED_PACKAGES = (
+    "numpy", "opencv-python-headless", "Pillow", "scikit-learn", "matplotlib",
+    "insightface", "onnxruntime", "onnx", "scipy", "scikit-image", "tqdm",
+    "easydict", "prettytable", "requests",
+)
+
+
 def _reported_dependency_versions() -> Dict[str, Optional[str]]:
-    versions: Dict[str, Optional[str]] = {}
-    for package in ("numpy", "opencv-python-headless", "Pillow", "scikit-learn", "matplotlib"):
-        try:
-            versions[package] = importlib_metadata.version(package)
-        except importlib_metadata.PackageNotFoundError:
-            versions[package] = None
-    return versions
+    return {package: _package_version(package) for package in _REPORTED_PACKAGES}
+
+
+def opencv_distribution_report() -> Dict[str, Any]:
+    """Which OpenCV is effective, without publishing a local path."""
+    import cv2
+
+    return {
+        "opencv_distribution": (
+            "opencv-python-headless" if _package_version("opencv-python-headless")
+            else "opencv-python"
+        ),
+        "conflicting_opencv_python_present": _package_version("opencv-python") is not None,
+        "imported_cv2_version": str(getattr(cv2, "__version__", "")),
+    }
 
 
 def run_ml_review_experiment(
@@ -7054,8 +7287,8 @@ def run_ml_review_experiment(
     )
 
     announce("Scoring the development partition once for both classifier groups")
-    development, development_digest = canonical_primary_run(
-        protocol, partition="development", detector=detector, embedder=embedder
+    development, development_digest, development_context = canonical_primary_run(
+        protocol, partition="development", detector=detector, embedder=embedder, dataset=dataset
     )
     announce(f"Using canonical development run {development_digest[:16]}")
 
@@ -7162,8 +7395,8 @@ def run_ml_review_experiment(
 
     # --- Held-out test, scored once ------------------------------------------
     announce("Scoring the held-out test partition")
-    test_run, canonical_digest = canonical_primary_test_run(
-        protocol, detector=detector, embedder=embedder
+    test_run, canonical_digest, test_context = canonical_primary_test_run(
+        protocol, detector=detector, embedder=embedder, dataset=dataset
     )
     announce(f"Using canonical primary-pipeline run {canonical_digest[:16]}")
     test_rows, test_excluded = build_review_feature_rows(test_run.search_results)
@@ -7216,7 +7449,11 @@ def run_ml_review_experiment(
         "coverage": coverage,
         "excluded_records": test_excluded,
         "canonical_run_digest": canonical_digest,
+        "canonical_test_run_digest": canonical_digest,
         "canonical_development_run_digest": development_digest,
+        "canonical_test_context_sha256": context_digest(test_context),
+        "canonical_development_context_sha256": context_digest(development_context),
+        "cache_schema_version": CANONICAL_CACHE_SCHEMA_VERSION,
         "success_criteria": evaluate_review_success_criteria(
             classifier_rates, coverage, baseline_rates, baseline_detection, classifier_rates
         ),
@@ -7486,15 +7723,20 @@ def evaluate_one_pipeline_for_comparison(
     embedder: FaceEmbedder,
     seed: int = DEFAULT_RANDOM_SEED,
     bootstrap_replicates: int = BOOTSTRAP_REPLICATES,
+    canonical_development_run: Optional[OpenSetRunResult] = None,
     canonical_test_run: Optional[OpenSetRunResult] = None,
 ) -> Dict[str, Any]:
     """Develop, freeze and evaluate one pipeline over the shared protocol.
 
     Each pipeline receives its own development-only threshold: similarity
     scores from different embedding models are not interchangeable."""
-    development = run_open_set_method(
-        protocol, partition="development", method=METHOD_B,
-        detector=detector, embedder=embedder,
+    # The primary pipeline's threshold must be selected from the same canonical
+    # development outcomes Experiments 6 and 7 used, or the three would disagree.
+    development = canonical_development_run if canonical_development_run is not None else (
+        run_open_set_method(
+            protocol, partition="development", method=METHOD_B,
+            detector=detector, embedder=embedder,
+        )
     )
     operating_points = {
         str(target): select_open_set_threshold(
@@ -7581,6 +7823,7 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
 
     # Real held-out metrics, computed only when every precondition holds.
     comparison_metrics: Optional[Dict[str, Any]] = None
+    canonical_digests: Dict[str, Any] = {}
     protocol_digest: Optional[str] = None
     evaluated_image_digest: Optional[str] = None
     dataset: Optional[BfwDataset] = None
@@ -7595,14 +7838,31 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
         evaluated_image_digest = bfw_dataset_provenance(dataset)["evaluated_image_set_sha256"]
 
         (arcface_detector, arcface_embedder), arcface_description = load_arcface_pipeline(config)
+        primary_development_run, primary_development_digest, primary_development_context = (
+            canonical_primary_run(
+                protocol, partition="development", detector=detector, embedder=embedder,
+                dataset=dataset,
+            )
+        )
+        primary_test_run, primary_test_digest, primary_test_context = (
+            canonical_primary_test_run(
+                protocol, detector=detector, embedder=embedder, dataset=dataset
+            )
+        )
+        canonical_digests = {
+            "canonical_development_run_digest": primary_development_digest,
+            "canonical_test_run_digest": primary_test_digest,
+            "canonical_development_context_sha256": context_digest(primary_development_context),
+            "canonical_test_context_sha256": context_digest(primary_test_context),
+            "cache_schema_version": CANONICAL_CACHE_SCHEMA_VERSION,
+        }
         # Both pipelines traverse the identical protocol: same identities, same
         # split, same roles, same failure taxonomy.
         comparison_metrics = {
             primary.pipeline_name: evaluate_one_pipeline_for_comparison(
                 protocol, name=primary.pipeline_name, detector=detector, embedder=embedder,
-                canonical_test_run=canonical_primary_test_run(
-                    protocol, detector=detector, embedder=embedder
-                )[0],
+                canonical_development_run=primary_development_run,
+                canonical_test_run=primary_test_run,
             ),
             arcface_description.pipeline_name: evaluate_one_pipeline_for_comparison(
                 protocol, name=arcface_description.pipeline_name,
@@ -7636,6 +7896,11 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
         ),
         "software_environment": software_environment_report(),
         "dependency_versions": _reported_dependency_versions(),
+        # Which OpenCV actually served the import. Package metadata alone is not
+        # enough: opencv-python and opencv-python-headless ship the same cv2
+        # module, so a shadowing install can change numerics while the pinned
+        # version still reads correctly.
+        "opencv_distribution": opencv_distribution_report(),
         "policy_note": POLICY_NOTE,
     }
     payload["licence_note"] = status["licence_note"]
@@ -7691,6 +7956,7 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
         "BFW test identities, never used for fitting or threshold selection."
     )
     payload["limitations"] = list(OPEN_SET_LIMITATIONS)
+    payload.update(canonical_digests)
     payload["model_file_sizes"] = {
         "primary": _primary_model_file_sizes(config.model_root),
         "comparison": _model_file_sizes(config.arcface_model_root),
@@ -7738,10 +8004,17 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
          "model_digests": payload["model_digests"],
          "model_file_sizes": payload["model_file_sizes"],
          "dependency_versions": payload["dependency_versions"],
+         "opencv_distribution": payload["opencv_distribution"],
          "software_environment": payload["software_environment"],
          "preprocessing_revision": payload["preprocessing_revision"],
          "threshold_policy": payload["threshold_policy"],
          "frozen_thresholds": payload["frozen_thresholds"],
+         "canonical_development_run_digest": payload.get("canonical_development_run_digest"),
+         "canonical_test_run_digest": payload.get("canonical_test_run_digest"),
+         "canonical_development_context_sha256": payload.get(
+             "canonical_development_context_sha256"),
+         "canonical_test_context_sha256": payload.get("canonical_test_context_sha256"),
+         "cache_schema_version": payload.get("cache_schema_version"),
          "licence_note": payload["licence_note"],
          "limitations": payload["limitations"],
          "policy_note": POLICY_NOTE},
@@ -7755,10 +8028,11 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
         write_profile_consistency_artefacts(
             per_pipeline_consistency, output_root,
             provenance={"status": payload["status"], "seed": DEFAULT_RANDOM_SEED,
-                        "created_at": utc_now_iso(), "policy_note": POLICY_NOTE,
+                        "created_at": utc_now_iso(),
                         "interpretation_note": PROFILE_CONSISTENCY_NOTE},
         )
 
+    write_pipeline_sex_aggregates(payload, output_root)
     write_pipeline_performance_csv(
         output_root / "pretrained_pipeline_comparison.csv", payload=payload
     )
@@ -7801,10 +8075,18 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
             "model_digests": payload["model_digests"],
             "model_file_sizes": payload["model_file_sizes"],
             "dependency_versions": payload["dependency_versions"],
+            "opencv_distribution": payload["opencv_distribution"],
             "software_environment": payload["software_environment"],
             "preprocessing_revision": payload["preprocessing_revision"],
             "threshold_policy": payload["threshold_policy"],
             "frozen_thresholds": payload["frozen_thresholds"],
+            "canonical_development_run_digest": payload.get(
+                "canonical_development_run_digest"),
+            "canonical_test_run_digest": payload.get("canonical_test_run_digest"),
+            "canonical_development_context_sha256": payload.get(
+                "canonical_development_context_sha256"),
+            "canonical_test_context_sha256": payload.get("canonical_test_context_sha256"),
+            "cache_schema_version": payload.get("cache_schema_version"),
             "development_partition": payload["development_partition"],
             "held_out_partition": payload["held_out_partition"],
             "licence_note": payload["licence_note"],
@@ -7860,6 +8142,10 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
             "Both pipelines were evaluated under the shared protocol above, each with its "
             "own development-only threshold.",
         ]
+    held_out = payload.get("held_out_metrics") or {}
+    if held_out:
+        report += _render_comparison_result_sections(payload, held_out)
+
     report += [
         "",
         "## Why this is not an embedding-only comparison",
@@ -7876,6 +8162,192 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
     )
     announce(f"Pipeline comparison recorded with status {payload['status']}")
     return payload
+
+
+def _render_comparison_result_sections(
+    payload: Mapping[str, Any], held_out: Mapping[str, Any]
+) -> List[str]:
+    """Numerical sections of the Experiment 8 report, read from the artefact."""
+    pct = format_percentage
+    names = sorted(held_out, key=lambda n: "opencv" not in n)
+
+    def band(name: str, metric: str) -> str:
+        row = (held_out[name].get("confidence_intervals") or {}).get(metric) or {}
+        low, high = row.get("lower_95"), row.get("upper_95")
+        return "" if low is None else f" [{pct(low)}–{pct(high)}]"
+
+    lines = [
+        "", "## Held-out results", "",
+        "Both pipelines scored once on the same held-out identities, each under its own "
+        "frozen development threshold. Intervals are 95% percentile bounds from a "
+        f"{payload.get('held_out_metrics', {}).get(names[0], {}).get('global_bootstrap_replicates', 2000)}"
+        "-replicate identity-cluster bootstrap, resampling identities with their complete "
+        "protocol outcomes and preserving subgroup stratification.",
+        "",
+        "| Metric | " + " | ".join(n for n in names) + " |",
+        "| --- | " + " | ".join("---" for _ in names) + " |",
+    ]
+    rows = [
+        ("Frozen threshold", lambda n: format_number(held_out[n]["development_threshold"], 6)),
+        ("Scored mated probes", lambda n: str(held_out[n]["rates"]["scored_mated_probes"])),
+        ("Scored non-mated probes", lambda n: str(held_out[n]["rates"]["scored_non_mated_probes"])),
+        ("FPIR", lambda n: pct(held_out[n]["rates"]["fpir"]) + band(n, "fpir")),
+        ("TPIR@1", lambda n: pct(held_out[n]["rates"]["tpir_rank1"]) + band(n, "tpir_rank1")),
+        ("TPIR@5", lambda n: pct(held_out[n]["rates"]["tpir_rank5"]) + band(n, "tpir_rank5")),
+        ("CMC rank-1", lambda n: pct(held_out[n]["rates"]["cmc_rank1"])),
+        ("CMC rank-5", lambda n: pct(held_out[n]["rates"]["cmc_rank5"])),
+        ("False reviews / 1,000",
+         lambda n: format_number(held_out[n]["rates"]["false_reviews_per_1000_non_mated"], 2)),
+        ("End-to-end detection",
+         lambda n: pct(held_out[n].get("end_to_end_duplicate_detection_rate"))
+         + band(n, "end_to_end_duplicate_detection_rate")),
+        ("Gallery coverage",
+         lambda n: pct(held_out[n]["coverage"]["gallery_enrolment_coverage"])),
+        ("Mated coverage",
+         lambda n: pct(1.0 - held_out[n]["coverage"]["mated_extraction_failure_rate"])),
+        ("Non-mated coverage",
+         lambda n: pct(1.0 - held_out[n]["coverage"]["non_mated_extraction_failure_rate"])),
+        ("Zero-face failures",
+         lambda n: str(held_out[n]["failure_breakdown"].get("zero_faces", 0))),
+        ("Multiple-face failures",
+         lambda n: str(held_out[n]["failure_breakdown"].get("multiple_faces", 0))),
+        ("Gallery reference unavailable",
+         lambda n: str(held_out[n]["failure_breakdown"].get(GALLERY_REFERENCE_UNAVAILABLE, 0))),
+    ]
+    for label, getter in rows:
+        lines.append(f"| {label} | " + " | ".join(getter(n) for n in names) + " |")
+
+    lines += ["", "## Cost", "",
+              "| Measure | " + " | ".join(names) + " |",
+              "| --- | " + " | ".join("---" for _ in names) + " |"]
+    sizes = payload.get("model_file_sizes") or {}
+    def size_of(name: str, which: int) -> str:
+        group = sizes.get("primary" if "opencv" in name else "comparison") or {}
+        values = list(group.values())
+        return f"{values[which]['megabytes']} MB" if len(values) > which else "n/a"
+    cost_rows = [
+        ("Embedding dimensions",
+         lambda n: str(held_out[n].get("embedding_dimensions")
+                       or (128 if "opencv" in n else 512))),
+        ("Detector model size", lambda n: size_of(n, 0)),
+        ("Recognition model size", lambda n: size_of(n, 1)),
+    ]
+    for key, label in (("image_load_latency", "Image load"),
+                       ("detection_latency", "Detection"),
+                       ("embedding_latency", "Embedding"),
+                       ("complete_pipeline_latency", "Complete pipeline")):
+        cost_rows.append((f"{label} mean (ms)",
+                          lambda n, k=key: format_number(
+                              held_out[n]["coverage"].get(f"{k}_mean_ms"), 3)))
+        cost_rows.append((f"{label} p95 (ms)",
+                          lambda n, k=key: format_number(
+                              held_out[n]["coverage"].get(f"{k}_p95_ms"), 3)))
+    cost_rows += [
+        ("Gallery search mean (ms)",
+         lambda n: format_number(held_out[n]["coverage"].get("top1_search_time_mean_ms"), 3)),
+        ("Gallery search p95 (ms)",
+         lambda n: format_number(held_out[n]["coverage"].get("top1_search_time_p95_ms"), 3)),
+    ]
+    for label, getter in cost_rows:
+        lines.append(f"| {label} | " + " | ".join(getter(n) for n in names) + " |")
+
+    for sex in ("female", "male"):
+        lines += ["", f"## {sex.capitalize()} aggregate", "",
+                  "| Pipeline | FPIR | TPIR@1 | TPIR@5 | Mated coverage | Non-mated coverage |",
+                  "| --- | --- | --- | --- | --- | --- |"]
+        for name in names:
+            entry = (held_out[name].get("sex_aggregated") or {}).get(sex)
+            if not entry:
+                continue
+            lines.append(
+                f"| {name} | {pct(entry['fpir'])} "
+                f"[{pct(entry['fpir_lower_95'])}–{pct(entry['fpir_upper_95'])}] | "
+                f"{pct(entry['tpir_rank1'])} "
+                f"[{pct(entry['tpir_rank1_lower_95'])}–{pct(entry['tpir_rank1_upper_95'])}] | "
+                f"{pct(entry['tpir_rank5'])} | {pct(entry['mated_probe_coverage'])} | "
+                f"{pct(entry['non_mated_probe_coverage'])} |"
+            )
+
+    lines += ["", "## Subgroup extremes", ""]
+    for metric, label, best_is_low in (("fpir", "FPIR", True),
+                                       ("tpir_rank1", "TPIR@1", False),
+                                       ("mated_probe_coverage", "Mated coverage", False)):
+        for name in names:
+            subgroups = held_out[name].get("subgroups") or {}
+            valid = {k: v[metric] for k, v in subgroups.items()
+                     if isinstance(v.get(metric), float) and v[metric] == v[metric]}
+            if not valid:
+                continue
+            best = min(valid, key=lambda k: valid[k]) if best_is_low else max(valid, key=lambda k: valid[k])
+            worst = max(valid, key=lambda k: valid[k]) if best_is_low else min(valid, key=lambda k: valid[k])
+            lines.append(
+                f"- {label}, {name}: strongest **{best}** ({pct(valid[best])}), "
+                f"weakest **{worst}** ({pct(valid[worst])})"
+            )
+
+    lines += ["", "## Profile-photo consistency", "",
+              "| Pipeline | Consistency (cond.) | Consistency (end-to-end) | "
+              "Mismatch detection (cond.) | Mismatch detection (end-to-end) | "
+              "False-consistency | Same-person coverage |",
+              "| --- | --- | --- | --- | --- | --- | --- |"]
+    for name in names:
+        c = held_out[name].get("profile_photo_consistency")
+        if not c:
+            continue
+        lines.append(
+            f"| {name} | {pct(c['same_person_consistency_rate_conditional'])} | "
+            f"{pct(c['same_person_consistency_rate_end_to_end'])} | "
+            f"{pct(c['mismatch_detection_rate_conditional'])} | "
+            f"{pct(c['mismatch_detection_rate_end_to_end'])} | "
+            f"{pct(c['mismatch_false_consistency_rate_conditional'])} | "
+            f"{pct(c['same_person_extraction_coverage'])} |"
+        )
+    lines += ["", PROFILE_CONSISTENCY_POLICY_NOTE, ""]
+
+    lines += [
+        "## Canonical primary-pipeline provenance", "",
+        f"- Development run digest: `{payload.get('canonical_development_run_digest')}`",
+        f"- Held-out run digest: `{payload.get('canonical_test_run_digest')}`",
+        f"- Development context digest: `{payload.get('canonical_development_context_sha256')}`",
+        f"- Held-out context digest: `{payload.get('canonical_test_context_sha256')}`",
+        "",
+        "The YuNet + SFace figures above derive from the same canonical runs used by "
+        "Experiments 6 and 7, so all three report identical scored counts.",
+    ]
+
+    # Only claim an improvement the generated values actually support.
+    primary, comparator = names[0], names[-1]
+    if len(names) == 2:
+        better = (
+            held_out[comparator]["coverage"]["gallery_enrolment_coverage"]
+            >= held_out[primary]["coverage"]["gallery_enrolment_coverage"]
+            and held_out[comparator]["rates"]["fpir"] <= held_out[primary]["rates"]["fpir"]
+            and (held_out[comparator].get("end_to_end_duplicate_detection_rate") or 0)
+            >= (held_out[primary].get("end_to_end_duplicate_detection_rate") or 0)
+        )
+        costlier = (
+            held_out[comparator]["coverage"].get("complete_pipeline_latency_mean_ms", 0)
+            > held_out[primary]["coverage"].get("complete_pipeline_latency_mean_ms", 0)
+        )
+        lines += ["", "## Conclusion", ""]
+        if better and costlier:
+            lines.append(
+                "SCRFD + ArcFace improved extraction coverage, held-out duplicate detection "
+                "and false-review performance under this BFW protocol, but required "
+                "substantially greater model storage and complete-pipeline processing time. "
+                "Because detection, alignment, preprocessing and embedding all differ, the "
+                "result cannot be attributed solely to ArcFace."
+            )
+        else:
+            lines.append(
+                "The generated values do not support a uniform improvement, so none is "
+                "claimed. Compare the tables above directly."
+            )
+        lines.append(
+            "This is not a claim of universal superiority, deployment readiness or absence "
+            "of bias."
+        )
+    return lines
 
 
 def render_pipeline_comparison_summary(output_root: Path = AGGREGATE_ROOT) -> str:
@@ -8303,14 +8775,30 @@ def write_implementation_layer_artefacts(
 
 
 CONSISTENCY_OUTCOME_FIELDS = (
-    "photographs_assessed",
+    "intended_same_person_photographs",
+    "scored_same_person_photographs",
     "consistent_same_person_photographs",
-    "inconsistent_review_candidates",
+    "inconsistent_same_person_review_candidates",
+    "same_person_extraction_failures",
+    "gallery_reference_unavailable",
+    "intended_mismatched_controls",
+    "scored_mismatched_controls",
     "mismatched_controls_correctly_identified",
     "mismatched_controls_false_consistent",
-    "extraction_failures",
     "mismatched_control_extraction_failures",
-    "gallery_reference_unavailable",
+)
+
+CONSISTENCY_RATE_FIELDS = (
+    "same_person_consistency_rate_conditional",
+    "same_person_false_inconsistency_rate_conditional",
+    "same_person_consistency_rate_end_to_end",
+    "same_person_false_inconsistency_rate_end_to_end",
+    "mismatch_detection_rate_conditional",
+    "mismatch_false_consistency_rate_conditional",
+    "mismatch_detection_rate_end_to_end",
+    "mismatch_false_consistency_rate_end_to_end",
+    "same_person_extraction_coverage",
+    "mismatched_control_extraction_coverage",
 )
 
 
@@ -8328,7 +8816,15 @@ def write_profile_consistency_artefacts(
             "artifact_type": "profile_photo_consistency_metrics",
             "pipelines": {name: dict(entry) for name, entry in per_pipeline.items()},
             "outcome_fields": list(CONSISTENCY_OUTCOME_FIELDS),
-            **(dict(provenance) if provenance else {}),
+            "rate_fields": list(CONSISTENCY_RATE_FIELDS),
+            "profile_consistency_policy_note": PROFILE_CONSISTENCY_POLICY_NOTE,
+            # The generic screening note has the opposite referral direction, so
+            # it is carried only under its own labelled field, never as the
+            # policy for a consistency result.
+            "duplicate_screening_policy_note": (
+                "Applies to gallery screening only, not to profile consistency: " + POLICY_NOTE
+            ),
+            **{k: v for k, v in (provenance or {}).items() if k != "policy_note"},
         },
     )
     with open(aggregate_root / "profile_photo_consistency_metrics.csv", "w", newline="",
@@ -8336,8 +8832,62 @@ def write_profile_consistency_artefacts(
         writer = csv.writer(handle)
         writer.writerow(["pipeline", "outcome", "count"])
         for name, entry in per_pipeline.items():
-            for field_name in CONSISTENCY_OUTCOME_FIELDS:
+            for field_name in CONSISTENCY_OUTCOME_FIELDS + CONSISTENCY_RATE_FIELDS:
                 writer.writerow([name, field_name, entry.get(field_name, "")])
+
+
+def write_pipeline_sex_aggregates(
+    payload: Mapping[str, Any], aggregate_root: Path = AGGREGATE_ROOT
+) -> None:
+    """Dedicated per-pipeline female and male aggregates.
+
+    Pooled from identity outcomes, never by averaging subgroup percentages,
+    which would weight a small subgroup as heavily as a large one."""
+    held_out = payload.get("held_out_metrics") or {}
+    groups: Dict[str, Dict[str, Any]] = {}
+    for name, metrics in held_out.items():
+        for sex, entry in (metrics.get("sex_aggregated") or {}).items():
+            groups[f"{name} — {sex}"] = {
+                "pipeline": name,
+                "sex": sex,
+                "pipeline_threshold": metrics["development_threshold"],
+                "bootstrap_replicates": metrics.get("global_bootstrap_replicates"),
+                "seed": DEFAULT_RANDOM_SEED,
+                **entry,
+            }
+    write_json_artifact(
+        aggregate_root / "pipeline_sex_aggregated_metrics.json",
+        {
+            "artifact_type": "pipeline_sex_aggregated_metrics",
+            "schema_version": SCHEMA_VERSION,
+            "created_at": utc_now_iso(),
+            "seed": DEFAULT_RANDOM_SEED,
+            "aggregation": "pooled over identity outcomes, not averaged over subgroups",
+            "status": payload.get("status"),
+            "groups": groups,
+            "limitations": (
+                "These are binary dataset categories. They do not represent the full range "
+                "of gender identities or any real dating-application population."
+            ),
+            "policy_note": POLICY_NOTE,
+        },
+    )
+    columns = [
+        "pipeline", "sex", "identities", "pipeline_threshold", "bootstrap_replicates", "seed",
+        "intended_mated_probes", "intended_non_mated_probes",
+        "fpir", "fpir_lower_95", "fpir_upper_95",
+        "tpir_rank1", "tpir_rank1_lower_95", "tpir_rank1_upper_95",
+        "tpir_rank5", "tpir_rank5_lower_95", "tpir_rank5_upper_95",
+        "mated_probe_coverage", "mated_probe_coverage_lower_95", "mated_probe_coverage_upper_95",
+        "non_mated_probe_coverage", "non_mated_probe_coverage_lower_95",
+        "non_mated_probe_coverage_upper_95",
+    ]
+    with open(aggregate_root / "pipeline_sex_aggregated_metrics.csv", "w", newline="",
+              encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(columns)
+        for entry in groups.values():
+            writer.writerow([entry.get(c, "") for c in columns])
 
 
 def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
@@ -8428,21 +8978,43 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             f"an improvement.",
         ]
 
-    if by_sex and by_sex.get("groups"):
-        for label, heading in (("female", "7. Female subgroup analysis"),
-                               ("male", "8. Male subgroup analysis")):
-            entry = by_sex["groups"].get(label)
-            if not entry:
-                continue
-            lines += [
-                "", f"## {heading}", "",
-                f"Pooled over {entry['identities']} identities: FPIR {pct(entry['fpir'])} "
-                f"[{pct(entry['fpir_lower_95'])}–{pct(entry['fpir_upper_95'])}], TPIR@1 "
+    held_out_all = (pipeline or {}).get("held_out_metrics") or {}
+    sex_sources: Dict[str, Dict[str, Any]] = {}
+    for name, metrics in held_out_all.items():
+        for sex, entry in (metrics.get("sex_aggregated") or {}).items():
+            sex_sources.setdefault(sex, {})[name] = entry
+    if not sex_sources and by_sex and by_sex.get("groups"):
+        for sex, entry in by_sex["groups"].items():
+            sex_sources.setdefault(sex, {})[MODEL_VERSION] = entry
+
+    for sex, heading in (("female", "7. Female subgroup analysis"),
+                         ("male", "8. Male subgroup analysis")):
+        entries = sex_sources.get(sex)
+        if not entries:
+            continue
+        lines += [
+            "", f"## {heading}", "",
+            "Pooled over identity outcomes, not by averaging subgroup percentages.",
+            "",
+            "| Pipeline | Identities | FPIR | TPIR@1 | TPIR@5 | Mated coverage | "
+            "Non-mated coverage |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for name, entry in entries.items():
+            lines.append(
+                f"| {name} | {entry['identities']} | {pct(entry['fpir'])} "
+                f"[{pct(entry['fpir_lower_95'])}–{pct(entry['fpir_upper_95'])}] | "
                 f"{pct(entry['tpir_rank1'])} "
-                f"[{pct(entry['tpir_rank1_lower_95'])}–{pct(entry['tpir_rank1_upper_95'])}], "
-                f"mated coverage {pct(entry['mated_probe_coverage'])}. "
-                f"Subgroups pooled: {', '.join(entry['subgroups_pooled'])}.",
-            ]
+                f"[{pct(entry['tpir_rank1_lower_95'])}–{pct(entry['tpir_rank1_upper_95'])}] | "
+                f"{pct(entry['tpir_rank5'])} "
+                f"[{pct(entry['tpir_rank5_lower_95'])}–{pct(entry['tpir_rank5_upper_95'])}] | "
+                f"{pct(entry['mated_probe_coverage'])} "
+                f"[{pct(entry['mated_probe_coverage_lower_95'])}–"
+                f"{pct(entry['mated_probe_coverage_upper_95'])}] | "
+                f"{pct(entry['non_mated_probe_coverage'])} "
+                f"[{pct(entry['non_mated_probe_coverage_lower_95'])}–"
+                f"{pct(entry['non_mated_probe_coverage_upper_95'])}] |"
+            )
 
     if consistency:
         # Report every evaluated pipeline, and the mismatched controls beside
@@ -8454,16 +9026,18 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             if metrics.get("profile_photo_consistency")
         } or {MODEL_VERSION: consistency}
         lines += ["", "## 9. Profile-photo identity consistency", "",
-                  "| Pipeline | Consistent | Inconsistent | Control identified | "
-                  "Control false-consistent | Extraction failures |",
-                  "| --- | --- | --- | --- | --- | --- |"]
+                  "| Pipeline | Consistency (cond.) | Consistency (end-to-end) | "
+                  "Mismatch detection (cond.) | Mismatch detection (end-to-end) | "
+                  "False-consistency | Same-person coverage |",
+                  "| --- | --- | --- | --- | --- | --- | --- |"]
         for name, entry in per_pipeline.items():
             lines.append(
-                f"| {name} | {entry['consistent_same_person_photographs']} | "
-                f"{entry['inconsistent_review_candidates']} | "
-                f"{entry.get('mismatched_controls_correctly_identified', 'n/a')} | "
-                f"{entry.get('mismatched_controls_false_consistent', 'n/a')} | "
-                f"{entry['extraction_failures']} |"
+                f"| {name} | {pct(entry.get('same_person_consistency_rate_conditional'))} | "
+                f"{pct(entry.get('same_person_consistency_rate_end_to_end'))} | "
+                f"{pct(entry.get('mismatch_detection_rate_conditional'))} | "
+                f"{pct(entry.get('mismatch_detection_rate_end_to_end'))} | "
+                f"{pct(entry.get('mismatch_false_consistency_rate_conditional'))} | "
+                f"{pct(entry.get('same_person_extraction_coverage'))} |"
             )
         lines += [
             "",
@@ -8487,6 +9061,24 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
                     f"{pct(m['rates']['fpir'])} | {pct(m['rates']['tpir_rank1'])} | "
                     f"{format_number(m['rates']['false_reviews_per_1000_non_mated'], 2)} | "
                     f"{pct(m['coverage']['gallery_enrolment_coverage'])} |"
+                )
+            lines += ["", "| Pipeline | End-to-end (95% CI) | Zero-face | Multiple-face | "
+                      "Embed mean | Complete mean | Model size |",
+                      "| --- | --- | --- | --- | --- | --- | --- |"]
+            sizes = pipeline.get("model_file_sizes") or {}
+            for name, m in held_out.items():
+                ci = (m.get("confidence_intervals") or {}).get(
+                    "end_to_end_duplicate_detection_rate") or {}
+                group = sizes.get("primary" if "opencv" in name else "comparison") or {}
+                total = sum(v["megabytes"] for v in group.values()) if group else float("nan")
+                lines.append(
+                    f"| {name} | {pct(m.get('end_to_end_duplicate_detection_rate'))} "
+                    f"[{pct(ci.get('lower_95'))}–{pct(ci.get('upper_95'))}] | "
+                    f"{m['failure_breakdown'].get('zero_faces', 0)} | "
+                    f"{m['failure_breakdown'].get('multiple_faces', 0)} | "
+                    f"{format_number(m['coverage'].get('embedding_latency_mean_ms'), 2)} ms | "
+                    f"{format_number(m['coverage'].get('complete_pipeline_latency_mean_ms'), 2)} ms | "
+                    f"{format_number(total, 1)} MB |"
                 )
             lines += [
                 "",
@@ -8513,8 +9105,18 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "ACP-arden is a benchmark-validated, human-review-only academic face-comparison "
         "proof of concept. It evaluates duplicate-profile screening and profile-photo "
         "facial consistency using frozen pretrained face-recognition pipelines and an "
-        "identity-disjoint logistic-regression review classifier. A mismatch or duplicate "
-        "signal opens human review only and is not proof of fraud, ownership or identity.",
+        "identity-disjoint logistic-regression review classifier.",
+        "",
+        "The two tasks refer in opposite directions, and a single threshold statement "
+        "would misdescribe one of them:",
+        "",
+        "- **Duplicate-profile screening** — a *high* similarity to some other enrolled "
+        "identity opens a duplicate-profile review.",
+        "- **Profile-photo consistency** — a *low* similarity to the profile's own "
+        "enrolled template opens an inconsistency review.",
+        "",
+        "Neither is proof of fraud, ownership or identity, and an extraction failure "
+        "resolves nothing in either direction.",
         "",
         "No face-detection or face-recognition network is trained or fine-tuned. Experiment "
         "7 trains a small logistic-regression review classifier on identity-disjoint BFW "

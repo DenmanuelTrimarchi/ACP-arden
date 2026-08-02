@@ -1621,6 +1621,10 @@ def test_the_report_shows_the_mismatched_controls() -> None:
     if not report.is_file():
         pytest.skip("report not generated")
     text = report.read_text(encoding="utf-8")
-    assert "Control identified" in text and "Control false-consistent" in text
-    assert "A consistent photograph opens no case" in text
-    assert "resolves nothing" in text
+    # Section 9 reports rates rather than raw counts; the counts live in the
+    # Experiment 8 report and the consistency artefacts.
+    assert "Mismatch detection (cond.)" in text
+    assert "Mismatch detection (end-to-end)" in text
+    assert "False-consistency" in text
+    # The two referral directions must remain distinguished.
+    assert "a *high* similarity" in text and "a *low* similarity" in text

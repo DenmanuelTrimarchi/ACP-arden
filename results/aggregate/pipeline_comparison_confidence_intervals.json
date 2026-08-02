@@ -1,5 +1,10 @@
 {
   "artifact_type": "pipeline_comparison_confidence_intervals",
+  "cache_schema_version": 2,
+  "canonical_development_context_sha256": "c1b31c545a3966075a1496a1586344a07949fc4f0deb75b5ada9cb19b400bd41",
+  "canonical_development_run_digest": "d618ff188259aff5233a23ec3f79de51e1bb87ca56b20aee327a686b70137c5a",
+  "canonical_test_context_sha256": "02a65a0ee28d238f16821fb0a71a607b6d01477ac73664e9e4303da5d76ebcea",
+  "canonical_test_run_digest": "6eb3d677ae20d2a608f0dbfd3719dd5f59c646e330efb9686e078f1f1efa137e",
   "comparison_pipeline": {
     "comparison_scope": "Complete pipeline: detection, preprocessing and embedding. A difference between pipelines cannot be attributed to the embedding model alone.",
     "detector_name": "InsightFace SCRFD (det_10g)",
@@ -13,14 +18,23 @@
     "pipeline_name": "insightface-scrfd-arcface-buffalo_l",
     "preprocessing_revision": "insightface-arcface-112x112-v1"
   },
-  "created_at": "2026-08-02T21:23:25.020338+00:00",
+  "created_at": "2026-08-02T23:19:36.027674+00:00",
   "dataset_name": "BFW",
   "dependency_versions": {
     "Pillow": "12.3.0",
+    "easydict": null,
+    "insightface": "1.0.1",
     "matplotlib": "3.11.1",
     "numpy": "2.5.1",
+    "onnx": "1.22.0",
+    "onnxruntime": "1.28.0",
     "opencv-python-headless": "4.13.0.92",
-    "scikit-learn": "1.9.0"
+    "prettytable": null,
+    "requests": "2.34.2",
+    "scikit-image": "0.26.0",
+    "scikit-learn": "1.9.0",
+    "scipy": "1.18.0",
+    "tqdm": "4.70.0"
   },
   "development_partition": "BFW development identities; each pipeline calibrated here only.",
   "evaluated": "yes",
@@ -197,6 +211,11 @@
     ]
   },
   "note": "Populated for both pipelines once evaluated. ",
+  "opencv_distribution": {
+    "conflicting_opencv_python_present": false,
+    "imported_cv2_version": "4.13.0",
+    "opencv_distribution": "opencv-python-headless"
+  },
   "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
   "preprocessing_revision": "opencv-yunet-sface-exif-bgr-l2-v1",
   "primary_pipeline": {

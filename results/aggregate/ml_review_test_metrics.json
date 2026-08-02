@@ -1,7 +1,11 @@
 {
   "artifact_type": "ml_review_test_metrics",
-  "canonical_development_run_digest": "3863af130d14a6c5080368a8461a2117e48dc66544b6a6e2c3d3c48d7cf3b121",
-  "canonical_run_digest": "bc3737edcf2fcdb8e29790ce0fdb3286c900fc73ac55adca361cc1e7eb22cec1",
+  "cache_schema_version": 2,
+  "canonical_development_context_sha256": "c1b31c545a3966075a1496a1586344a07949fc4f0deb75b5ada9cb19b400bd41",
+  "canonical_development_run_digest": "d618ff188259aff5233a23ec3f79de51e1bb87ca56b20aee327a686b70137c5a",
+  "canonical_run_digest": "6eb3d677ae20d2a608f0dbfd3719dd5f59c646e330efb9686e078f1f1efa137e",
+  "canonical_test_context_sha256": "02a65a0ee28d238f16821fb0a71a607b6d01477ac73664e9e4303da5d76ebcea",
+  "canonical_test_run_digest": "6eb3d677ae20d2a608f0dbfd3719dd5f59c646e330efb9686e078f1f1efa137e",
   "classifier": {
     "conditional_duplicate_detection_rate": 0.9426751592356688,
     "end_to_end_duplicate_detection_rate": 0.888,
@@ -29,8 +33,8 @@
     "tpir_rank1": 0.9426751592356688,
     "tpir_rank5": 0.9437367303609342
   },
-  "classifier_decision_latency_mean_ms": 0.0007527074437236604,
-  "classifier_decision_latency_p95_ms": 0.0007527074437236604,
+  "classifier_decision_latency_mean_ms": 0.0005464898679019298,
+  "classifier_decision_latency_p95_ms": 0.0005464898679019298,
   "classifier_hyperparameters": {
     "C": 1.0,
     "class_weight": "balanced",
@@ -60,19 +64,19 @@
     }
   },
   "coverage": {
-    "complete_pipeline_latency_mean_ms": 22.02082985603984,
-    "complete_pipeline_latency_p95_ms": 27.59361498465296,
-    "detection_latency_mean_ms": 2.892678735804384,
-    "detection_latency_p95_ms": 7.26487475913018,
-    "embedding_latency_mean_ms": 18.159517007660405,
-    "embedding_latency_p95_ms": 18.98923975386424,
+    "complete_pipeline_latency_mean_ms": 21.41825088797456,
+    "complete_pipeline_latency_p95_ms": 26.86567651835503,
+    "detection_latency_mean_ms": 2.7871386415875703,
+    "detection_latency_p95_ms": 6.958323247090448,
+    "embedding_latency_mean_ms": 17.711790552989946,
+    "embedding_latency_p95_ms": 18.656708009075373,
     "enrolled_gallery_identities": 198,
     "gallery_enrolment_coverage": 0.99,
     "gallery_enrolment_failure_count": 2,
     "gallery_enrolment_failure_rate": 0.01,
     "gallery_size": 198,
-    "image_load_latency_mean_ms": 0.9686341125750489,
-    "image_load_latency_p95_ms": 1.888093254819978,
+    "image_load_latency_mean_ms": 0.9193216933970431,
+    "image_load_latency_p95_ms": 1.7872295211418532,
     "images_timed": 4386,
     "intended_gallery_identities": 200,
     "intended_mated_probes": 1000,
@@ -88,12 +92,12 @@
     "scored_mated_probes": 942,
     "scored_non_mated_probes": 2859,
     "similarity_comparisons": 752598,
-    "top1_search_time_mean_ms": 0.9277380640089014,
-    "top1_search_time_p95_ms": 1.0813330009113997,
-    "top5_search_time_mean_ms": 0.9504054041460653,
-    "top5_search_time_p95_ms": 1.1053329799324274
+    "top1_search_time_mean_ms": 0.9173626271179409,
+    "top1_search_time_p95_ms": 1.039875001879409,
+    "top5_search_time_mean_ms": 0.9384536807120515,
+    "top5_search_time_p95_ms": 1.0626669973134995
   },
-  "created_at": "2026-08-02T20:43:31.140984+00:00",
+  "created_at": "2026-08-02T23:04:13.384945+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -120,10 +124,19 @@
   },
   "dependency_versions": {
     "Pillow": "12.3.0",
+    "easydict": null,
+    "insightface": "1.0.1",
     "matplotlib": "3.11.1",
     "numpy": "2.5.1",
+    "onnx": "1.22.0",
+    "onnxruntime": "1.28.0",
     "opencv-python-headless": "4.13.0.92",
-    "scikit-learn": "1.9.0"
+    "prettytable": null,
+    "requests": "2.34.2",
+    "scikit-image": "0.26.0",
+    "scikit-learn": "1.9.0",
+    "scipy": "1.18.0",
+    "tqdm": "4.70.0"
   },
   "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
   "excluded_records": {
@@ -150,6 +163,11 @@
     "Extraction failures are reported separately and are never counted as genuine negative decisions."
   ],
   "opaque_id_version": "hmac-sha256-v1",
+  "opencv_distribution": {
+    "conflicting_opencv_python_present": false,
+    "imported_cv2_version": "4.13.0",
+    "opencv_distribution": "opencv-python-headless"
+  },
   "opencv_execution": {
     "bitwise_reproducible_across_processes": false,
     "opencv_opencl_enabled": false,

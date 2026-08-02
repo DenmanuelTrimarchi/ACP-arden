@@ -1,8 +1,13 @@
 {
   "aggregation": "pooled over identity outcomes, not averaged over subgroup percentages",
   "artifact_type": "bfw_sex_aggregated_metrics",
-  "canonical_run_digest": "bc3737edcf2fcdb8e29790ce0fdb3286c900fc73ac55adca361cc1e7eb22cec1",
-  "created_at": "2026-08-02T19:41:54.115357+00:00",
+  "cache_schema_version": 2,
+  "canonical_development_context_sha256": "c1b31c545a3966075a1496a1586344a07949fc4f0deb75b5ada9cb19b400bd41",
+  "canonical_development_run_digest": "d618ff188259aff5233a23ec3f79de51e1bb87ca56b20aee327a686b70137c5a",
+  "canonical_run_digest": "6eb3d677ae20d2a608f0dbfd3719dd5f59c646e330efb9686e078f1f1efa137e",
+  "canonical_test_context_sha256": "02a65a0ee28d238f16821fb0a71a607b6d01477ac73664e9e4303da5d76ebcea",
+  "canonical_test_run_digest": "6eb3d677ae20d2a608f0dbfd3719dd5f59c646e330efb9686e078f1f1efa137e",
+  "created_at": "2026-08-02T22:57:28.917600+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",

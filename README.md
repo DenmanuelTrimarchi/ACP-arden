@@ -314,7 +314,9 @@ CONVERSION_MAP.md   component-to-section map
 REFERENCES.md       code attribution and reference register
 requirements.txt        pinned runtime dependencies
 requirements-dev.txt    pinned test and type-checking dependencies
-requirements-comparison.txt  optional pipeline comparison; deliberately unpinned
+requirements-comparison.txt       optional comparison; install via the script below
+requirements-comparison-deps.txt  exact InsightFace dependency pins
+scripts/install_comparison_environment.sh  verified installer
 pyrightconfig.json  type-checker configuration
 .env.example        template for local storage paths
 .vscode/            run configuration for the play button
@@ -570,13 +572,14 @@ set out to improve. The figures above are a snapshot of
 > extraction coverage, open-set duplicate detection and subgroup consistency
 > compared with YuNet + SFace under the same BFW protocol?
 
-Currently **`not_run_model_files_not_configured`** — a technical precondition,
-not a licensing obstacle. The official terms permit non-commercial research, and
-this MSc artefact is exactly that, so commercial-use restrictions do not apply.
-The weights are simply not present locally. No substitute model was used and no
-figures are invented.
+Evaluated. Status **`evaluated_non_commercial_academic_research`**, backed by
+held-out metrics for both pipelines. The authoritative sources are
+`results/aggregate/pipeline_comparison_metrics.json` and
+`results/aggregate/pretrained_pipeline_comparison.csv`; figures quoted in this
+file are a snapshot of those artefacts, and latency in particular is
+environment-specific.
 
-Each pipeline would receive its own development-only threshold, because
+Each pipeline receives its own development-only threshold, because
 similarity scores from different embedding models are not interchangeable — the
 SFace threshold is never applied to ArcFace. Any such comparison is a
 **complete-pipeline** comparison: detection, landmarking, alignment,
@@ -585,17 +588,26 @@ could be attributed to the embedding model alone.
 
 ### Figures
 
-`results/figures/` holds six figures in PNG (300 dpi) and SVG, each generated
-from the published JSON and CSV artefacts rather than typed values, with PNG
-text metadata stripped and the privacy scan applied:
+`results/figures/` holds 15 figures, each in PNG (300 dpi) and SVG,
+generated from the published JSON and CSV artefacts rather than typed values,
+with PNG text metadata stripped and the privacy scan applied:
 
 ```text
-false_reviews_per_1000_by_method
 duplicate_detection_by_method
-open_set_operating_curve
-subgroup_fpir_tpir_with_confidence_intervals
+false_reviews_per_1000_by_method
+female_male_aggregate_comparison
+female_subgroup_pipeline_comparison
+implementation_layers_coverage
+implementation_layers_duplicate_detection
+implementation_layers_fpir
+implementation_layers_performance_latency
+male_subgroup_pipeline_comparison
+mated_non_mated_similarity_distributions
 ml_review_classifier_coefficients
+open_set_operating_curve
 pipeline_coverage_and_latency
+profile_photo_consistency_outcomes
+subgroup_fpir_tpir_with_confidence_intervals
 ```
 
 `results/figures/FIGURE_CAPTIONS.md` accompanies them, stating each figure's
@@ -689,8 +701,14 @@ For the supplementary open-set experiment specifically:
 > development data and evaluated on untouched held-out identities.
 
 It is **not** production-ready, not unbiased, not fully secure, not capable of
-proving fraud, and not capable of automatically banning anyone. It is not
-complete: Experiment 8 has produced no real held-out metrics.
+proving fraud, and not capable of automatically banning anyone.
+
+Two decision directions are involved, and a single threshold statement would
+misdescribe one of them. In **duplicate-profile screening** a *high* similarity
+to some other enrolled identity opens a duplicate review. In **profile-photo
+consistency** a *low* similarity to the profile's own enrolled template opens an
+inconsistency review. An extraction failure resolves nothing in either
+direction.
 
 ## Attribution and licence
 

@@ -1,6 +1,6 @@
 {
   "artifact_type": "ml_review_subgroup_metrics",
-  "created_at": "2026-08-02T20:43:31.187721+00:00",
+  "created_at": "2026-08-02T23:04:13.446249+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -27,10 +27,19 @@
   },
   "dependency_versions": {
     "Pillow": "12.3.0",
+    "easydict": null,
+    "insightface": "1.0.1",
     "matplotlib": "3.11.1",
     "numpy": "2.5.1",
+    "onnx": "1.22.0",
+    "onnxruntime": "1.28.0",
     "opencv-python-headless": "4.13.0.92",
-    "scikit-learn": "1.9.0"
+    "prettytable": null,
+    "requests": "2.34.2",
+    "scikit-image": "0.26.0",
+    "scikit-learn": "1.9.0",
+    "scipy": "1.18.0",
+    "tqdm": "4.70.0"
   },
   "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
   "limitations": [
@@ -41,6 +50,11 @@
     "Extraction failures are reported separately and are never counted as genuine negative decisions."
   ],
   "opaque_id_version": "hmac-sha256-v1",
+  "opencv_distribution": {
+    "conflicting_opencv_python_present": false,
+    "imported_cv2_version": "4.13.0",
+    "opencv_distribution": "opencv-python-headless"
+  },
   "opencv_execution": {
     "bitwise_reproducible_across_processes": false,
     "opencv_opencl_enabled": false,
