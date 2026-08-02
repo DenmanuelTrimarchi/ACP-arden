@@ -1,6 +1,7 @@
 {
   "artifact_type": "bfw_open_set_test_metrics",
-  "created_at": "2026-08-02T17:15:33.221254+00:00",
+  "canonical_run_digest": "bc3737edcf2fcdb8e29790ce0fdb3286c900fc73ac55adca361cc1e7eb22cec1",
+  "created_at": "2026-08-02T19:41:54.115357+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
@@ -38,50 +39,50 @@
     "single_image_pairwise_threshold": {
       "conditional_duplicate_detection_rate": 0.9346195069667739,
       "coverage": {
-        "complete_pipeline_latency_mean_ms": 14.912695831548888,
-        "complete_pipeline_latency_p95_ms": 19.35576645191759,
-        "detection_latency_mean_ms": 3.0751536047537775,
-        "detection_latency_p95_ms": 6.618098104081576,
-        "embedding_latency_mean_ms": 10.949160378546814,
-        "embedding_latency_p95_ms": 12.207656395912636,
+        "complete_pipeline_latency_mean_ms": 21.992765438425977,
+        "complete_pipeline_latency_p95_ms": 27.562568303255826,
+        "detection_latency_mean_ms": 2.8921442771696655,
+        "detection_latency_p95_ms": 7.314789795782404,
+        "embedding_latency_mean_ms": 18.13757680582152,
+        "embedding_latency_p95_ms": 18.88203584967414,
         "enrolled_gallery_identities": 196,
         "gallery_enrolment_coverage": 0.98,
         "gallery_enrolment_failure_count": 4,
         "gallery_enrolment_failure_rate": 0.02,
         "gallery_size": 196,
-        "image_load_latency_mean_ms": 0.888381848248296,
-        "image_load_latency_p95_ms": 1.7644961990299624,
-        "images_timed": 3990,
+        "image_load_latency_mean_ms": 0.9630443554347892,
+        "image_load_latency_p95_ms": 1.8699103078688488,
+        "images_timed": 3988,
         "intended_gallery_identities": 200,
         "intended_mated_probes": 1000,
         "intended_non_mated_probes": 3000,
         "mated_extraction_failure_rate": 0.067,
         "method": "single_image_pairwise_threshold",
-        "non_mated_extraction_failure_rate": 0.04633333333333333,
+        "non_mated_extraction_failure_rate": 0.047,
         "partition": "test",
         "probe_failure_breakdown": {
           "gallery_reference_unavailable": 20,
-          "zero_faces": 186
+          "zero_faces": 188
         },
         "scored_mated_probes": 933,
-        "scored_non_mated_probes": 2861,
-        "similarity_comparisons": 743624,
-        "top1_search_time_mean_ms": 0.8707788009185473,
-        "top1_search_time_p95_ms": 0.9415874999831431,
-        "top5_search_time_mean_ms": 0.8909362450288805,
-        "top5_search_time_p95_ms": 0.9628494532080367
+        "scored_non_mated_probes": 2859,
+        "similarity_comparisons": 743232,
+        "top1_search_time_mean_ms": 0.9271701423407465,
+        "top1_search_time_p95_ms": 1.0747812557383438,
+        "top5_search_time_mean_ms": 0.9496639708738223,
+        "top5_search_time_p95_ms": 1.0986516048433257
       },
       "end_to_end_duplicate_detection_rate": 0.872,
       "operating_threshold": 0.3630116835391414,
       "rates": {
         "cmc_rank1": 0.9614147909967846,
         "cmc_rank5": 0.9796355841371919,
-        "false_reviews_per_1000_non_mated": 89.4792030758476,
+        "false_reviews_per_1000_non_mated": 89.54179783140958,
         "fnir_rank1": 0.06538049303322613,
         "fnir_rank5": 0.06430868167202575,
-        "fpir": 0.0894792030758476,
+        "fpir": 0.08954179783140959,
         "scored_mated_probes": 933,
-        "scored_non_mated_probes": 2861,
+        "scored_non_mated_probes": 2859,
         "threshold": 0.3630116835391414,
         "tpir_rank1": 0.9346195069667739,
         "tpir_rank5": 0.9356913183279743
@@ -92,52 +93,52 @@
       "at_lfw_control_threshold": {
         "cmc_rank1": 0.9808917197452229,
         "cmc_rank5": 0.9904458598726115,
-        "false_reviews_per_1000_non_mated": 154.38351379671673,
+        "false_reviews_per_1000_non_mated": 152.15110178384052,
         "fnir_rank1": 0.03290870488322717,
         "fnir_rank5": 0.031847133757961776,
-        "fpir": 0.15438351379671672,
+        "fpir": 0.1521511017838405,
         "scored_mated_probes": 942,
-        "scored_non_mated_probes": 2863,
+        "scored_non_mated_probes": 2859,
         "threshold": 0.3630116835391414,
         "tpir_rank1": 0.9670912951167728,
         "tpir_rank5": 0.9681528662420382
       },
-      "conditional_duplicate_detection_rate": 0.9246284501061571,
+      "conditional_duplicate_detection_rate": 0.9256900212314225,
       "coverage": {
-        "complete_pipeline_latency_mean_ms": 14.78634560112591,
-        "complete_pipeline_latency_p95_ms": 19.037812497117557,
-        "detection_latency_mean_ms": 3.027870110827332,
-        "detection_latency_p95_ms": 6.446750005125068,
-        "embedding_latency_mean_ms": 10.90195686590467,
-        "embedding_latency_p95_ms": 12.183999497210607,
+        "complete_pipeline_latency_mean_ms": 22.02082985603984,
+        "complete_pipeline_latency_p95_ms": 27.59361498465296,
+        "detection_latency_mean_ms": 2.892678735804384,
+        "detection_latency_p95_ms": 7.26487475913018,
+        "embedding_latency_mean_ms": 18.159517007660405,
+        "embedding_latency_p95_ms": 18.98923975386424,
         "enrolled_gallery_identities": 198,
         "gallery_enrolment_coverage": 0.99,
         "gallery_enrolment_failure_count": 2,
         "gallery_enrolment_failure_rate": 0.01,
         "gallery_size": 198,
-        "image_load_latency_mean_ms": 0.8565186243939087,
-        "image_load_latency_p95_ms": 1.7545415030326694,
-        "images_timed": 4391,
+        "image_load_latency_mean_ms": 0.9686341125750489,
+        "image_load_latency_p95_ms": 1.888093254819978,
+        "images_timed": 4386,
         "intended_gallery_identities": 200,
         "intended_mated_probes": 1000,
         "intended_non_mated_probes": 3000,
         "mated_extraction_failure_rate": 0.058,
         "method": "three_image_open_set_calibrated",
-        "non_mated_extraction_failure_rate": 0.04566666666666667,
+        "non_mated_extraction_failure_rate": 0.047,
         "partition": "test",
         "probe_failure_breakdown": {
           "gallery_reference_unavailable": 10,
-          "zero_faces": 185
+          "zero_faces": 189
         },
         "scored_mated_probes": 942,
-        "scored_non_mated_probes": 2863,
-        "similarity_comparisons": 753390,
-        "top1_search_time_mean_ms": 0.8838134640478988,
-        "top1_search_time_p95_ms": 0.9640756004955617,
-        "top5_search_time_mean_ms": 0.9045650583016349,
-        "top5_search_time_p95_ms": 0.9855166194029151
+        "scored_non_mated_probes": 2859,
+        "similarity_comparisons": 752598,
+        "top1_search_time_mean_ms": 0.9277380640089014,
+        "top1_search_time_p95_ms": 1.0813330009113997,
+        "top5_search_time_mean_ms": 0.9504054041460653,
+        "top5_search_time_p95_ms": 1.1053329799324274
       },
-      "end_to_end_duplicate_detection_rate": 0.871,
+      "end_to_end_duplicate_detection_rate": 0.872,
       "operating_points": {
         "0.001": {
           "cmc_rank1": 0.9808917197452229,
@@ -147,7 +148,7 @@
           "fnir_rank5": 0.5700636942675159,
           "fpir": 0.0,
           "scored_mated_probes": 942,
-          "scored_non_mated_probes": 2863,
+          "scored_non_mated_probes": 2859,
           "threshold": 0.710967208853,
           "tpir_rank1": 0.4299363057324841,
           "tpir_rank5": 0.4299363057324841
@@ -155,25 +156,25 @@
         "0.003": {
           "cmc_rank1": 0.9808917197452229,
           "cmc_rank5": 0.9904458598726115,
-          "false_reviews_per_1000_non_mated": 6.636395389451624,
-          "fnir_rank1": 0.07537154989384287,
-          "fnir_rank5": 0.07537154989384287,
-          "fpir": 0.006636395389451624,
+          "false_reviews_per_1000_non_mated": 5.246589716684155,
+          "fnir_rank1": 0.07430997876857748,
+          "fnir_rank5": 0.07430997876857748,
+          "fpir": 0.005246589716684155,
           "scored_mated_probes": 942,
-          "scored_non_mated_probes": 2863,
+          "scored_non_mated_probes": 2859,
           "threshold": 0.477117869159,
-          "tpir_rank1": 0.9246284501061571,
-          "tpir_rank5": 0.9246284501061571
+          "tpir_rank1": 0.9256900212314225,
+          "tpir_rank5": 0.9256900212314225
         },
         "0.01": {
           "cmc_rank1": 0.9808917197452229,
           "cmc_rank5": 0.9904458598726115,
-          "false_reviews_per_1000_non_mated": 19.21061823262312,
+          "false_reviews_per_1000_non_mated": 17.838405036726126,
           "fnir_rank1": 0.05307855626326963,
           "fnir_rank5": 0.05307855626326963,
-          "fpir": 0.01921061823262312,
+          "fpir": 0.017838405036726127,
           "scored_mated_probes": 942,
-          "scored_non_mated_probes": 2863,
+          "scored_non_mated_probes": 2859,
           "threshold": 0.439414136573,
           "tpir_rank1": 0.9469214437367304,
           "tpir_rank5": 0.9469214437367304
@@ -182,15 +183,15 @@
       "primary_operating_point": {
         "cmc_rank1": 0.9808917197452229,
         "cmc_rank5": 0.9904458598726115,
-        "false_reviews_per_1000_non_mated": 6.636395389451624,
-        "fnir_rank1": 0.07537154989384287,
-        "fnir_rank5": 0.07537154989384287,
-        "fpir": 0.006636395389451624,
+        "false_reviews_per_1000_non_mated": 5.246589716684155,
+        "fnir_rank1": 0.07430997876857748,
+        "fnir_rank5": 0.07430997876857748,
+        "fpir": 0.005246589716684155,
         "scored_mated_probes": 942,
-        "scored_non_mated_probes": 2863,
+        "scored_non_mated_probes": 2859,
         "threshold": 0.477117869159,
-        "tpir_rank1": 0.9246284501061571,
-        "tpir_rank5": 0.9246284501061571
+        "tpir_rank1": 0.9256900212314225,
+        "tpir_rank5": 0.9256900212314225
       }
     }
   },
@@ -236,7 +237,7 @@
   "success_criteria": {
     "criteria_declared_before_test": true,
     "fpir_at_or_below_1_percent": {
-      "actual": 0.006636395389451624,
+      "actual": 0.005246589716684155,
       "outcome": "achieved",
       "target": 0.01
     },
@@ -251,12 +252,12 @@
       "target": 0.9
     },
     "tpir_rank1_at_least_90_percent": {
-      "actual": 0.9246284501061571,
+      "actual": 0.9256900212314225,
       "outcome": "achieved",
       "target": 0.9
     },
     "tpir_rank5_at_least_95_percent": {
-      "actual": 0.9246284501061571,
+      "actual": 0.9256900212314225,
       "outcome": "not_achieved",
       "target": 0.95
     }

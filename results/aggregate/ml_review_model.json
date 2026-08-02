@@ -1,6 +1,6 @@
 {
   "artifact_type": "ml_review_model",
-  "created_at": "2026-08-02T17:21:34.590422+00:00",
+  "created_at": "2026-08-02T19:49:08.205585+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -54,15 +54,15 @@
   "model": {
     "class_imbalance_handling": "class_weight='balanced', declared before fitting",
     "coefficients": [
-      1.6609083411274947,
-      0.10486786416524102,
-      1.8007125742448158,
-      0.438293542430957,
-      2.0759211971375304,
-      -0.17143265143074027,
+      1.6609083411147305,
+      0.10486786423693953,
+      1.8007125742103156,
+      0.4382935423636255,
+      2.075921197167782,
+      -0.1714326514195723,
       0.0,
-      -0.4066408829961872,
-      -0.01144878141028384
+      -0.406640883045659,
+      -0.011448781618782348
     ],
     "feature_order": [
       "top1_similarity",
@@ -85,7 +85,7 @@
       "random_state": 20260727,
       "solver": "lbfgs"
     },
-    "intercept": -1.5115894811716917,
+    "intercept": -1.5115894811788035,
     "method": "logistic_regression_review_classifier",
     "scaler_mean": [
       0.3952957899279849,
@@ -96,7 +96,7 @@
       2.9387072808320953,
       199.0,
       0.9306473781591361,
-      0.7007357941957592
+      0.7007357942314363
     ],
     "scaler_scale": [
       0.16830360069140038,
@@ -107,11 +107,18 @@
       0.23986646648689394,
       1.0,
       0.012059490832923781,
-      0.1141592312062429
+      0.11415923126426457
     ],
     "serialisation": "plain JSON numerics; no pickle is written or read"
   },
   "opaque_id_version": "hmac-sha256-v1",
+  "opencv_execution": {
+    "bitwise_reproducible_across_processes": false,
+    "opencv_opencl_enabled": false,
+    "opencv_parallel_framework": "GCD",
+    "opencv_threads_reported": 1,
+    "reproducibility_mechanism": "Canonical run cache. Detection is not bit-stable across fresh processes on this platform, so every derived artefact reads one cached extraction rather than re-deriving it."
+  },
   "pipeline": {
     "comparison_scope": "Complete pipeline: detection, preprocessing and embedding. A difference between pipelines cannot be attributed to the embedding model alone.",
     "detector_name": "OpenCV YuNet 2023mar",

@@ -1,10 +1,11 @@
 {
   "artifact_type": "profile_photo_consistency_metrics",
-  "consistency_rate": 0.871,
-  "consistency_score_mean": 0.6667370531436376,
+  "canonical_run_digest": "bc3737edcf2fcdb8e29790ce0fdb3286c900fc73ac55adca361cc1e7eb22cec1",
+  "consistency_rate": 0.872,
+  "consistency_score_mean": 0.6669861004359632,
   "consistency_score_median": 0.6907722949296374,
-  "consistent_same_person_photographs": 871,
-  "created_at": "2026-08-02T17:15:33.221254+00:00",
+  "consistent_same_person_photographs": 872,
+  "created_at": "2026-08-02T19:41:54.115357+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
@@ -30,8 +31,8 @@
   },
   "extraction_failures": 48,
   "gallery_reference_unavailable": 10,
-  "inconsistent_review_candidates": 71,
-  "interpretation_note": "A non-match indicates that the photograph is inconsistent with the profile's enrolled facial template under this model and threshold. It does not independently prove that the photograph belongs to another person. Pose, lighting, occlusion, image quality, age difference, face-detection failure and model error can all produce the same result. Every outcome opens human review only.",
+  "inconsistent_review_candidates": 70,
+  "interpretation_note": "A non-match indicates that the photograph is inconsistent with the enrolled facial template under the evaluated model and threshold. It does not prove that the photograph belongs to another person or that fraud occurred. Pose, lighting, occlusion, image quality, age difference, face-detection failure and model error can all produce the same result. An inconsistent photograph opens a human-review case; a consistent one does not, and an extraction failure resolves nothing.",
   "limitations": [
     "This remains a proof of concept. No result here proves fraud, misuse or misrepresentation by any person.",
     "No automatic sanction is applied. A score above threshold opens a case for human review and nothing else.",
@@ -42,9 +43,9 @@
     "Benchmark demographics do not represent a real dating-application user population, so subgroup figures must not be read as deployment estimates."
   ],
   "methodology_revision": "open-set-gallery-accounting-v2",
-  "mismatched_control_extraction_failures": 137,
-  "mismatched_controls_correctly_referred": 19,
-  "mismatched_controls_not_referred": 2844,
+  "mismatched_control_extraction_failures": 141,
+  "mismatched_controls_correctly_identified": 2844,
+  "mismatched_controls_false_consistent": 15,
   "model_sha256": {
     "sface": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
     "yunet": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
@@ -52,11 +53,12 @@
   "model_version": "opencv-sface-2021dec-yunet-2023mar",
   "opaque_id_version": "hmac-sha256-v1",
   "operating_threshold": 0.477117869159,
+  "outcome_policy": "A consistent same-person photograph does not open a case. An inconsistent photograph opens a consistency review. An extraction failure resolves nothing and is a separate unresolved outcome, not a decision.",
   "photographs_assessed": 1000,
   "pipeline_name": "opencv-sface-2021dec-yunet-2023mar",
   "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
   "preprocessing_revision": "opencv-yunet-sface-exif-bgr-l2-v1",
-  "review_referral_rate": 0.071,
+  "review_referral_rate": 0.07,
   "schema_version": 1,
   "seed": 20260727,
   "software_environment": {

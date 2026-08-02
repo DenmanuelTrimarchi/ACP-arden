@@ -574,6 +574,40 @@ pipeline_coverage_and_latency
 denominator, a short interpretation and the limitations that apply — a chart
 without its sample size invites over-reading.
 
+## Reproducibility and the canonical run
+
+Detection is **not bit-stable across processes on this platform**, and the
+project does not claim otherwise.
+
+YuNet emits a detection score compared against a 0.9 acceptance threshold. An
+image scoring near that line can be accepted in one process and rejected in the
+next. Measured over 2,500 BFW images in six fresh interpreters, accepted counts
+were 2238, 2238, 2238, 2239, 2239 and 2243 — roughly one image in a thousand
+flips. This persists with OpenCL disabled and OpenCV forced single-threaded, so
+it is floating-point variation inside OpenCV's DNN backend rather than anything
+this project controls.
+
+Two mitigations are applied, and it is worth being clear about which one carries
+the guarantee:
+
+1. `configure_deterministic_opencv()` disables OpenCL and forces single-threaded
+   execution. This *reduces* variability. Note that under Apple's GCD parallel
+   framework `cv2.setNumThreads(1)` is silently a no-op — only
+   `setNumThreads(0)` is honoured.
+2. **The canonical run cache is what actually guarantees consistency.** The
+   primary pipeline's held-out run is computed once, cached in git-ignored
+   storage, and reused by Experiment 6, Experiment 7's comparator and features,
+   Experiment 8's primary pipeline, implementation layers 1–4, and every
+   subgroup and sex breakdown. Each derived artefact publishes a shared
+   non-biometric `canonical_run_digest`.
+
+Without the cache, the same method reported three different non-mated scored
+counts (2863 / 2860 / 2859) and an FPIR between 0.52% and 0.66% across
+artefacts. With it, all report identically.
+
+The cache stores decision outcomes and similarity scores only. No embedding or
+biometric template is written, and it never leaves local storage.
+
 ## Opaque identifiers and the required key
 
 Public identifiers are HMAC-SHA-256 over the identity or sample name, keyed by

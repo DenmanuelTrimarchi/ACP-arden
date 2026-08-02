@@ -3,36 +3,52 @@
 #
 # Deliberately kept out of requirements.txt. The five baseline experiments, the
 # BFW open-set experiment, the review classifier and the whole test suite run
-# without anything below, and forcing these into the base installation would
-# overstate what a published result depends on.
+# without anything below.
 #
 # LICENSING. InsightFace publishes its pretrained models for non-commercial
 # research use, and this artefact is non-commercial MSc academic research, so
-# that use is within those terms. Commercial-use restrictions are not a blocker
-# here. The models are created and trained by the InsightFace project; nothing
-# in this repository trains or fine-tunes them, no weight file is redistributed
-# or committed, and no ownership is claimed. The MIT licence covering
-# InsightFace source code does not automatically extend to the weight files.
+# that use is within those terms. The models are created and trained by the
+# InsightFace project; nothing here trains or fine-tunes them, no weight file is
+# redistributed or committed, and no ownership is claimed. The MIT licence
+# covering InsightFace source code does not automatically extend to the weights.
 #
-# Pinned from the environment that produced the published comparison result,
-# in the same way as every other requirements file in this project.
+# --------------------------------------------------------------------------
+# INSTALLATION - do not use a plain "pip install -r" on this file.
+# --------------------------------------------------------------------------
 #
-# Before the comparison can run, all of the following must hold. The programme
-# reports whichever is outstanding as a precise technical status, never as a
-# licensing obstacle:
+# insightface declares a dependency on opencv-python. Installing it normally
+# pulls that distribution in alongside opencv-python-headless. Both ship the
+# same cv2 module, so whichever wins the import shadows the other. That
+# silently changed YuNet detection and SFace embedding numerics, moved the
+# frozen classifier threshold, and still passed the dependency contract,
+# because package metadata continued to report the pinned headless version.
 #
-#   1. The official buffalo_l pack is obtained from the InsightFace project and
-#      stored in private local research storage, outside this repository.
-#   2. FACE_ARCFACE_MODEL_ROOT points at that directory.
-#   3. det_10g.onnx and w600k_r50.onnx are both present.
-#   4. Their SHA-256 digests are pinned in source as ARCFACE_DETECTOR_SHA256 and
-#      ARCFACE_RECOGNITION_SHA256. Digests are never accepted as command-line
-#      arguments for a reportable evaluation.
-#   5. The packages below are installed.
+# A constraints file does NOT prevent this: constraints bound the version of a
+# package that is installed, they do not stop a different distribution being
+# resolved. Install with --no-deps and supply the dependencies explicitly:
 #
-# Nothing is downloaded automatically at any point: the loader passes
-# download=False and an explicit local root.
+#   python -m pip install --no-deps insightface==1.0.1
+#   python -m pip install \
+#       onnxruntime==1.28.0 \
+#       opencv-python-headless==4.13.0.92 \
+#       numpy==2.5.1 \
+#       scikit-image scipy onnx tqdm easydict prettytable requests
+#
+# pip warns that "insightface requires opencv-python, which is not installed".
+# That warning is expected and correct to ignore: the headless distribution
+# provides the same cv2 module, and this is the only way to keep exactly one
+# effective OpenCV in the environment.
+#
+# Verify before running any evaluation:
+#
+#   python -c "import cv2; print(cv2.__version__)"    # must print 4.13.0
+#
+# check_dependency_contract() also verifies the imported cv2 version at runtime
+# and refuses a reportable evaluation when another OpenCV shadows it.
+#
+# Verified from a clean virtual environment: opencv-python absent,
+# opencv-python-headless 4.13.0.92 effective, insightface.model_zoo and
+# insightface.utils.face_align both importable.
 
-# Pinned from the project virtual environment after a successful evaluation.
 insightface==1.0.1
 onnxruntime==1.28.0

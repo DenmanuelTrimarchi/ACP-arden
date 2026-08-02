@@ -1,34 +1,36 @@
 {
   "artifact_type": "ml_review_test_metrics",
+  "canonical_development_run_digest": "3863af130d14a6c5080368a8461a2117e48dc66544b6a6e2c3d3c48d7cf3b121",
+  "canonical_run_digest": "bc3737edcf2fcdb8e29790ce0fdb3286c900fc73ac55adca361cc1e7eb22cec1",
   "classifier": {
-    "conditional_duplicate_detection_rate": 0.9416135881104034,
-    "end_to_end_duplicate_detection_rate": 0.887,
-    "extraction_coverage": 0.9505,
-    "false_reviews_per_1000_non_mated": 6.993006993006993,
-    "fnir_rank1": 0.05838641188959659,
-    "fnir_rank5": 0.0573248407643312,
-    "fpir": 0.006993006993006993,
+    "conditional_duplicate_detection_rate": 0.9426751592356688,
+    "end_to_end_duplicate_detection_rate": 0.888,
+    "extraction_coverage": 0.95025,
+    "false_reviews_per_1000_non_mated": 6.995452955578874,
+    "fnir_rank1": 0.0573248407643312,
+    "fnir_rank5": 0.056263269639065805,
+    "fpir": 0.006995452955578874,
     "gallery_reference_unavailable": 10,
     "intended_mated_probes": 1000,
     "intended_non_mated_probes": 3000,
-    "mated_correct_rank1_referred": 887,
-    "mated_correct_rank5_referred": 888,
+    "mated_correct_rank1_referred": 888,
+    "mated_correct_rank5_referred": 889,
     "mated_extraction_coverage": 0.942,
     "mated_extraction_failures": 58,
-    "mated_not_referred": 54,
+    "mated_not_referred": 53,
     "mated_wrong_identity_referred": 1,
-    "non_mated_correctly_not_referred": 2840,
-    "non_mated_extraction_coverage": 0.9533333333333334,
-    "non_mated_extraction_failures": 140,
+    "non_mated_correctly_not_referred": 2839,
+    "non_mated_extraction_coverage": 0.953,
+    "non_mated_extraction_failures": 141,
     "non_mated_incorrectly_referred": 20,
-    "probability_threshold": 0.571466685459,
+    "probability_threshold": 0.571466685462,
     "scored_mated_probes": 942,
-    "scored_non_mated_probes": 2860,
-    "tpir_rank1": 0.9416135881104034,
-    "tpir_rank5": 0.9426751592356688
+    "scored_non_mated_probes": 2859,
+    "tpir_rank1": 0.9426751592356688,
+    "tpir_rank5": 0.9437367303609342
   },
-  "classifier_decision_latency_mean_ms": 0.00022062941005836578,
-  "classifier_decision_latency_p95_ms": 0.00022062941005836578,
+  "classifier_decision_latency_mean_ms": 7.477190579030191e-05,
+  "classifier_decision_latency_p95_ms": 7.477190579030191e-05,
   "classifier_hyperparameters": {
     "C": 1.0,
     "class_weight": "balanced",
@@ -40,58 +42,58 @@
     "solver": "lbfgs"
   },
   "comparator_three_image_open_set_calibrated": {
-    "conditional_duplicate_detection_rate": 0.9246284501061571,
-    "end_to_end_duplicate_detection_rate": 0.871,
+    "conditional_duplicate_detection_rate": 0.9256900212314225,
+    "end_to_end_duplicate_detection_rate": 0.872,
     "operating_threshold": 0.477117869159,
     "rates": {
       "cmc_rank1": 0.9808917197452229,
       "cmc_rank5": 0.9904458598726115,
-      "false_reviews_per_1000_non_mated": 5.244755244755245,
-      "fnir_rank1": 0.07537154989384287,
-      "fnir_rank5": 0.07537154989384287,
-      "fpir": 0.005244755244755245,
+      "false_reviews_per_1000_non_mated": 5.246589716684155,
+      "fnir_rank1": 0.07430997876857748,
+      "fnir_rank5": 0.07430997876857748,
+      "fpir": 0.005246589716684155,
       "scored_mated_probes": 942,
-      "scored_non_mated_probes": 2860,
+      "scored_non_mated_probes": 2859,
       "threshold": 0.477117869159,
-      "tpir_rank1": 0.9246284501061571,
-      "tpir_rank5": 0.9246284501061571
+      "tpir_rank1": 0.9256900212314225,
+      "tpir_rank5": 0.9256900212314225
     }
   },
   "coverage": {
-    "complete_pipeline_latency_mean_ms": 15.10745055115723,
-    "complete_pipeline_latency_p95_ms": 19.57183354679728,
-    "detection_latency_mean_ms": 3.077719543954725,
-    "detection_latency_p95_ms": 6.524816366436426,
-    "embedding_latency_mean_ms": 11.158512521968877,
-    "embedding_latency_p95_ms": 12.480071152094752,
+    "complete_pipeline_latency_mean_ms": 22.02082985603984,
+    "complete_pipeline_latency_p95_ms": 27.59361498465296,
+    "detection_latency_mean_ms": 2.892678735804384,
+    "detection_latency_p95_ms": 7.26487475913018,
+    "embedding_latency_mean_ms": 18.159517007660405,
+    "embedding_latency_p95_ms": 18.98923975386424,
     "enrolled_gallery_identities": 198,
     "gallery_enrolment_coverage": 0.99,
     "gallery_enrolment_failure_count": 2,
     "gallery_enrolment_failure_rate": 0.01,
     "gallery_size": 198,
-    "image_load_latency_mean_ms": 0.8712184852336273,
-    "image_load_latency_p95_ms": 1.7416501083062024,
-    "images_timed": 4388,
+    "image_load_latency_mean_ms": 0.9686341125750489,
+    "image_load_latency_p95_ms": 1.888093254819978,
+    "images_timed": 4386,
     "intended_gallery_identities": 200,
     "intended_mated_probes": 1000,
     "intended_non_mated_probes": 3000,
     "mated_extraction_failure_rate": 0.058,
     "method": "three_image_open_set_calibrated",
-    "non_mated_extraction_failure_rate": 0.04666666666666667,
+    "non_mated_extraction_failure_rate": 0.047,
     "partition": "test",
     "probe_failure_breakdown": {
       "gallery_reference_unavailable": 10,
-      "zero_faces": 188
+      "zero_faces": 189
     },
     "scored_mated_probes": 942,
-    "scored_non_mated_probes": 2860,
-    "similarity_comparisons": 752796,
-    "top1_search_time_mean_ms": 0.9014236940391757,
-    "top1_search_time_p95_ms": 0.9691208149888553,
-    "top5_search_time_mean_ms": 0.9220883495406812,
-    "top5_search_time_p95_ms": 0.9922889177687466
+    "scored_non_mated_probes": 2859,
+    "similarity_comparisons": 752598,
+    "top1_search_time_mean_ms": 0.9277380640089014,
+    "top1_search_time_p95_ms": 1.0813330009113997,
+    "top5_search_time_mean_ms": 0.9504054041460653,
+    "top5_search_time_p95_ms": 1.1053329799324274
   },
-  "created_at": "2026-08-02T17:22:48.702401+00:00",
+  "created_at": "2026-08-02T19:49:11.408333+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -127,7 +129,7 @@
   "excluded_records": {
     "missing_feature": 0,
     "outside_partition": 0,
-    "unscored": 198
+    "unscored": 199
   },
   "feature_definitions": {
     "gallery_size": "Enrolled identities searched, which scales impostor exposure.",
@@ -148,7 +150,14 @@
     "Extraction failures are reported separately and are never counted as genuine negative decisions."
   ],
   "opaque_id_version": "hmac-sha256-v1",
-  "operating_probability_threshold": 0.571466685459,
+  "opencv_execution": {
+    "bitwise_reproducible_across_processes": false,
+    "opencv_opencl_enabled": false,
+    "opencv_parallel_framework": "GCD",
+    "opencv_threads_reported": 1,
+    "reproducibility_mechanism": "Canonical run cache. Detection is not bit-stable across fresh processes on this platform, so every derived artefact reads one cached extraction rather than re-deriving it."
+  },
+  "operating_probability_threshold": 0.571466685462,
   "pipeline": {
     "comparison_scope": "Complete pipeline: detection, preprocessing and embedding. A difference between pipelines cannot be attributed to the embedding model alone.",
     "detector_name": "OpenCV YuNet 2023mar",
@@ -202,7 +211,7 @@
       "target": 0.02
     },
     "fewer_false_reviews_than_threshold_method": {
-      "actual": -1.7482517482517483,
+      "actual": -1.7488632388947192,
       "outcome": "not_achieved",
       "target": 0.0
     },
@@ -212,7 +221,7 @@
       "target": 0.9
     },
     "primary_fpir_at_or_below_1_percent": {
-      "actual": 0.006993006993006993,
+      "actual": 0.006995452955578874,
       "outcome": "achieved",
       "target": 0.01
     },
@@ -222,7 +231,7 @@
       "target": 0.9
     },
     "tpir_rank1_at_least_90_percent": {
-      "actual": 0.9416135881104034,
+      "actual": 0.9426751592356688,
       "outcome": "achieved",
       "target": 0.9
     }

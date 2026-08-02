@@ -1,6 +1,6 @@
 {
   "artifact_type": "ml_review_confidence_intervals",
-  "created_at": "2026-08-02T17:22:48.728900+00:00",
+  "created_at": "2026-08-02T19:49:11.433614+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -35,33 +35,33 @@
   "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
   "intervals": {
     "end_to_end_duplicate_detection_rate": {
-      "lower_95": 0.8615364583333334,
+      "lower_95": 0.8622443310657597,
       "requested_replicates": 2000,
-      "upper_95": 0.9102057363485935,
+      "upper_95": 0.9113209870805837,
       "valid_replicates": 2000
     },
     "extraction_coverage": {
-      "lower_95": 0.9413098236775819,
+      "lower_95": 0.9410753481182216,
       "requested_replicates": 2000,
-      "upper_95": 0.959021529891791,
+      "upper_95": 0.9588235294117647,
       "valid_replicates": 2000
     },
     "fnir_rank1": {
-      "lower_95": 0.04078999000657172,
+      "lower_95": 0.040037959125432114,
       "requested_replicates": 2000,
-      "upper_95": 0.07868069358063276,
+      "upper_95": 0.07748772271601927,
       "valid_replicates": 2000
     },
     "fnir_rank5": {
-      "lower_95": 0.03968659236786372,
+      "lower_95": 0.03875948131273934,
       "requested_replicates": 2000,
-      "upper_95": 0.07776883610999014,
+      "upper_95": 0.07667040634558658,
       "valid_replicates": 2000
     },
     "fpir": {
-      "lower_95": 0.0029673040586168896,
+      "lower_95": 0.002967331544335997,
       "requested_replicates": 2000,
-      "upper_95": 0.012156051163576329,
+      "upper_95": 0.012156166778365195,
       "valid_replicates": 2000
     },
     "mated_extraction_coverage": {
@@ -71,21 +71,21 @@
       "valid_replicates": 2000
     },
     "non_mated_extraction_coverage": {
-      "lower_95": 0.9428548966756514,
+      "lower_95": 0.9424528301886792,
       "requested_replicates": 2000,
-      "upper_95": 0.9641025641025641,
+      "upper_95": 0.9636069727891156,
       "valid_replicates": 2000
     },
     "tpir_rank1": {
-      "lower_95": 0.9213193064193672,
+      "lower_95": 0.9225122772839808,
       "requested_replicates": 2000,
-      "upper_95": 0.9592100099934282,
+      "upper_95": 0.9599620408745678,
       "valid_replicates": 2000
     },
     "tpir_rank5": {
-      "lower_95": 0.9222311638900098,
+      "lower_95": 0.9233295936544135,
       "requested_replicates": 2000,
-      "upper_95": 0.9603134076321362,
+      "upper_95": 0.9612405186872607,
       "valid_replicates": 2000
     }
   },
@@ -97,6 +97,13 @@
     "Extraction failures are reported separately and are never counted as genuine negative decisions."
   ],
   "opaque_id_version": "hmac-sha256-v1",
+  "opencv_execution": {
+    "bitwise_reproducible_across_processes": false,
+    "opencv_opencl_enabled": false,
+    "opencv_parallel_framework": "GCD",
+    "opencv_threads_reported": 1,
+    "reproducibility_mechanism": "Canonical run cache. Detection is not bit-stable across fresh processes on this platform, so every derived artefact reads one cached extraction rather than re-deriving it."
+  },
   "pipeline": {
     "comparison_scope": "Complete pipeline: detection, preprocessing and embedding. A difference between pipelines cannot be attributed to the embedding model alone.",
     "detector_name": "OpenCV YuNet 2023mar",

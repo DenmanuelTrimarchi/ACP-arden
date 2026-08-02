@@ -2,7 +2,7 @@
 
 Generated from the published JSON and CSV artefacts by `ACP_arden.py`. No value is typed by hand. Every figure is PNG at 300 dpi plus SVG, with PNG text metadata stripped, and passes the project privacy scan.
 
-**Denominators (BFW held-out test):** 198 of 200 gallery identities enrolled, 942 scored mated probes, 2863 scored non-mated probes.
+**Denominators (BFW held-out test):** 198 of 200 gallery identities enrolled, 942 scored mated probes, 2859 scored non-mated probes.
 
 **Metric definitions.** FPIR is the proportion of non-mated searches returning at least one candidate above threshold — a 1:N quantity that compounds with gallery size, and never interchangeable with the 1:1 false-match rate. TPIR@k is the proportion of mated searches placing the correct identity within rank k *and* above threshold; a referral to another identity is a referral, not an identification. End-to-end detection divides by every intended mated probe, so extraction failures reduce it; conditional rates divide by those actually scored.
 
@@ -36,7 +36,7 @@ The five layers share the BFW open-set protocol and are directly comparable, in 
 
 LFW and CPLFW are 1:1 verification and are deliberately absent from this series: mixing an FMR into an FPIR axis would compare different quantities.
 
-- **implementation_layers_fpir** — false review referrals per 1,000 non-mated searches over 2863 scored probes. Lower is better.
+- **implementation_layers_fpir** — false review referrals per 1,000 non-mated searches over 2859 scored probes. Lower is better.
 - **implementation_layers_duplicate_detection** — TPIR@1, TPIR@5 and end-to-end detection, kept as separate bars because they use different denominators. Higher is better.
 - **implementation_layers_coverage** — gallery, mated and non-mated coverage. The remainder in each bar is extraction failure, which is shown rather than hidden.
 - **implementation_layers_performance_latency** — end-to-end detection against mean search latency; point size is false reviews per 1,000, so the speed cost of a stronger pipeline stays visible.
@@ -44,7 +44,7 @@ LFW and CPLFW are 1:1 verification and are deliberately absent from this series:
 ## Same-person and profile-photo figures (Figures E-F)
 
 - **mated_non_mated_similarity_distributions** — aggregate histograms only. No individual score, identifier or path is published.
-- **profile_photo_consistency_outcomes** — over 1000 photographs: 871 consistent, 71 review candidates, 48 extraction failures. An inconsistent result is **not** proof of photo theft or fraud: pose, lighting, occlusion, image quality, age difference, detection failure and model error all produce it. Every outcome opens human review only.
+- **profile_photo_consistency_outcomes** — over 1000 photographs: 872 consistent, 70 review candidates, 48 extraction failures. An inconsistent result is **not** proof of photo theft or fraud: pose, lighting, occlusion, image quality, age difference, detection failure and model error all produce it. Every outcome opens human review only.
 
 ## 7-8. Female and male subgroup evaluation
 

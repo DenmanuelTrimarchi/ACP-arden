@@ -1,6 +1,6 @@
 {
   "artifact_type": "bfw_open_set_threshold",
-  "created_at": "2026-08-02T17:15:33.221254+00:00",
+  "created_at": "2026-08-02T19:41:54.115357+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
@@ -45,7 +45,7 @@
   "operating_points": {
     "0.001": {
       "candidates_admissible": 389,
-      "candidates_evaluated": 3820,
+      "candidates_evaluated": 3822,
       "development_fpir": 0.0006990562740300594,
       "development_tpir_rank1": 0.40145985401459855,
       "development_tpir_rank5": 0.40145985401459855,
@@ -56,7 +56,7 @@
     },
     "0.003": {
       "candidates_admissible": 898,
-      "candidates_evaluated": 3820,
+      "candidates_evaluated": 3822,
       "development_fpir": 0.0027962250961202375,
       "development_tpir_rank1": 0.927007299270073,
       "development_tpir_rank5": 0.927007299270073,
@@ -67,7 +67,7 @@
     },
     "0.01": {
       "candidates_admissible": 941,
-      "candidates_evaluated": 3820,
+      "candidates_evaluated": 3822,
       "development_fpir": 0.009786787836420832,
       "development_tpir_rank1": 0.948905109489051,
       "development_tpir_rank5": 0.948905109489051,

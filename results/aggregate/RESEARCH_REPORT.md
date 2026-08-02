@@ -16,31 +16,31 @@ FPIR 8.95%, TPIR@1 93.46%, 89.5 false reviews per 1,000. Reusing a 1:1 threshold
 
 ## 4. BFW three-image template, same threshold
 
-FPIR 15.44%, TPIR@1 96.71%. Averaging three images raises identification but **raises** FPIR at a fixed threshold: a mean template sits nearer the centre of the embedding space and is closer to everyone. Multi-image enrolment alone did not reduce false reviews.
+FPIR 15.22%, TPIR@1 96.71%. Averaging three images raises identification but **raises** FPIR at a fixed threshold: a mean template sits nearer the centre of the embedding space and is closer to everyone. Multi-image enrolment alone did not reduce false reviews.
 
 ## 5. BFW gallery-specific calibration
 
-FPIR 0.66%, TPIR@1 92.46%, 6.6 false reviews per 1,000. The reduction is attributable to calibration, not to the representation.
+FPIR 0.52%, TPIR@1 92.57%, 5.2 false reviews per 1,000. The reduction is attributable to calibration, not to the representation.
 
 ## 6. Logistic-regression review classifier
 
-FPIR 0.70% against the threshold method's 0.52%; TPIR@1 94.16% against 92.46%; 6.99 false reviews per 1,000 against 5.24.
+FPIR 0.70% against the threshold method's 0.52%; TPIR@1 94.27% against 92.57%; 7.00 false reviews per 1,000 against 5.25.
 
 The primary hypothesis was that the classifier would reduce false review referrals while retaining detection. That criterion is **not achieved**. The classifier raises identification while referring more innocent registrations, which is a trade-off rather than an improvement.
 
 ## 7. Female subgroup analysis
 
-Pooled over 200 identities: FPIR 1.18% [0.49%–2.00%], TPIR@1 90.64% [86.64%–94.38%], mated coverage 96.20%. Subgroups pooled: asian_females, black_females, indian_females, white_females.
+Pooled over 200 identities: FPIR 0.90% [0.28%–1.66%], TPIR@1 90.64% [86.64%–94.38%], mated coverage 96.20%. Subgroups pooled: asian_females, black_females, indian_females, white_females.
 
 ## 8. Male subgroup analysis
 
-Pooled over 200 identities: FPIR 0.14% [0.00%–0.35%], TPIR@1 94.36% [92.19%–96.53%], mated coverage 92.20%. Subgroups pooled: asian_males, black_males, indian_males, white_males.
+Pooled over 200 identities: FPIR 0.14% [0.00%–0.35%], TPIR@1 94.58% [92.41%–96.72%], mated coverage 92.20%. Subgroups pooled: asian_males, black_males, indian_males, white_males.
 
 ## 9. Profile-photo identity consistency
 
-Of 1000 photographs, 871 were consistent with their profile template, 71 became review candidates, 48 failed extraction and 10 had no enrolled reference.
+Of 1000 photographs, 872 were consistent with their profile template, 70 became review candidates, 48 failed extraction and 10 had no enrolled reference.
 
-A non-match indicates that the photograph is inconsistent with the profile's enrolled facial template under this model and threshold. It does not independently prove that the photograph belongs to another person. Pose, lighting, occlusion, image quality, age difference, face-detection failure and model error can all produce the same result. Every outcome opens human review only.
+A non-match indicates that the photograph is inconsistent with the enrolled facial template under the evaluated model and threshold. It does not prove that the photograph belongs to another person or that fraud occurred. Pose, lighting, occlusion, image quality, age difference, face-detection failure and model error can all produce the same result. An inconsistent photograph opens a human-review case; a consistent one does not, and an extraction failure resolves nothing.
 
 ## 10. YuNet + SFace against SCRFD + ArcFace
 

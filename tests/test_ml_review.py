@@ -1245,12 +1245,14 @@ def test_the_profile_consistency_artefacts_include_mismatched_controls() -> None
     if not path.is_file():
         pytest.skip("consistency artefact not generated in this checkout")
     payload = json.loads(path.read_text(encoding="utf-8"))
+    # Renamed when the consistency polarity was separated from screening:
+    # a mismatched control is *identified*, not *referred*.
     for key in ("consistent_same_person_photographs", "inconsistent_review_candidates",
-                "mismatched_controls_correctly_referred",
-                "mismatched_controls_not_referred", "extraction_failures",
+                "mismatched_controls_correctly_identified",
+                "mismatched_controls_false_consistent", "extraction_failures",
                 "gallery_reference_unavailable"):
         assert key in payload, key
-    assert "does not independently prove" in payload["interpretation_note"]
+    assert "does not prove" in payload["interpretation_note"]
 
 
 def test_the_sex_figures_contain_only_their_own_subgroups() -> None:
@@ -1336,3 +1338,182 @@ def test_the_captions_follow_the_required_result_order() -> None:
     assert positions == sorted(positions), "captions are out of the required order"
     # The 1:1 and 1:N distinction must be explicit.
     assert "never appears on an FPIR axis" in text
+
+
+# --- Canonical run and cross-artefact consistency ------------------------------
+
+
+def test_opencv_is_configured_for_deterministic_execution() -> None:
+    """YuNet's score is not bit-stable under OpenCL, so an image near the 0.9
+    acceptance threshold could be detected on one run and missed on the next."""
+    import cv2
+
+    report = acp.configure_deterministic_opencv()
+    assert report["opencv_opencl_enabled"] is False
+    assert cv2.ocl.useOpenCL() is False
+
+
+def test_the_same_method_reports_identical_counts_everywhere() -> None:
+    """The threshold method must not report one scored count in Experiment 6
+    and a different one in Experiment 7 or 8."""
+    for name in ("bfw_open_set_test_metrics.json", "ml_review_test_metrics.json",
+                 "pipeline_comparison_metrics.json"):
+        if not (_AGG / name).is_file():
+            pytest.skip(f"{name} not present")
+    open_set = json.loads((_AGG / "bfw_open_set_test_metrics.json").read_text())
+    review = json.loads((_AGG / "ml_review_test_metrics.json").read_text())
+    pipeline = json.loads((_AGG / "pipeline_comparison_metrics.json").read_text())
+
+    a = open_set["methods"][acp.METHOD_B]["primary_operating_point"]
+    b = review["comparator_three_image_open_set_calibrated"]["rates"]
+    held_out = pipeline.get("held_out_metrics") or {}
+    primary = next((v for k, v in held_out.items() if "opencv" in k), None)
+
+    for key in ("scored_mated_probes", "scored_non_mated_probes"):
+        assert a[key] == b[key], f"{key}: open-set {a[key]} vs ml-review {b[key]}"
+        if primary:
+            assert a[key] == primary["rates"][key], (
+                f"{key}: open-set {a[key]} vs pipeline-compare {primary['rates'][key]}"
+            )
+    assert a["fpir"] == pytest.approx(b["fpir"], abs=1e-9)
+    if primary:
+        assert a["fpir"] == pytest.approx(primary["rates"]["fpir"], abs=1e-9)
+
+
+def test_derived_artefacts_share_one_canonical_run_digest() -> None:
+    review = _AGG / "ml_review_test_metrics.json"
+    open_set = _AGG / "bfw_open_set_test_metrics.json"
+    if not (review.is_file() and open_set.is_file()):
+        pytest.skip("artefacts not present")
+    a = json.loads(open_set.read_text()).get("canonical_run_digest")
+    b = json.loads(review.read_text()).get("canonical_run_digest")
+    assert a and b and a == b, f"canonical digests differ: {a} vs {b}"
+
+
+def test_no_evaluated_layer_has_a_null_end_to_end_value() -> None:
+    path = _AGG / "implementation_layer_comparison.json"
+    if not path.is_file():
+        pytest.skip("layer artefact not generated")
+    for row in json.loads(path.read_text())["layers"]:
+        assert row["end_to_end_duplicate_detection_rate"] is not None, (
+            f"layer {row['layer']} has a null end-to-end value"
+        )
+
+
+def test_the_performance_csv_uses_embedding_not_search_timing() -> None:
+    path = _AGG / "pretrained_pipeline_comparison.csv"
+    metrics = _AGG / "pipeline_comparison_metrics.json"
+    if not (path.is_file() and metrics.is_file()):
+        pytest.skip("comparison not generated")
+    payload = json.loads(metrics.read_text())
+    if payload["evaluated"] != "yes":
+        pytest.skip("comparison not evaluated")
+    rows = {r["pipeline"]: r for r in csv.DictReader(open(path, encoding="utf-8"))}
+    for name, row in rows.items():
+        coverage = payload["held_out_metrics"][name]["coverage"]
+        assert float(row["embedding_latency_mean_ms"]) == pytest.approx(
+            coverage["embedding_latency_mean_ms"], rel=1e-9
+        )
+        assert float(row["complete_pipeline_latency_mean_ms"]) == pytest.approx(
+            coverage["complete_pipeline_latency_mean_ms"], rel=1e-9
+        )
+        # Embedding is a per-image cost; search is per-probe over the gallery.
+        assert float(row["embedding_latency_mean_ms"]) != pytest.approx(
+            float(row["top1_search_time_mean_ms"])
+        )
+    arcface = next((r for n, r in rows.items() if "arcface" in n.lower()), None)
+    if arcface:
+        assert float(arcface["embedding_latency_mean_ms"]) > float(
+            arcface["top1_search_time_mean_ms"]
+        )
+        assert float(arcface["complete_pipeline_latency_mean_ms"]) >= float(
+            arcface["embedding_latency_mean_ms"]
+        )
+
+
+def test_consistency_controls_use_the_consistency_polarity() -> None:
+    """Screening asks whether a score is at or above threshold; consistency
+    asks whether the correct-identity score falls below it. The mismatched
+    control is correctly identified when its top similarity is below."""
+    path = _AGG / "profile_photo_consistency_metrics.json"
+    if not path.is_file():
+        pytest.skip("consistency artefact not generated")
+    payload = json.loads(path.read_text())
+    for key in ("mismatched_controls_correctly_identified",
+                "mismatched_controls_false_consistent",
+                "mismatched_control_extraction_failures"):
+        assert key in payload, key
+    assert "mismatched_controls_correctly_referred" not in payload
+    assert "does not prove" in payload["interpretation_note"]
+    # A consistent photograph must not be described as opening a case.
+    assert "does not open a case" in payload["outcome_policy"]
+
+
+def test_experiment_eight_subgroups_use_the_full_replicate_count() -> None:
+    path = _AGG / "pipeline_comparison_metrics.json"
+    if not path.is_file():
+        pytest.skip("comparison not generated")
+    payload = json.loads(path.read_text())
+    for metrics in (payload.get("held_out_metrics") or {}).values():
+        assert metrics["subgroup_bootstrap_replicates"] == acp.BOOTSTRAP_REPLICATES == 2000
+        assert metrics["global_bootstrap_replicates"] == 2000
+
+
+def test_the_sex_figures_compare_both_pipelines() -> None:
+    """Once Experiment 8 is evaluated the sex figures must read the two-pipeline
+    subgroup file, not the primary-only one."""
+    metrics = _AGG / "pipeline_comparison_metrics.json"
+    if not metrics.is_file() or json.loads(metrics.read_text())["evaluated"] != "yes":
+        pytest.skip("comparison not evaluated")
+    for sex, forbidden in (("female", "_males"), ("male", "_females")):
+        path = _FIG / f"{sex}_subgroup_pipeline_comparison.svg"
+        if not path.is_file():
+            pytest.skip("figures not generated")
+        text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        assert "opencv" in text and "insightface" in text, f"{sex} figure lacks both pipelines"
+        assert forbidden not in text
+        for metric in ("fpir", "tpir@1", "tpir@5", "mated", "non-mated"):
+            assert metric in text, f"{sex} figure missing {metric}"
+    aggregate = _FIG / "female_male_aggregate_comparison.svg"
+    text = aggregate.read_text(encoding="utf-8", errors="ignore").lower()
+    assert "opencv" in text and "insightface" in text
+    assert "female" in text and "male" in text
+
+
+def test_the_trade_off_figure_uses_complete_pipeline_latency() -> None:
+    source = _project_file("ACP_arden.py")
+    assert 'latency = layer["coverage"].get("complete_pipeline_latency_mean_ms")' in source
+    assert "Mean complete-pipeline latency per image" in source
+
+
+def test_the_legacy_false_review_figure_uses_the_real_arcface_value() -> None:
+    source = _project_file("ACP_arden.py")
+    # A NaN placeholder would draw an empty bar labelled as a real result.
+    assert 'labels.append("Stronger\\npipeline")' not in source
+    assert 'values.append(float("nan"))' not in source
+
+
+def test_the_reproducibility_mechanism_is_stated_honestly() -> None:
+    """Detection is not bit-stable across processes here, so the artefacts must
+    say so rather than implying a determinism the platform cannot provide."""
+    report = acp.configure_deterministic_opencv()
+    assert report["bitwise_reproducible_across_processes"] is False
+    assert "canonical run cache" in report["reproducibility_mechanism"].lower()
+    readme = _project_file("README.md")
+    assert "not bit-stable across processes" in readme
+    assert "setNumThreads(0)" in readme
+
+
+def test_the_canonical_cache_round_trips_without_biometric_data() -> None:
+    """The cache carries decisions and scores, never embeddings."""
+    path = Path(acp.__file__).parent / "results" / "raw" / "canonical_primary_run.json"
+    if not path.is_file():
+        pytest.skip("canonical run not present in this checkout")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["canonical_run_digest"]
+    text = json.dumps(payload)
+    for banned in ("embedding", "template", "image_path", "/Users/"):
+        assert banned not in text, f"cache leaks {banned}"
+    restored = acp.load_canonical_run(path)
+    assert restored is not None
+    assert acp.canonical_run_digest(restored) == payload["canonical_run_digest"]

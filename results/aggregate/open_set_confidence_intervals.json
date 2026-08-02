@@ -1,6 +1,7 @@
 {
   "artifact_type": "open_set_confidence_intervals",
-  "created_at": "2026-08-02T17:15:33.221254+00:00",
+  "canonical_run_digest": "bc3737edcf2fcdb8e29790ce0fdb3286c900fc73ac55adca361cc1e7eb22cec1",
+  "created_at": "2026-08-02T19:41:54.115357+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
@@ -26,33 +27,33 @@
   },
   "intervals": {
     "end_to_end_duplicate_detection_rate": {
-      "lower_95": 0.842,
+      "lower_95": 0.843,
       "requested_replicates": 2000,
-      "upper_95": 0.899,
+      "upper_95": 0.8990249999999999,
       "valid_replicates": 2000
     },
     "extraction_coverage": {
-      "lower_95": 0.94275,
+      "lower_95": 0.94174375,
       "requested_replicates": 2000,
-      "upper_95": 0.95975,
+      "upper_95": 0.959,
       "valid_replicates": 2000
     },
     "fnir_rank1": {
-      "lower_95": 0.05212351368425802,
+      "lower_95": 0.051063829787234005,
       "requested_replicates": 2000,
-      "upper_95": 0.09958850968391326,
+      "upper_95": 0.09850185626618899,
       "valid_replicates": 2000
     },
     "fnir_rank5": {
-      "lower_95": 0.05212351368425802,
+      "lower_95": 0.051063829787234005,
       "requested_replicates": 2000,
-      "upper_95": 0.09958850968391326,
+      "upper_95": 0.09850185626618899,
       "valid_replicates": 2000
     },
     "fpir": {
-      "lower_95": 0.003135861195154719,
+      "lower_95": 0.002092031979419301,
       "requested_replicates": 2000,
-      "upper_95": 0.010858238721087064,
+      "upper_95": 0.009381596462611257,
       "valid_replicates": 2000
     },
     "mated_extraction_coverage": {
@@ -62,21 +63,21 @@
       "valid_replicates": 2000
     },
     "non_mated_extraction_coverage": {
-      "lower_95": 0.9449916666666667,
+      "lower_95": 0.943,
       "requested_replicates": 2000,
-      "upper_95": 0.9636666666666667,
+      "upper_95": 0.9623333333333334,
       "valid_replicates": 2000
     },
     "tpir_rank1": {
-      "lower_95": 0.9004114903160867,
+      "lower_95": 0.901498143733811,
       "requested_replicates": 2000,
-      "upper_95": 0.947876486315742,
+      "upper_95": 0.948936170212766,
       "valid_replicates": 2000
     },
     "tpir_rank5": {
-      "lower_95": 0.9004114903160867,
+      "lower_95": 0.901498143733811,
       "requested_replicates": 2000,
-      "upper_95": 0.947876486315742,
+      "upper_95": 0.948936170212766,
       "valid_replicates": 2000
     }
   },

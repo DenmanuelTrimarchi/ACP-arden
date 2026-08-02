@@ -63,7 +63,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
 from importlib import metadata as importlib_metadata
 from io import StringIO
@@ -953,9 +953,43 @@ class SFaceEmbedder:
         return embedding
 
 
+def configure_deterministic_opencv() -> Dict[str, Any]:
+    """Reduce OpenCV's execution variability as far as the platform allows.
+
+    YuNet's detection score is not bit-stable, so an image scoring near the 0.9
+    acceptance threshold can be detected on one run and missed on the next.
+    Disabling OpenCL removes the largest source, and ``setNumThreads(0)``
+    forces single-threaded execution -- note that under Apple's GCD parallel
+    framework ``setNumThreads(1)`` is silently a no-op while ``0`` is honoured.
+
+    This does not achieve bit-level reproducibility across processes: roughly
+    one image in a thousand still flips between fresh interpreters, which
+    appears to be floating-point variation inside OpenCV's DNN backend rather
+    than anything this project controls. The canonical run cache, not this
+    function, is what guarantees that every derived artefact reports the same
+    extraction outcomes."""
+    import cv2
+
+    # setNumThreads(0) forces single-threaded under GCD; 1 is a no-op there.
+    cv2.setNumThreads(0)
+    cv2.ocl.setUseOpenCL(False)
+    return {
+        "opencv_threads_reported": int(cv2.getNumThreads()),
+        "opencv_opencl_enabled": bool(cv2.ocl.useOpenCL()),
+        "opencv_parallel_framework": "GCD" if "GCD" in cv2.getBuildInformation() else "other",
+        "bitwise_reproducible_across_processes": False,
+        "reproducibility_mechanism": (
+            "Canonical run cache. Detection is not bit-stable across fresh processes on "
+            "this platform, so every derived artefact reads one cached extraction rather "
+            "than re-deriving it."
+        ),
+    }
+
+
 def load_models(model_root: Path) -> Tuple[YuNetDetector, SFaceEmbedder]:
     """Hash-verified detector and embedder pair. Any digest mismatch stops the
     run here rather than producing a result under an unknown model."""
+    configure_deterministic_opencv()
     detector = YuNetDetector(Path(model_root) / YUNET_FILENAME, YUNET_SHA256)
     embedder = SFaceEmbedder(Path(model_root) / SFACE_FILENAME, SFACE_SHA256)
     return detector, embedder
@@ -4327,6 +4361,127 @@ def open_set_rates_at_threshold(
     }
 
 
+# One canonical primary-pipeline run underpins Experiments 6, 7 and 8, the
+# implementation layers and every subgroup breakdown, so the same method can
+# never report two different scored counts. The cache holds decision outcomes
+# and similarity scores only: no embedding, template or other biometric record
+# is written, and it lives under the git-ignored raw directory.
+CANONICAL_RUN_CACHE = RAW_ROOT / "canonical_primary_run.json"
+
+
+def canonical_cache_path(partition: str, base: Path = CANONICAL_RUN_CACHE) -> Path:
+    """One cache per partition. The development partition matters as much as the
+    held-out one: the classifier is fitted and calibrated on it, so recomputing
+    it would move the frozen threshold between runs."""
+    base = Path(base)
+    return base.with_name(f"{base.stem}_{partition}{base.suffix}")
+
+
+def canonical_run_digest(run: OpenSetRunResult) -> str:
+    """Aggregate, non-biometric fingerprint of a run's decision outcomes.
+
+    Two runs sharing this digest reached identical extraction and ranking
+    outcomes for every sample."""
+    parts = [
+        f"{r.sample_id}|{r.role}|{r.failure_code or 'ok'}|{r.correct_rank}|"
+        f"{'' if r.top_similarity is None else format(r.top_similarity, '.12f')}"
+        for r in sorted(run.search_results, key=lambda r: r.sample_id)
+    ]
+    parts.append(f"gallery={run.gallery_size}")
+    return sha256_of_text("\n".join(parts))
+
+
+def _search_result_to_row(result: OpenSetSearchResult) -> Dict[str, Any]:
+    return {f.name: getattr(result, f.name) for f in fields(result)}
+
+
+def save_canonical_run(run: OpenSetRunResult, path: Path = CANONICAL_RUN_CACHE) -> str:
+    """Persist a run so every derived artefact reads the same outcomes."""
+    digest = canonical_run_digest(run)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "canonical_run_digest": digest,
+        "created_at": utc_now_iso(),
+        "method": run.method,
+        "partition": run.partition,
+        "gallery_size": run.gallery_size,
+        "comparisons_per_probe": run.comparisons_per_probe,
+        "enrolment_outcomes": [asdict(o) for o in run.enrolment_outcomes],
+        "search_results": [_search_result_to_row(r) for r in run.search_results],
+        "stage_times_seconds": run.stage_times_seconds,
+        "note": (
+            "Decision outcomes and similarity scores only. No embedding or biometric "
+            "template is stored. Private and git-ignored."
+        ),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return digest
+
+
+def load_canonical_run(path: Path = CANONICAL_RUN_CACHE) -> Optional[OpenSetRunResult]:
+    """Reload a cached run, or return None when absent."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return OpenSetRunResult(
+        method=payload["method"],
+        partition=payload["partition"],
+        enrolment_outcomes=[EnrolmentOutcome(**o) for o in payload["enrolment_outcomes"]],
+        search_results=[OpenSetSearchResult(**r) for r in payload["search_results"]],
+        gallery_size=payload["gallery_size"],
+        comparisons_per_probe=payload["comparisons_per_probe"],
+        stage_times_seconds=payload.get("stage_times_seconds", {}),
+    )
+
+
+def canonical_primary_run(
+    protocol: OpenSetProtocol,
+    *,
+    partition: str,
+    detector: FaceDetector,
+    embedder: FaceEmbedder,
+    base_cache: Path = CANONICAL_RUN_CACHE,
+    refresh: bool = False,
+) -> Tuple[OpenSetRunResult, str]:
+    """Return the canonical primary-pipeline run for one partition.
+
+    Recomputed when the cache is absent or stale for this protocol; otherwise
+    reused, so Experiments 6, 7 and 8 cannot diverge and the classifier's
+    frozen threshold does not move between runs."""
+    cache_path = canonical_cache_path(partition, base_cache)
+    expected_samples = {
+        e.sample_id for e in protocol.partition(partition)
+        if e.role in ("mated_probe", "non_mated_probe")
+    }
+    if not refresh:
+        cached = load_canonical_run(cache_path)
+        if cached is not None and {r.sample_id for r in cached.search_results} == expected_samples:
+            return cached, canonical_run_digest(cached)
+
+    run = run_open_set_method(
+        protocol, partition=partition, method=METHOD_B, detector=detector, embedder=embedder
+    )
+    return run, save_canonical_run(run, cache_path)
+
+
+def canonical_primary_test_run(
+    protocol: OpenSetProtocol,
+    *,
+    detector: FaceDetector,
+    embedder: FaceEmbedder,
+    cache_path: Path = CANONICAL_RUN_CACHE,
+    refresh: bool = False,
+) -> Tuple[OpenSetRunResult, str]:
+    """Held-out partition convenience wrapper."""
+    return canonical_primary_run(
+        protocol, partition="test", detector=detector, embedder=embedder,
+        base_cache=cache_path, refresh=refresh,
+    )
+
+
 def open_set_coverage(run: OpenSetRunResult) -> Dict[str, Any]:
     """Coverage counts. Reported alongside every rate, because a rate measured
     over a small surviving fraction of the protocol is not comparable with one
@@ -4883,9 +5038,10 @@ def run_open_set_experiment(
 
     # --- Method B development and freezing -----------------------------------
     announce("Running Method B (three-image template) on development")
-    proposed_dev = run_open_set_method(
-        protocol, partition="development", method=METHOD_B, detector=detector, embedder=embedder
+    proposed_dev, development_digest = canonical_primary_run(
+        protocol, partition="development", detector=detector, embedder=embedder, refresh=True
     )
+    announce(f"Canonical development run digest {development_digest[:16]}")
 
     operating_points: Dict[str, Any] = {}
     for target in FPIR_TARGETS:
@@ -4954,9 +5110,11 @@ def run_open_set_experiment(
     control_test = run_open_set_method(
         protocol, partition="test", method=METHOD_A, detector=detector, embedder=embedder
     )
-    proposed_test = run_open_set_method(
-        protocol, partition="test", method=METHOD_B, detector=detector, embedder=embedder
+    proposed_test, canonical_digest = canonical_primary_test_run(
+        protocol, detector=detector, embedder=embedder, refresh=True
     )
+    announce(f"Canonical primary-pipeline run digest {canonical_digest[:16]}")
+    provenance["canonical_run_digest"] = canonical_digest
 
     test_coverage = open_set_coverage(proposed_test)
     primary_rates = open_set_rates_at_threshold(proposed_test.search_results, frozen_threshold)
@@ -5104,11 +5262,12 @@ def run_open_set_experiment(
 # another person: pose, lighting, occlusion, image quality, age difference,
 # detection failure and model error all produce the same outcome.
 PROFILE_CONSISTENCY_NOTE = (
-    "A non-match indicates that the photograph is inconsistent with the profile's enrolled "
-    "facial template under this model and threshold. It does not independently prove that "
-    "the photograph belongs to another person. Pose, lighting, occlusion, image quality, "
-    "age difference, face-detection failure and model error can all produce the same result. "
-    "Every outcome opens human review only."
+    "A non-match indicates that the photograph is inconsistent with the enrolled facial "
+    "template under the evaluated model and threshold. It does not prove that the "
+    "photograph belongs to another person or that fraud occurred. Pose, lighting, "
+    "occlusion, image quality, age difference, face-detection failure and model error can "
+    "all produce the same result. An inconsistent photograph opens a human-review case; a "
+    "consistent one does not, and an extraction failure resolves nothing."
 )
 
 
@@ -5117,9 +5276,15 @@ def profile_photo_consistency_summary(
 ) -> Dict[str, Any]:
     """Aggregate same-person consistency for photographs on one profile.
 
+    This is a different decision from duplicate-profile screening and must not
+    reuse its polarity. Screening asks whether a score *at or above* threshold
+    indicates a possible existing profile. Consistency asks whether the
+    correct-identity score falls *below* threshold, which makes the photograph
+    inconsistent with the enrolled template and opens a consistency review.
+
     Each mated probe is a further photograph supplied for a profile whose
     template was built from its enrolment images, so its similarity to its own
-    template is exactly the consistency score."""
+    template is the consistency score."""
     consistent = inconsistent = 0
     extraction_failures = unavailable = 0
     scores: List[float] = []
@@ -5138,34 +5303,41 @@ def profile_photo_consistency_summary(
         else:
             inconsistent += 1
 
-    # Deterministic mismatched-photo control: a non-mated probe compared with
-    # the gallery it does not belong to. Referral is the correct outcome.
-    controls_referred = controls_not_referred = control_failures = 0
+    # Deterministic mismatched-photo control: a non-mated probe has no enrolled
+    # template of its own, so a top similarity below threshold is the correct
+    # identification of a mismatch. At or above threshold is a false-consistent
+    # result — the control was not recognised as mismatched.
+    controls_correct = controls_false_consistent = control_failures = 0
     for row in run.search_results:
         if row.role != "non_mated_probe":
             continue
         if row.failure_code is not None or row.top_similarity is None:
             control_failures += 1
-        elif row.top_similarity >= threshold:
-            controls_referred += 1
+        elif row.top_similarity < threshold:
+            controls_correct += 1
         else:
-            controls_not_referred += 1
+            controls_false_consistent += 1
 
-    intended = consistent + inconsistent + extraction_failures + unavailable
+    assessed = consistent + inconsistent + extraction_failures + unavailable
     return {
-        "mismatched_controls_correctly_referred": controls_referred,
-        "mismatched_controls_not_referred": controls_not_referred,
-        "mismatched_control_extraction_failures": control_failures,
         "operating_threshold": threshold,
-        "photographs_assessed": intended,
+        "photographs_assessed": assessed,
         "consistent_same_person_photographs": consistent,
         "inconsistent_review_candidates": inconsistent,
         "extraction_failures": extraction_failures,
         "gallery_reference_unavailable": unavailable,
-        "consistency_rate": consistent / intended if intended else float("nan"),
-        "review_referral_rate": inconsistent / intended if intended else float("nan"),
+        "mismatched_controls_correctly_identified": controls_correct,
+        "mismatched_controls_false_consistent": controls_false_consistent,
+        "mismatched_control_extraction_failures": control_failures,
+        "consistency_rate": consistent / assessed if assessed else float("nan"),
+        "review_referral_rate": inconsistent / assessed if assessed else float("nan"),
         "consistency_score_mean": statistics.fmean(scores) if scores else float("nan"),
         "consistency_score_median": statistics.median(scores) if scores else float("nan"),
+        "outcome_policy": (
+            "A consistent same-person photograph does not open a case. An inconsistent "
+            "photograph opens a consistency review. An extraction failure resolves nothing "
+            "and is a separate unresolved outcome, not a decision."
+        ),
         "interpretation_note": PROFILE_CONSISTENCY_NOTE,
         "policy_note": POLICY_NOTE,
     }
@@ -5951,7 +6123,8 @@ def write_pipeline_performance_csv(
         "gallery_enrolment_coverage", "mated_extraction_coverage",
         "non_mated_extraction_coverage",
         "embedding_latency_mean_ms", "embedding_latency_p95_ms",
-        "search_latency_mean_ms", "search_latency_p95_ms",
+        "complete_pipeline_latency_mean_ms", "complete_pipeline_latency_p95_ms",
+        "top1_search_time_mean_ms", "top1_search_time_p95_ms",
         "detector_file_size_mb", "recognition_file_size_mb", "status",
     ]
     held_out = payload.get("held_out_metrics") or {}
@@ -5970,7 +6143,7 @@ def write_pipeline_performance_csv(
             for name, description in descriptions.items():
                 writer.writerow(
                     [name, description["detector_name"], description["embedding_model_name"],
-                     description["embedding_dimensions"]] + [""] * 17 + [payload["status"]]
+                     description["embedding_dimensions"]] + [""] * 19 + [payload["status"]]
                 )
             return
         for name, metrics in held_out.items():
@@ -5990,8 +6163,11 @@ def write_pipeline_performance_csv(
                 coverage["gallery_enrolment_coverage"],
                 1.0 - coverage["mated_extraction_failure_rate"],
                 1.0 - coverage["non_mated_extraction_failure_rate"],
-                coverage.get("top1_search_time_mean_ms"),
-                coverage.get("top5_search_time_p95_ms"),
+                # Embedding timing, never gallery-search timing.
+                coverage.get("embedding_latency_mean_ms"),
+                coverage.get("embedding_latency_p95_ms"),
+                coverage.get("complete_pipeline_latency_mean_ms"),
+                coverage.get("complete_pipeline_latency_p95_ms"),
                 coverage.get("top1_search_time_mean_ms"),
                 coverage.get("top1_search_time_p95_ms"),
                 file_sizes[0]["megabytes"] if len(file_sizes) > 0 else "",
@@ -6826,6 +7002,7 @@ def _provenance_block(
         "preprocessing_revision": PREPROCESSING_REVISION,
         "software_environment": software_environment_report(),
         "dependency_versions": _reported_dependency_versions(),
+        "opencv_execution": configure_deterministic_opencv(),
         "policy_note": POLICY_NOTE,
         "limitations": list(ML_REVIEW_LIMITATIONS),
     }
@@ -6875,9 +7052,10 @@ def run_ml_review_experiment(
     )
 
     announce("Scoring the development partition once for both classifier groups")
-    development = run_open_set_method(
-        protocol, partition="development", method=METHOD_B, detector=detector, embedder=embedder
+    development, development_digest = canonical_primary_run(
+        protocol, partition="development", detector=detector, embedder=embedder
     )
+    announce(f"Using canonical development run {development_digest[:16]}")
 
     training_rows, training_excluded = build_review_feature_rows(
         development.search_results, identities=set(training_ids),
@@ -6982,9 +7160,10 @@ def run_ml_review_experiment(
 
     # --- Held-out test, scored once ------------------------------------------
     announce("Scoring the held-out test partition")
-    test_run = run_open_set_method(
-        protocol, partition="test", method=METHOD_B, detector=detector, embedder=embedder
+    test_run, canonical_digest = canonical_primary_test_run(
+        protocol, detector=detector, embedder=embedder
     )
+    announce(f"Using canonical primary-pipeline run {canonical_digest[:16]}")
     test_rows, test_excluded = build_review_feature_rows(test_run.search_results)
     test_matrix, _ = _feature_matrix(test_rows)
     decision_start = time.perf_counter()
@@ -7034,6 +7213,8 @@ def run_ml_review_experiment(
         },
         "coverage": coverage,
         "excluded_records": test_excluded,
+        "canonical_run_digest": canonical_digest,
+        "canonical_development_run_digest": development_digest,
         "success_criteria": evaluate_review_success_criteria(
             classifier_rates, coverage, baseline_rates, baseline_detection, classifier_rates
         ),
@@ -7303,6 +7484,7 @@ def evaluate_one_pipeline_for_comparison(
     embedder: FaceEmbedder,
     seed: int = DEFAULT_RANDOM_SEED,
     bootstrap_replicates: int = BOOTSTRAP_REPLICATES,
+    canonical_test_run: Optional[OpenSetRunResult] = None,
 ) -> Dict[str, Any]:
     """Develop, freeze and evaluate one pipeline over the shared protocol.
 
@@ -7321,7 +7503,9 @@ def evaluate_one_pipeline_for_comparison(
     # Freeze each pipeline threshold before held-out evaluation.
     frozen = float(operating_points[str(PRIMARY_FPIR_TARGET)]["threshold"])
 
-    test = run_open_set_method(
+    # The primary pipeline reuses the canonical run so its numbers cannot
+    # differ from the ones Experiments 6 and 7 report.
+    test = canonical_test_run if canonical_test_run is not None else run_open_set_method(
         protocol, partition="test", method=METHOD_B, detector=detector, embedder=embedder,
     )
     coverage = open_set_coverage(test)
@@ -7329,7 +7513,7 @@ def evaluate_one_pipeline_for_comparison(
     intervals = cluster_bootstrap_intervals(
         test.search_results, threshold=frozen, replicates=bootstrap_replicates, seed=seed
     )
-    subgroup_replicates = max(200, bootstrap_replicates // 4)
+    subgroup_replicates = bootstrap_replicates
     per_subgroup = subgroup_open_set_metrics(
         test.search_results, threshold=frozen, replicates=subgroup_replicates, seed=seed,
     )
@@ -7374,8 +7558,7 @@ def evaluate_one_pipeline_for_comparison(
         "failure_breakdown": failures,
         "profile_photo_consistency": profile_photo_consistency_summary(test, frozen),
         "sex_aggregated": sex_aggregated_metrics(
-            test.search_results, threshold=frozen,
-            replicates=max(200, bootstrap_replicates // 4), seed=seed,
+            test.search_results, threshold=frozen, replicates=bootstrap_replicates, seed=seed,
         ),
         "similarity_histograms": {
             "mated_correct_identity": histogram(mated_rows, "correct_similarity"),
@@ -7415,6 +7598,9 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
         comparison_metrics = {
             primary.pipeline_name: evaluate_one_pipeline_for_comparison(
                 protocol, name=primary.pipeline_name, detector=detector, embedder=embedder,
+                canonical_test_run=canonical_primary_test_run(
+                    protocol, detector=detector, embedder=embedder
+                )[0],
             ),
             arcface_description.pipeline_name: evaluate_one_pipeline_for_comparison(
                 protocol, name=arcface_description.pipeline_name,
@@ -7986,10 +8172,21 @@ def _collect_implementation_layers(aggregate_root: Path) -> List[Dict[str, Any]]
         "rates": control["rates"], "coverage": control["coverage"],
         "end_to_end": control.get("end_to_end_duplicate_detection_rate"),
     })
+    # Layer 2 reuses the three-image gallery at the transferred threshold, so
+    # its end-to-end rate divides the same numerator by every intended mated
+    # probe rather than by those that were scored.
+    layer2 = proposed["at_lfw_control_threshold"]
+    intended_mated = proposed["coverage"]["intended_mated_probes"]
+    scored_mated = layer2.get("scored_mated_probes") or 0
+    tpir1 = layer2.get("tpir_rank1")
     layers.append({
         "name": IMPLEMENTATION_LAYERS[1],
-        "rates": proposed["at_lfw_control_threshold"], "coverage": proposed["coverage"],
-        "end_to_end": None,
+        "rates": layer2, "coverage": proposed["coverage"],
+        "end_to_end": (
+            (tpir1 * scored_mated) / intended_mated
+            if isinstance(tpir1, (int, float)) and tpir1 == tpir1 and intended_mated
+            else None
+        ),
     })
     layers.append({
         "name": IMPLEMENTATION_LAYERS[2],
@@ -8096,7 +8293,7 @@ def write_profile_consistency_artefacts(
     )
     fields = [
         "consistent_same_person_photographs", "inconsistent_review_candidates",
-        "mismatched_controls_correctly_referred", "mismatched_controls_not_referred",
+        "mismatched_controls_correctly_identified", "mismatched_controls_false_consistent",
         "extraction_failures", "mismatched_control_extraction_failures",
         "gallery_reference_unavailable", "photographs_assessed",
     ]
@@ -8359,7 +8556,7 @@ def generate_figures(
 
         fig, ax = plt.subplots(figsize=(8.0, 5.5))
         for layer in layers:
-            latency = layer["coverage"].get("top1_search_time_mean_ms")
+            latency = layer["coverage"].get("complete_pipeline_latency_mean_ms")
             detection = _percent(layer["end_to_end"])
             reviews = layer["rates"].get("false_reviews_per_1000_non_mated", float("nan"))
             if not (isinstance(latency, (int, float)) and latency == latency and detection == detection):
@@ -8368,7 +8565,7 @@ def generate_figures(
             ax.scatter(latency, detection, s=size, alpha=0.75, color="#4C72B0")
             ax.annotate(layer["name"].replace("\n", " "), (latency, detection),
                         fontsize=6, xytext=(4, 4), textcoords="offset points")
-        ax.set_xlabel("Mean gallery-search latency per probe (ms)")
+        ax.set_xlabel("Mean complete-pipeline latency per image (ms) — lower is better")
         ax.set_ylabel("End-to-end duplicate detection (%)")
         ax.set_title("Performance against cost — point size is false reviews per 1,000")
         ax.set_ylim(bottom=0); ax.grid(alpha=0.3)
@@ -8394,70 +8591,111 @@ def generate_figures(
         _save_figure(fig, path); plt.close(fig); written.append(path)
 
     # --- Figures G-I: sex-separated results ----------------------------------
-    subgroup_csv = aggregate_root / "bfw_subgroup_metrics.csv"
-    if subgroup_csv.is_file():
-        rows = {r["subgroup"]: r for r in csv.DictReader(open(subgroup_csv, encoding="utf-8"))}
+    # Prefer the two-pipeline subgroup file so both pipelines are compared;
+    # fall back to the primary-only file before Experiment 8 has run.
+    pipeline_subgroups = aggregate_root / "pretrained_pipeline_subgroup_metrics.csv"
+    primary_subgroups = aggregate_root / "bfw_subgroup_metrics.csv"
+    by_pipeline: Dict[str, Dict[str, Dict[str, str]]] = {}
+    if pipeline_subgroups.is_file():
+        for row in csv.DictReader(open(pipeline_subgroups, encoding="utf-8")):
+            if row.get("fpir"):
+                by_pipeline.setdefault(row["pipeline"], {})[row["subgroup"]] = row
+    if not by_pipeline and primary_subgroups.is_file():
+        by_pipeline[MODEL_VERSION] = {
+            r["subgroup"]: r for r in csv.DictReader(open(primary_subgroups, encoding="utf-8"))
+        }
+
+    if by_pipeline:
+        # Identical metric order, axis limits, units, pipeline order and
+        # interval format in both figures, so they compare fairly.
+        sex_metrics = (
+            ("fpir", "FPIR\n(lower better)"),
+            ("tpir_rank1", "TPIR@1\n(higher better)"),
+            ("tpir_rank5", "TPIR@5\n(higher better)"),
+            ("mated_probe_coverage", "Mated\ncoverage"),
+            ("non_mated_probe_coverage", "Non-mated\ncoverage"),
+        )
+        pipeline_order = sorted(by_pipeline, key=lambda n: "opencv" not in n)
+        colours = ("#4C72B0", "#DD8452")
         for sex, suffix in (("female", "_females"), ("male", "_males")):
-            members = sorted(k for k in rows if k.endswith(suffix))
+            members = sorted(
+                {s for rows in by_pipeline.values() for s in rows if s.endswith(suffix)}
+            )
             if not members:
                 continue
-            # Identical metric order, axis limits and units in both panels so
-            # the companion figures compare fairly.
-            sex_metrics = (
-                ("fpir", "FPIR\n(lower better)"),
-                ("tpir_rank1", "TPIR@1\n(higher better)"),
-                ("tpir_rank5", "TPIR@5\n(higher better)"),
-                ("mated_probe_coverage", "Mated\ncoverage"),
-                ("non_mated_probe_coverage", "Non-mated\ncoverage"),
-            )
-            fig, axes = plt.subplots(1, len(sex_metrics), figsize=(15.0, 4.4), sharey=True)
+            fig, axes = plt.subplots(1, len(sex_metrics), figsize=(16.0, 4.6), sharey=True)
             positions = np.arange(len(members))
+            offsets = np.linspace(-0.16, 0.16, len(pipeline_order))
             for ax, (metric, title) in zip(axes, sex_metrics):
-                centre = [_percent(float(rows[m][metric])) for m in members]
-                lower = [max(centre[i] - _percent(float(rows[members[i]][f"{metric}_lower_95"])), 0)
-                         for i in range(len(members))]
-                upper = [max(_percent(float(rows[members[i]][f"{metric}_upper_95"])) - centre[i], 0)
-                         for i in range(len(members))]
-                ax.errorbar(positions, centre, yerr=[lower, upper], fmt="o", capsize=4,
-                            color="#4C72B0")
+                for offset, name, colour in zip(offsets, pipeline_order, colours):
+                    rows = by_pipeline[name]
+                    centre, lower, upper = [], [], []
+                    for subgroup in members:
+                        row = rows.get(subgroup)
+                        if not row or not row.get(metric):
+                            centre.append(float("nan")); lower.append(0); upper.append(0)
+                            continue
+                        value = _percent(float(row[metric]))
+                        centre.append(value)
+                        lower.append(max(value - _percent(float(row[f"{metric}_lower_95"])), 0))
+                        upper.append(max(_percent(float(row[f"{metric}_upper_95"])) - value, 0))
+                    ax.errorbar(positions + offset, centre, yerr=[lower, upper], fmt="o",
+                                capsize=3, markersize=4, color=colour,
+                                label=name.split("-")[0])
                 ax.set_xticks(positions)
                 ax.set_xticklabels([m.replace(suffix[1:], "") for m in members],
                                    rotation=35, ha="right", fontsize=7)
-                ax.set_title(title, fontsize=9); ax.grid(axis="y", alpha=0.3)
+                ax.set_title(title, fontsize=9)
+                ax.grid(axis="y", alpha=0.3)
                 ax.set_ylim(0, 100)
             axes[0].set_ylabel("Per cent (95% identity-cluster CI)")
+            handles, labels = axes[0].get_legend_handles_labels()
+            fig.legend(handles[:len(pipeline_order)], labels[:len(pipeline_order)],
+                       loc="upper right", fontsize=8)
             fig.suptitle(
                 f"{sex.capitalize()} subgroup performance, BFW held-out test", y=1.02
             )
             path = figures_root / f"{sex}_subgroup_pipeline_comparison.png"
             _save_figure(fig, path); plt.close(fig); written.append(path)
 
-    sex_path = aggregate_root / "bfw_sex_aggregated_metrics.json"
-    if sex_path.is_file():
-        groups = read_json_artifact(sex_path).get("groups", {})
-        if groups:
-            metrics = ("fpir", "tpir_rank1", "mated_probe_coverage", "non_mated_probe_coverage")
-            labels = ["FPIR", "TPIR@1", "Mated coverage", "Non-mated coverage"]
-            fig, ax = plt.subplots(figsize=(9.0, 5.0))
-            positions = np.arange(len(metrics)); width = 0.35
-            for offset, (name, colour) in zip((-width / 2, width / 2),
-                                              (("female", "#C44E52"), ("male", "#4C72B0"))):
-                entry = groups.get(name)
-                if not entry:
-                    continue
-                centre = [_percent(entry.get(m)) for m in metrics]
-                lower = [max(centre[i] - _percent(entry.get(f"{metrics[i]}_lower_95")), 0)
-                         for i in range(len(metrics))]
-                upper = [max(_percent(entry.get(f"{metrics[i]}_upper_95")) - centre[i], 0)
-                         for i in range(len(metrics))]
-                ax.bar(positions + offset, centre, width, label=name.capitalize(), color=colour,
-                       yerr=[lower, upper], capsize=4)
-            ax.set_xticks(positions); ax.set_xticklabels(labels)
-            ax.set_ylabel("Per cent (95% CI)"); ax.set_ylim(0, 100)
-            ax.set_title("Aggregate female against male, pooled over identity outcomes")
-            ax.legend(); ax.grid(axis="y", alpha=0.3)
-            path = figures_root / "female_male_aggregate_comparison.png"
-            _save_figure(fig, path); plt.close(fig); written.append(path)
+    # Four series: each pipeline for each sex, pooled from identity outcomes.
+    sex_groups: Dict[str, Dict[str, Any]] = {}
+    if pipeline and (pipeline.get("held_out_metrics") or {}):
+        for name, metrics in pipeline["held_out_metrics"].items():
+            for sex, entry in (metrics.get("sex_aggregated") or {}).items():
+                sex_groups[f"{name.split('-')[0]} — {sex}"] = entry
+    else:
+        sex_path = aggregate_root / "bfw_sex_aggregated_metrics.json"
+        if sex_path.is_file():
+            for sex, entry in read_json_artifact(sex_path).get("groups", {}).items():
+                sex_groups[f"{MODEL_VERSION.split('-')[0]} — {sex}"] = entry
+
+    if sex_groups:
+        metrics_shown = ("fpir", "tpir_rank1", "mated_probe_coverage",
+                         "non_mated_probe_coverage")
+        labels = ["FPIR\n(lower better)", "TPIR@1\n(higher better)",
+                  "Mated coverage", "Non-mated coverage"]
+        fig, ax = plt.subplots(figsize=(10.5, 5.0))
+        positions = np.arange(len(metrics_shown))
+        names = sorted(sex_groups)
+        width = 0.8 / max(len(names), 1)
+        palette = ("#4C72B0", "#8FB2D9", "#DD8452", "#EFB48C")
+        for index, name in enumerate(names):
+            entry = sex_groups[name]
+            offset = (index - (len(names) - 1) / 2) * width
+            centre = [_percent(entry.get(m)) for m in metrics_shown]
+            lower = [max(centre[i] - _percent(entry.get(f"{metrics_shown[i]}_lower_95")), 0)
+                     for i in range(len(metrics_shown))]
+            upper = [max(_percent(entry.get(f"{metrics_shown[i]}_upper_95")) - centre[i], 0)
+                     for i in range(len(metrics_shown))]
+            ax.bar(positions + offset, centre, width, label=name,
+                   color=palette[index % len(palette)], yerr=[lower, upper], capsize=3)
+        ax.set_xticks(positions); ax.set_xticklabels(labels, fontsize=8)
+        ax.set_ylabel("Per cent (95% identity-cluster CI)"); ax.set_ylim(0, 100)
+        ax.set_title("Aggregate female against male, pooled over identity outcomes")
+        ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.3)
+        path = figures_root / "female_male_aggregate_comparison.png"
+        _save_figure(fig, path); plt.close(fig); written.append(path)
 
     # --- Figure 1: false review referrals by method --------------------------
     if open_set:
@@ -8471,9 +8709,13 @@ def generate_figures(
         if review:
             labels.append("Logistic-regression\nclassifier")
             values.append(review["classifier"]["false_reviews_per_1000_non_mated"])
-        if pipeline and pipeline.get("evaluated") == "yes":
-            labels.append("Stronger\npipeline")
-            values.append(float("nan"))
+        arcface = next(
+            (v for k, v in ((pipeline or {}).get("held_out_metrics") or {}).items()
+             if "arcface" in k.lower()), None
+        )
+        if arcface:
+            labels.append("SCRFD +\nArcFace")
+            values.append(arcface["rates"]["false_reviews_per_1000_non_mated"])
 
         fig, ax = plt.subplots(figsize=(7.5, 4.5))
         ax.bar(labels, values, color="#4C72B0")
