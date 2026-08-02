@@ -6721,6 +6721,47 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
     write_pipeline_comparison_csv(
         output_root / "pretrained_pipeline_comparison.csv", primary=primary, config=config
     )
+
+    # The interval and subgroup artefacts are written whether or not the
+    # comparison ran. A silently absent file is indistinguishable from one that
+    # was forgotten; an empty file carrying the blocking status is not.
+    evaluated = payload["evaluated"] == "yes"
+    write_json_artifact(
+        output_root / "pipeline_comparison_confidence_intervals.json",
+        {
+            "artifact_type": "pipeline_comparison_confidence_intervals",
+            "schema_version": SCHEMA_VERSION,
+            "created_at": utc_now_iso(),
+            "seed": DEFAULT_RANDOM_SEED,
+            "status": payload["status"],
+            "evaluated": payload["evaluated"],
+            "replicates": BOOTSTRAP_REPLICATES if evaluated else 0,
+            "resampling_unit": "identity (cluster bootstrap, subgroup-stratified)",
+            "intervals": {},
+            "note": (
+                "Populated only when both pipelines are evaluated. "
+                + ("" if evaluated else payload.get("reason", ""))
+            ),
+            "policy_note": POLICY_NOTE,
+        },
+    )
+    subgroup_path = output_root / "pretrained_pipeline_subgroup_metrics.csv"
+    subgroup_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(subgroup_path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            ["pipeline", "subgroup", "fpir", "fpir_lower_95", "fpir_upper_95",
+             "tpir_rank1", "tpir_rank1_lower_95", "tpir_rank1_upper_95",
+             "scored_mated_probes", "scored_non_mated_probes", "status"]
+        )
+        if not evaluated:
+            # One row per subgroup recording the blocker, so the file's shape
+            # matches the evaluated case and its emptiness is explicit.
+            for subgroup in BFW_SUBGROUPS:
+                writer.writerow(
+                    [f"insightface-scrfd-arcface-{ARCFACE_MODEL_PACK}", subgroup,
+                     "", "", "", "", "", "", "", "", payload["status"]]
+                )
     report = [
         "# Pretrained pipeline comparison (Experiment 8)",
         "",
@@ -6862,6 +6903,110 @@ def _strip_png_text_metadata(path: Path) -> None:
 
 def _percent(value: Any) -> float:
     return float(value) * 100.0 if isinstance(value, (int, float)) and value == value else float("nan")
+
+
+def _write_figure_captions(
+    aggregate_root: Path, figures_root: Path, written: Sequence[Path]
+) -> None:
+    """Caption every figure with its denominator and an interpretation.
+
+    A chart without its sample size invites over-reading, so the denominators
+    are stated beside each figure rather than left in the JSON."""
+    def load(name: str) -> Optional[Dict[str, Any]]:
+        path = aggregate_root / name
+        return read_json_artifact(path) if path.is_file() else None
+
+    open_set = load("bfw_open_set_test_metrics.json")
+    review = load("ml_review_test_metrics.json")
+    pipeline = load("pipeline_comparison_metrics.json")
+
+    mated = non_mated = enrolled = intended_gallery = "n/a"
+    if open_set:
+        coverage = open_set["methods"][METHOD_B]["coverage"]
+        mated = coverage["scored_mated_probes"]
+        non_mated = coverage["scored_non_mated_probes"]
+        enrolled = coverage["enrolled_gallery_identities"]
+        # Coverage is enrolled over *intended*; using the enrolled count as the
+        # denominator would state a rate of one by construction.
+        intended_gallery = coverage["intended_gallery_identities"]
+
+    lines = [
+        "# Figure captions",
+        "",
+        "Generated from the published artefacts by `ACP_arden.py`. Every figure is drawn "
+        "from machine-readable results; no value is typed by hand.",
+        "",
+        f"Denominators for the BFW held-out test partition: {enrolled} of "
+        f"{intended_gallery} gallery identities enrolled, {mated} scored mated probes, "
+        f"{non_mated} scored non-mated probes.",
+        "",
+        "## Figure 1 — false_reviews_per_1000_by_method",
+        "",
+        f"False human-review referrals per 1,000 non-mated searches, over {non_mated} "
+        f"scored non-mated probes. Lower is better. Bars are counts scaled to a common "
+        f"denominator, not rates over different bases.",
+        "",
+        "## Figure 2 — duplicate_detection_by_method",
+        "",
+        f"Conditional TPIR@1 over {mated} scored mated probes, end-to-end duplicate "
+        f"detection over every intended mated probe, and gallery enrolment coverage over "
+        f"{intended_gallery} intended identities. The three use different denominators and are "
+        f"labelled separately for that reason; they must not be read as one series.",
+        "",
+        "## Figure 3 — open_set_operating_curve",
+        "",
+        "TPIR@1 against FPIR at the three pre-declared operating points, on a logarithmic "
+        "FPIR axis. Development and held-out test are drawn separately. The threshold was "
+        "selected on the development curve only; the test curve is shown for reporting and "
+        "was never used to choose an operating point.",
+        "",
+        "## Figure 4 — subgroup_fpir_tpir_with_confidence_intervals",
+        "",
+        "Per-subgroup FPIR and TPIR@1 with 95% identity-cluster bootstrap intervals. "
+        "Subgroup sample counts are in `ml_review_subgroup_metrics.csv` and are small once "
+        "the partition is divided eight ways, which is why several intervals are wide. "
+        "Overlapping intervals are not evidence of equality.",
+        "",
+        "## Figure 5 — ml_review_classifier_coefficients",
+        "",
+        "Standardised logistic-regression coefficients. Positive values increase the "
+        "probability of opening a human-review case; negative values reduce it. These "
+        "describe association within this classifier on these benchmark identities. They "
+        "are not causal and do not transfer to another population.",
+        "",
+        "## Figure 6 — pipeline_coverage_and_latency",
+        "",
+        f"Extraction coverage and search latency for the primary pipeline. Coverage "
+        f"denominators are {intended_gallery} intended gallery identities, {mated} mated "
+        f"and {non_mated} non-mated probes. Latency is shown rather than omitted so the "
+        f"cost of a stronger pipeline stays visible in any future comparison.",
+        "",
+        "## Limitations common to every figure",
+        "",
+        "- Each rate is conditional on the coverage reported beside it.",
+        "- These are benchmark identities, not a user population.",
+        "- A referral opens human review only; nothing here proves duplication or misuse.",
+    ]
+    if review:
+        c = review["classifier"]
+        lines += [
+            "",
+            "## Note on Figure 1",
+            "",
+            f"The classifier and the calibrated threshold referred the same "
+            f"{c['non_mated_probes_incorrectly_referred']} non-mated searches in error, so "
+            f"their bars are equal by measurement rather than by rounding.",
+        ]
+    if pipeline and pipeline.get("evaluated") == "no":
+        lines += [
+            "",
+            "## Note on the absent comparison",
+            "",
+            f"No stronger-pipeline bar appears in Figure 1 and no comparison panel appears "
+            f"in Figure 6: the comparison did not run (`{pipeline['status']}`). Nothing is "
+            f"estimated in its place.",
+        ]
+    (figures_root / "FIGURE_CAPTIONS.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def generate_figures(
@@ -7035,6 +7180,8 @@ def generate_figures(
         _save_figure(fig, path)
         plt.close(fig)
         written.append(path)
+
+    _write_figure_captions(aggregate_root, figures_root, written)
 
     # Figures are published artefacts and are scanned like any other.
     leaks = find_path_leaks(figures_root, forbidden_substrings=default_forbidden_path_substrings())

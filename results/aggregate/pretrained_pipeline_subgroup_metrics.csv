@@ -1,0 +1,9 @@
+pipeline,subgroup,fpir,fpir_lower_95,fpir_upper_95,tpir_rank1,tpir_rank1_lower_95,tpir_rank1_upper_95,scored_mated_probes,scored_non_mated_probes,status
+insightface-scrfd-arcface-buffalo_l,asian_females,,,,,,,,,not_run_model_files_not_configured
+insightface-scrfd-arcface-buffalo_l,asian_males,,,,,,,,,not_run_model_files_not_configured
+insightface-scrfd-arcface-buffalo_l,black_females,,,,,,,,,not_run_model_files_not_configured
+insightface-scrfd-arcface-buffalo_l,black_males,,,,,,,,,not_run_model_files_not_configured
+insightface-scrfd-arcface-buffalo_l,indian_females,,,,,,,,,not_run_model_files_not_configured
+insightface-scrfd-arcface-buffalo_l,indian_males,,,,,,,,,not_run_model_files_not_configured
+insightface-scrfd-arcface-buffalo_l,white_females,,,,,,,,,not_run_model_files_not_configured
+insightface-scrfd-arcface-buffalo_l,white_males,,,,,,,,,not_run_model_files_not_configured

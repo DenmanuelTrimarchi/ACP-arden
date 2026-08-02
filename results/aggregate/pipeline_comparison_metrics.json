@@ -1,7 +1,7 @@
 {
   "artifact_type": "pipeline_comparison_metrics",
   "comparison_scope": "Complete pretrained pipelines. Detection, landmarking, alignment, preprocessing, embedding dimensionality and runtime all differ, so no difference may be attributed to the embedding model alone.",
-  "created_at": "2026-08-02T00:22:24.032733+00:00",
+  "created_at": "2026-08-02T00:34:02.897211+00:00",
   "dataset_name": "BFW",
   "dependency_versions": {
     "Pillow": "12.3.0",

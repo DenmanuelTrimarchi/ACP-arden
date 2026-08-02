@@ -542,6 +542,10 @@ ml_review_classifier_coefficients
 pipeline_coverage_and_latency
 ```
 
+`results/figures/FIGURE_CAPTIONS.md` accompanies them, stating each figure's
+denominator, a short interpretation and the limitations that apply — a chart
+without its sample size invites over-reading.
+
 ## Opaque identifiers and the required key
 
 Public identifiers are HMAC-SHA-256 over the identity or sample name, keyed by

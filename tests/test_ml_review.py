@@ -467,3 +467,41 @@ def test_matching_the_comparator_is_not_recorded_as_a_reduction() -> None:
     better = dict(same, false_reviews_per_1000_non_mated=4.0)
     verdicts = acp.evaluate_review_success_criteria(better, coverage, same, detection, detection)
     assert verdicts["fewer_false_reviews_than_threshold_method"]["outcome"] == "achieved"
+
+
+def test_every_required_artefact_exists_even_when_the_comparison_did_not_run() -> None:
+    """A silently absent file is indistinguishable from a forgotten one, so the
+    comparison writes its interval and subgroup artefacts either way."""
+    root = Path(acp.__file__).parent / "results" / "aggregate"
+    if not (root / "pipeline_comparison_metrics.json").is_file():
+        pytest.skip("pipeline comparison has not been run in this checkout")
+    intervals = json.loads(
+        (root / "pipeline_comparison_confidence_intervals.json").read_text(encoding="utf-8")
+    )
+    assert intervals["artifact_type"] == "pipeline_comparison_confidence_intervals"
+    assert "status" in intervals and "evaluated" in intervals
+    # Empty rather than invented when the comparison did not run.
+    if intervals["evaluated"] == "no":
+        assert intervals["intervals"] == {}
+        assert intervals["replicates"] == 0
+
+    rows = list(csv.DictReader(open(root / "pretrained_pipeline_subgroup_metrics.csv",
+                                    encoding="utf-8")))
+    assert rows, "the subgroup file must carry one row per subgroup"
+    assert {r["subgroup"] for r in rows} == set(EXPECTED_SUBGROUPS)
+    if intervals["evaluated"] == "no":
+        assert all(r["fpir"] == "" for r in rows)
+        assert all(r["status"].startswith("not_run_") for r in rows)
+
+
+def test_figure_captions_state_their_denominators() -> None:
+    captions = Path(acp.__file__).parent / "results" / "figures" / "FIGURE_CAPTIONS.md"
+    if not captions.is_file():
+        pytest.skip("figures have not been generated in this checkout")
+    text = captions.read_text(encoding="utf-8")
+    for figure in ("Figure 1", "Figure 2", "Figure 3", "Figure 4", "Figure 5", "Figure 6"):
+        assert figure in text
+    assert "scored mated probes" in text and "scored non-mated probes" in text
+    # Coverage is enrolled over intended, never over enrolled.
+    assert "intended identities" in text
+    assert "not causal" in text
