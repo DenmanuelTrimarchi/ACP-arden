@@ -1494,13 +1494,15 @@ def test_the_sex_figures_compare_both_pipelines() -> None:
         if not path.is_file():
             pytest.skip("figures not generated")
         text = path.read_text(encoding="utf-8", errors="ignore").lower()
-        assert "opencv" in text and "insightface" in text, f"{sex} figure lacks both pipelines"
+        assert "yunet + sface" in text and "scrfd + arcface" in text, (
+            f"{sex} figure lacks both pipelines"
+        )
         assert forbidden not in text
         for metric in ("fpir", "tpir@1", "tpir@5", "mated", "non-mated"):
             assert metric in text, f"{sex} figure missing {metric}"
     aggregate = _FIG / "female_male_aggregate_comparison.svg"
     text = aggregate.read_text(encoding="utf-8", errors="ignore").lower()
-    assert "opencv" in text and "insightface" in text
+    assert "yunet + sface" in text and "scrfd + arcface" in text
     assert "female" in text and "male" in text
 
 
@@ -1569,9 +1571,12 @@ def test_the_similarity_distribution_figure_exists_and_marks_thresholds() -> Non
     path = _FIG / "mated_non_mated_similarity_distributions.svg"
     assert path.is_file(), "the distribution figure was not generated"
     text = path.read_text(encoding="utf-8", errors="ignore").lower()
-    assert "opencv" in text and "insightface" in text
+    assert "yunet + sface" in text and "scrfd + arcface" in text
     assert "mated" in text and "non-mated" in text
     assert "frozen threshold" in text
+    # Each distribution must say what it measures, not merely that it is mated.
+    assert "own enrolled template" in text
+    assert "highest similarity against the gallery" in text
 
 
 def test_the_consistency_figure_compares_both_pipelines() -> None:
@@ -1581,9 +1586,13 @@ def test_the_consistency_figure_compares_both_pipelines() -> None:
     text = (_FIG / "profile_photo_consistency_outcomes.svg").read_text(
         encoding="utf-8", errors="ignore"
     ).lower()
-    assert "opencv" in text and "insightface" in text
-    # The control outcomes must use the consistency vocabulary.
-    assert "identified" in text and "false-consistent" in text
+    assert "yunet + sface" in text and "scrfd + arcface" in text
+    # The two controls must be separated and named, and no outcome may say
+    # "identified" without stating what was identified.
+    assert "open-set non-mated gallery control" in text
+    assert "wrong-profile-template control" in text
+    assert "correctly matched" in text and "no enrolled profile" in text
+    assert "correctly inconsistent" in text and "with wrong profile" in text
     assert "not proof" in text
 
 

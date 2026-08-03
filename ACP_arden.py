@@ -733,6 +733,10 @@ def temporary_id_hmac_key(raw: str):
 SELF_TEST_ID_HMAC_KEY = "0" * 63 + "1"
 
 
+# Keyed HMAC rather than a plain digest. An identifier derived from an unkeyed
+# hash of a public benchmark name can be reversed by hashing a short list of
+# candidate names, so a secret key is required and is never published, not even
+# as a fingerprint.
 def opaque_id(value: str) -> str:
     """Deterministic, one-way identifier standing in for a real identity or
     sample name. Deterministic under a fixed key so a re-run reproduces the same
@@ -747,6 +751,8 @@ def opaque_id(value: str) -> str:
     return digest[:OPAQUE_ID_HEX_LENGTH]
 
 
+# Constant-time comparison, so the time taken to reject a value cannot reveal
+# how much of it matched.
 def opaque_ids_match(left: str, right: str) -> bool:
     """Constant-time comparison for values derived from the secret key."""
     return hmac.compare_digest(left, right)
@@ -1720,6 +1726,9 @@ def select_final_threshold(
     }
 
 
+# A reportable evaluation must refuse to run against a threshold that was not
+# frozen beforehand. Enforced in code rather than left to procedure, so a
+# recalibrated threshold cannot reach a published result unnoticed.
 def require_frozen_threshold(payload: Dict[str, Any], *, context: str = "") -> float:
     """Stage 3's guard: read a threshold from a loaded artifact, refusing
     anything not explicitly marked frozen by select_final_threshold."""
@@ -2394,7 +2403,7 @@ def read_gallery_manifest(path: Path) -> GalleryManifest:
 # 14. Aggregate output generation
 # =============================================================================
 #
-# Every artifact is self-describing enough that a reader never has to trust an
+# Every artefact is self-describing enough that a reader never has to trust an
 # unlabelled number: schema version, creation timestamp, software and model
 # provenance, and dataset digests. Writes are atomic, so a crash mid-write
 # never leaves a half-written result file.
@@ -3012,6 +3021,10 @@ def _png_text_metadata(path: Path) -> str:
         return ""
 
 
+# Published artefacts must carry no local storage path. A research-storage
+# location identifies the person running the evaluation and can disclose where
+# the benchmark images are held, so every published file is scanned before a run
+# is allowed to report success.
 def find_path_leaks(root: Path, *, forbidden_substrings: Sequence[str]) -> List[str]:
     """Recursively scan every JSON, CSV, Markdown or text file under the root —
     and the embedded text metadata of every PNG — for a forbidden substring.
@@ -4066,6 +4079,10 @@ class OpenSetRunResult:
     stage_times_seconds: Dict[str, List[float]] = field(default_factory=dict)
 
 
+# One template per identity, formed by averaging the enrolled embeddings and
+# renormalising. Averaging moves a template towards the centre of the embedding
+# space, which raises its similarity to everyone, and that is why layer 2
+# detects more duplicates and also refers more innocent registrations.
 def build_identity_template(
     embeddings: Sequence[np.ndarray],
 ) -> np.ndarray:
@@ -4129,6 +4146,9 @@ def _call_embed(embed: Callable[..., Any], entry, detector, embedder):
     return embedding, failure, {}
 
 
+# --- Probe search and the supplementary consistency control ------------------
+
+
 def assigned_wrong_template(
     sample_id: str, enrolled: Sequence[EnrolledIdentity], *, seed: int
 ) -> Optional[EnrolledIdentity]:
@@ -4143,6 +4163,9 @@ def assigned_wrong_template(
     ordered = sorted(enrolled, key=lambda identity: identity.identity_hash)
     offset = int(sha256_of_text(f"{seed}:wrong-template:{sample_id}"), 16)
     return ordered[offset % len(ordered)]
+
+
+# --- Gallery enrolment, then probe search against the enrolled gallery --------
 
 
 def run_open_set_method(
@@ -4169,6 +4192,10 @@ def run_open_set_method(
         if entry.role == "gallery_enrolment":
             enrolment_images.setdefault(entry.identity_hash, []).append(entry)
 
+    # Method A enrols one image per identity and is the control; method B enrols
+    # three and is the proposed change. The minimum is what an identity must
+    # reach to be enrolled at all, so an identity short of it becomes a recorded
+    # coverage failure rather than a silently smaller template.
     take = SINGLE_IMAGE_ENROLMENT if method == METHOD_A else MULTI_IMAGE_ENROLMENT
     minimum = SINGLE_IMAGE_ENROLMENT if method == METHOD_A else MULTI_IMAGE_MINIMUM_ENROLMENT
 
@@ -4226,6 +4253,9 @@ def run_open_set_method(
     for entry in rows:
         if entry.role not in ("mated_probe", "non_mated_probe"):
             continue
+        # A mated probe whose identity failed enrolment has nothing to match
+        # against. That is an unresolved protocol outcome, not a miss, so it is
+        # recorded separately and kept out of the conditional denominators.
         if entry.role == "mated_probe" and entry.identity_hash not in enrolled_hashes:
             results.append(
                 OpenSetSearchResult(
@@ -4271,6 +4301,9 @@ def run_open_set_method(
         top_candidate, top_score = scored[0]
         second_score = scored[1][1] if len(scored) > 1 else None
 
+        # The mate's rank is needed for TPIR and CMC, and the highest impostor
+        # score for the margin feature. Both are meaningful only for a mated
+        # probe: a non-mated probe has no correct identity in the gallery.
         correct_rank: Optional[int] = None
         correct_score: Optional[float] = None
         highest_impostor: Optional[float] = None
@@ -4367,6 +4400,10 @@ def _scored(results: Sequence[OpenSetSearchResult], role: str) -> List[OpenSetSe
     return [r for r in results if r.role == role and r.failure_code is None]
 
 
+# Conditional rates: every denominator here counts probes that were actually
+# scored. Extraction failures are excluded and reported separately as coverage,
+# because a failure is neither a correct nor an incorrect decision. The
+# end-to-end rates elsewhere divide by all intended probes instead.
 def open_set_rates_at_threshold(
     results: Sequence[OpenSetSearchResult], threshold: float
 ) -> Dict[str, float]:
@@ -4422,6 +4459,16 @@ def open_set_rates_at_threshold(
 # privacy-sensitive: they describe how a face model responded to identifiable
 # people. It holds no raw photograph, face embedding or enrolled template, and
 # it stays local, access-restricted and excluded from Git.
+###############################################################################
+# Canonical run cache
+###############################################################################
+#
+# Experiments 6, 7 and 8 must report the same figures for the same method. Each
+# scoring the primary pipeline separately would let them drift, because OpenCV
+# detection is not bit-reproducible across processes. One run per partition is
+# therefore scored, cached and reused. Original project logic; no external
+# implementation is adapted.
+
 CANONICAL_RUN_CACHE = RAW_ROOT / "canonical_primary_run.json"
 CANONICAL_CACHE_SCHEMA_VERSION = 3
 
@@ -4627,6 +4674,9 @@ def context_digest(context: Mapping[str, Any]) -> str:
     return sha256_of_text(_canonical_json(context))
 
 
+# Timing fields are excluded because runtime varies between repeated executions
+# and would change the digest without any scientific outcome changing. Every
+# other field of every record contributes, so an edited decision is detected.
 def canonical_run_digest(run: OpenSetRunResult) -> str:
     """Digest over every non-timing outcome field.
 
@@ -4828,6 +4878,10 @@ def cache_invalidation_reason(
     return f"context differs in: {', '.join(differing) or 'unknown field'}"
 
 
+# A cache is accepted only when the recomputed context matches the stored one
+# and the stored payload is internally consistent. Anything else is rebuilt,
+# because publishing a figure from a cache built under different inputs would
+# misattribute the result.
 def canonical_primary_run(
     protocol: OpenSetProtocol,
     *,
@@ -5079,6 +5133,18 @@ def require_frozen_open_set_policy(payload: Mapping[str, Any], *, context: str =
 # are far too narrow. Identities are resampled instead, with subgroup
 # stratification preserved, which is the standard cluster bootstrap.
 
+##############
+# Title: Bootstrap Methods: Another Look at the Jackknife
+# Author: Efron, B., The Annals of Statistics, 7(1), pp. 1-26
+# Date: 1979
+# Availability: https://doi.org/10.1214/aos/1176344552
+##############
+# The resampling principle is Efron's. The clustering by identity, the subgroup
+# stratification and the percentile interval below are written for ACP-arden;
+# no external implementation is copied or adapted.
+
+# Replicate count is fixed rather than tuned. A larger count narrows the Monte
+# Carlo error of the interval endpoints, not the interval itself.
 BOOTSTRAP_REPLICATES = 2000
 
 
@@ -5199,6 +5265,8 @@ def cluster_bootstrap_intervals(
 # measured and are not applied to the held-out test.
 
 
+# Subgroup membership is read only when reporting. It is never a classifier
+# feature, a threshold input or a reason to apply a different decision policy.
 def subgroup_open_set_metrics(
     results: Sequence[OpenSetSearchResult],
     *,
@@ -5676,6 +5744,15 @@ def run_open_set_experiment(
 # signal. It does not independently establish that the photograph belongs to
 # another person: pose, lighting, occlusion, image quality, age difference,
 # detection failure and model error all produce the same outcome.
+###############################################################################
+# Profile-photo consistency
+###############################################################################
+#
+# A separate question from duplicate-profile screening, and the referral runs in
+# the opposite direction: a photograph is referred when it is *dissimilar* to
+# the profile's own enrolled template. The threshold is reused rather than
+# recalibrated, so the whole analysis is exploratory.
+
 PROFILE_CONSISTENCY_POLICY_NOTE = (
     "A photograph whose similarity to its own enrolled profile template is below the "
     "frozen consistency threshold opens an inconsistency review. A score at or above that "
@@ -7067,6 +7144,9 @@ class ReviewClassifier:
         }
 
 
+# Fitted on the development identities only, and on search-derived features
+# alone. No demographic attribute is a feature, and no held-out identity is seen
+# during fitting or during the probability-threshold calibration that follows.
 def fit_review_classifier(rows: Sequence[ReviewFeatureRow]) -> ReviewClassifier:
     """Fit the logistic regression on training identities only."""
     if not rows:
@@ -8941,9 +9021,22 @@ def _write_figure_captions(
         "is better.",
         "- **implementation_layers_coverage** — gallery, mated and non-mated coverage. The "
         "remainder in each bar is extraction failure, which is shown rather than hidden.",
-        "- **implementation_layers_performance_latency** — end-to-end detection against "
-        "mean search latency; point size is false reviews per 1,000, so the speed cost of a "
-        "stronger pipeline stays visible.",
+        "- **implementation_layers_performance_latency** — end-to-end duplicate detection "
+        "is plotted against mean complete-pipeline latency in milliseconds. Marker area "
+        "represents false reviews per 1,000 non-mated searches, so a larger marker "
+        "means more false reviews. Colour identifies the pipeline: layers 1-4 share "
+        "YuNet + SFace, layer 5 is SCRFD + ArcFace. Each point is labelled with its "
+        "layer number and a short method name. Better operating points lie towards "
+        "the upper-left with smaller markers. The latency axis begins at zero so the "
+        "cost difference reads as a ratio; the detection axis is padded around the "
+        "observed values rather than spanning 0-100%, because every layer lies above "
+        "85% and a full range would hide the differences. Layers 2, 3 and 4 record "
+        "an identical latency because they reuse the same extraction pipeline and "
+        "differ only in threshold or decision rule, so their markers share one "
+        "horizontal position. Latency excludes one-time model loading and is "
+        "specific to the recorded local evaluation environment; it is not a "
+        "portable performance claim. A layer without a measured complete-pipeline "
+        "latency is omitted from this figure rather than given an invented value.",
         "",
         "## Same-person and profile-photo figures (Figures E-F)",
         "",
@@ -9023,9 +9116,54 @@ def _write_figure_captions(
         "never applied to ArcFace. A complete-pipeline comparison: detection, alignment, "
         "preprocessing and embedding width all differ, so no difference is attributable to "
         "the embedding model alone.",
-        "- **implementation_layers_performance_latency** — end-to-end detection against "
-        "latency, point size being false reviews per 1,000. Latency excludes one-time model "
-        "loading. A stronger pipeline is not free and its cost is shown, not omitted.",
+        "- **implementation_layers_performance_latency** — end-to-end duplicate detection "
+        "is plotted against mean complete-pipeline latency in milliseconds. Marker area "
+        "represents false reviews per 1,000 non-mated searches, so a larger marker "
+        "means more false reviews. Colour identifies the pipeline: layers 1-4 share "
+        "YuNet + SFace, layer 5 is SCRFD + ArcFace. Each point is labelled with its "
+        "layer number and a short method name. Better operating points lie towards "
+        "the upper-left with smaller markers. The latency axis begins at zero so the "
+        "cost difference reads as a ratio; the detection axis is padded around the "
+        "observed values rather than spanning 0-100%, because every layer lies above "
+        "85% and a full range would hide the differences. Layers 2, 3 and 4 record "
+        "an identical latency because they reuse the same extraction pipeline and "
+        "differ only in threshold or decision rule, so their markers share one "
+        "horizontal position. Latency excludes one-time model loading and is "
+        "specific to the recorded local evaluation environment; it is not a "
+        "portable performance claim. A layer without a measured complete-pipeline "
+        "latency is omitted from this figure rather than given an invented value.",
+        "",
+        "## Open-set operating points and the review classifier",
+        "",
+        "- **open_set_operating_curve** — TPIR@1 (per cent, higher is better) against "
+        "FPIR (a proportion of non-mated searches, log scale, lower is better). Two "
+        "series: development, on which the threshold was selected, and the held-out "
+        "test, which never influenced selection. The log axis cannot show zero, so an "
+        "observed FPIR of zero is drawn at 1e-4; such a point marks the absence of an "
+        "observed false referral, not a measured rate of 1e-4.",
+        "- **duplicate_detection_by_method** — conditional TPIR@1, end-to-end duplicate "
+        "detection and gallery enrolment coverage as separate bars on a 0-100% axis. "
+        "They are kept apart because they use different denominators: conditional rates "
+        "divide by what was scored, end-to-end rates by every intended probe. Higher is "
+        "better in all three.",
+        "- **false_reviews_per_1000_by_method** — false human-review referrals per 1,000 "
+        "non-mated searches, comparing the single-image control with the three-image "
+        "proposed method. Lower is better. The count, not a percentage, is the "
+        "operationally meaningful quantity for a review queue.",
+        "- **ml_review_classifier_coefficients** — standardised logistic-regression "
+        "coefficients, one horizontal bar per feature. Blue is a positive coefficient, "
+        "which raises the modelled referral probability; red is negative, which lowers "
+        "it. Bar length is the magnitude of the standardised coefficient, so features "
+        "are comparable with one another. Feature names are the model's own, as "
+        "published in ml_review_model.json. These are associations within this "
+        "benchmark and are not causal claims; no demographic attribute is a feature.",
+        "- **subgroup_fpir_tpir_with_confidence_intervals** — the review classifier's "
+        "FPIR and TPIR@1 for each of the eight BFW subgroups, with 95% identity-cluster "
+        "bootstrap bounds. Each panel is bounded by its own observed interval rather "
+        "than a shared 0-100% axis, on which a sub-one-per-cent FPIR and a 95% TPIR "
+        "would both be unreadable; the axis range therefore differs between the two "
+        "panels and should be read from the tick labels. Subgroups appear in a fixed "
+        "alphabetical order shared with the other subgroup figures.",
         "",
         "## 12. Limitations",
         "",
@@ -9073,6 +9211,81 @@ IMPLEMENTATION_LAYERS = (
     "Layer 3\nthree images\nBFW calibration",
     "Layer 4\nreview classifier",
     "Layer 5\nSCRFD + ArcFace\nown calibration",
+)
+
+# Presentation only. Short forms for direct point labelling, where the full
+# three-line names above would not fit beside a marker.
+LAYER_SHORT_LABELS = (
+    "Single image + LFW threshold",
+    "Three images + LFW threshold",
+    "Three images + BFW threshold",
+    "Logistic classifier",
+    "SCRFD + ArcFace",
+)
+
+# One display name per pipeline, used in every figure so a reader does not have
+# to match a package identifier to a model pair.
+PIPELINE_DISPLAY_NAMES = {
+    "opencv": "YuNet + SFace",
+    "insightface": "SCRFD + ArcFace",
+}
+
+LAYER_PIPELINE_COLOURS = ("#4C72B0", "#DD8452")
+
+# Fixed label offsets in points, chosen because layers 2-4 record an identical
+# latency and layers 1 and 3 an identical detection rate: automatic placement
+# would stack the labels on top of one another.
+LAYER_LABEL_OFFSETS = (
+    (34, -26, "left"),
+    (34, 26, "left"),
+    (34, -52, "left"),
+    (34, 0, "left"),
+    (-34, 20, "right"),
+)
+
+# Reference values for the marker-area legend, spanning the observed range of
+# false-review burdens across the five layers.
+REVIEW_LEGEND_VALUES = (5.0, 50.0, 100.0, 150.0)
+
+
+def _review_marker_area(reviews: float) -> float:
+    """Marker area in points squared for a false-review rate.
+
+    Area rather than radius is made proportional to the rate, because a reader
+    compares the visual area of two markers. The floor keeps a near-zero rate
+    visible without suggesting it is larger than it is."""
+    if not isinstance(reviews, (int, float)) or reviews != reviews:
+        return 40.0
+    return 40.0 + float(reviews) * 9.0
+
+
+def pipeline_display_name(name: str) -> str:
+    """Map an internal pipeline identifier to its published display name.
+
+    Figures and reports must not label one pipeline two different ways, so the
+    model pair is named rather than the package that provides it."""
+    lowered = name.lower()
+    for key, label in PIPELINE_DISPLAY_NAMES.items():
+        if key in lowered:
+            return label
+    return name
+
+
+def subgroup_display_name(subgroup: str) -> str:
+    """Render a BFW subgroup key as readable axis text.
+
+    The stored keys use underscores, which read poorly on an axis. Only the
+    presentation changes; the key itself remains the value used in every
+    artefact."""
+    return subgroup.replace("_", " ").strip().capitalize()
+
+
+# Repeated verbatim wherever a subgroup interval is drawn. A percentile
+# bootstrap that observed no event returns 0%-0%, which describes the resampled
+# benchmark identities and not the population error probability.
+ZERO_EVENT_INTERVAL_NOTE = (
+    "A 0%–0% interval means no event was observed among the resampled benchmark "
+    "identities. It does not establish a population error probability of zero."
 )
 
 
@@ -9335,6 +9548,15 @@ def write_pipeline_sex_aggregates(
             writer.writerow([entry.get(c, "") for c in columns])
 
 
+###############################################################################
+# Report generation
+###############################################################################
+#
+# Every report is rendered from the published artefacts rather than from live
+# objects, so a figure, a table and a JSON file cannot disagree about the same
+# quantity.
+
+
 def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     """Consolidated write-up, ordered so each layer's intent is visible.
 
@@ -9591,6 +9813,11 @@ def generate_figures(
 ) -> List[Path]:
     """Produce every dissertation figure the available artefacts support."""
     plt = _figure_backend()
+    # Imported here rather than at module scope, because matplotlib is only
+    # required when figures are actually generated.
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import FuncFormatter, PercentFormatter
+
     figures_root.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
 
@@ -9670,21 +9897,110 @@ def generate_figures(
         path = figures_root / "implementation_layers_coverage.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)
 
-        fig, ax = plt.subplots(figsize=(8.0, 5.5))
-        for layer in layers:
+        # Three dimensions share one panel, so each is stated explicitly rather
+        # than left to be inferred: horizontal position is cost, vertical
+        # position is benefit, and marker area is the human-review burden.
+        fig, ax = plt.subplots(figsize=(12.0, 7.0))
+        plotted: List[Tuple[int, float, float, float]] = []
+        for index, layer in enumerate(layers):
             latency = layer["coverage"].get("complete_pipeline_latency_mean_ms")
             detection = _percent(layer["end_to_end"])
             reviews = layer["rates"].get("false_reviews_per_1000_non_mated", float("nan"))
-            if not (isinstance(latency, (int, float)) and latency == latency and detection == detection):
+            # A layer without a measured complete-pipeline latency is omitted
+            # here and explained in the caption; no value is invented for it.
+            if not (isinstance(latency, (int, float)) and latency == latency
+                    and detection == detection):
                 continue
-            size = 40 + (reviews * 6 if reviews == reviews else 0)
-            ax.scatter(latency, detection, s=size, alpha=0.75, color="#4C72B0")
-            ax.annotate(layer["name"].replace("\n", " "), (latency, detection),
-                        fontsize=6, xytext=(4, 4), textcoords="offset points")
-        ax.set_xlabel("Mean complete-pipeline latency per image (ms) — lower is better")
-        ax.set_ylabel("End-to-end duplicate detection (%)")
-        ax.set_title("Performance against cost — point size is false reviews per 1,000")
-        ax.set_ylim(bottom=0); ax.grid(alpha=0.3)
+            plotted.append((index, float(latency), detection, float(reviews)))
+
+        # Draw the largest markers first so a small marker sitting inside a
+        # large one stays visible. Layers 1 and 3 differ by a factor of
+        # seventeen in review burden at almost the same coordinates.
+        for index, latency, detection, reviews in sorted(
+            plotted, key=lambda row: -row[3]
+        ):
+            # Layers 1-4 share the YuNet + SFace extraction pipeline; layer 5 is
+            # the InsightFace comparison. Colour therefore identifies the
+            # pipeline, and the label identifies the layer within it.
+            colour = LAYER_PIPELINE_COLOURS[1] if index == 4 else LAYER_PIPELINE_COLOURS[0]
+            ax.scatter(latency, detection, s=_review_marker_area(reviews), alpha=0.55,
+                       color=colour, edgecolors="#333333", linewidths=0.6, zorder=3)
+            # Fixed per-layer offsets with a leader line. Layers 2-4 record an
+            # identical latency and layers 1 and 3 an identical detection rate,
+            # so automatic placement would overlap.
+            dx, dy, ha = LAYER_LABEL_OFFSETS[index]
+            ax.annotate(
+                f"L{index + 1}: {LAYER_SHORT_LABELS[index]}",
+                (latency, detection), xytext=(dx, dy), textcoords="offset points",
+                fontsize=9, ha=ha, va="center", zorder=4,
+                arrowprops={"arrowstyle": "-", "lw": 0.6, "color": "#666666",
+                            "shrinkA": 0, "shrinkB": 2},
+            )
+
+        latencies = [row[1] for row in plotted]
+        detections = [row[2] for row in plotted]
+        # The latency axis begins at zero so the fourfold cost difference is
+        # read as a ratio. The detection axis is not zero-based: every layer
+        # lies above 85%, and a 0-100% range would compress the differences the
+        # figure exists to show, so it is padded around the observed values.
+        ax.set_xlim(0, max(latencies) * 1.30 if latencies else 1.0)
+        span = (max(detections) - min(detections)) if detections else 1.0
+        ax.set_ylim(min(detections) - max(span * 0.45, 1.5),
+                    min(100.0, max(detections) + max(span * 0.45, 1.5)))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:.0f}%"))
+        ax.set_xlabel(
+            "Mean complete-pipeline latency per image (milliseconds) — lower is better",
+            fontsize=10,
+        )
+        ax.set_ylabel(
+            "End-to-end duplicate detection (%) — higher is better", fontsize=10
+        )
+        ax.set_title(
+            "Implementation layers: detection against cost\n"
+            "Marker area is false reviews per 1,000 non-mated searches; "
+            "larger markers mean more false reviews",
+            fontsize=11,
+        )
+        ax.grid(alpha=0.3, zorder=0)
+
+        # Two legends: one naming the pipeline behind each colour, one giving
+        # the marker-area scale in the units it encodes.
+        pipeline_handles = [
+            Line2D([], [], marker="o", linestyle="none", markersize=9,
+                   markerfacecolor=LAYER_PIPELINE_COLOURS[0], markeredgecolor="#333333",
+                   alpha=0.55, label=f"{PIPELINE_DISPLAY_NAMES['opencv']} (layers 1-4)"),
+            Line2D([], [], marker="o", linestyle="none", markersize=9,
+                   markerfacecolor=LAYER_PIPELINE_COLOURS[1], markeredgecolor="#333333",
+                   alpha=0.55, label=f"{PIPELINE_DISPLAY_NAMES['insightface']} (layer 5)"),
+        ]
+        pipeline_legend = ax.legend(
+            handles=pipeline_handles, loc="lower right", fontsize=9,
+            title="Pipeline", title_fontsize=9, framealpha=0.95,
+        )
+        ax.add_artist(pipeline_legend)
+        size_handles = [
+            Line2D([], [], marker="o", linestyle="none",
+                   markersize=(_review_marker_area(value) ** 0.5) / 2.0,
+                   markerfacecolor="#BBBBBB", markeredgecolor="#333333",
+                   alpha=0.55, label=f"{value:g}")
+            for value in REVIEW_LEGEND_VALUES
+        ]
+        ax.legend(
+            handles=size_handles, loc="upper left", fontsize=9, labelspacing=1.5,
+            borderpad=1.0, handletextpad=1.6, framealpha=0.95,
+            title="False reviews per 1,000\nnon-mated searches", title_fontsize=9,
+        )
+        # State the preferred direction rather than leaving it to be deduced.
+        # Placed lower-left, which the data leaves empty, so it covers neither
+        # legend nor any plotted point.
+        ax.text(
+            0.02, 0.03,
+            "Preferred direction: left (lower latency), upward (higher detection),\n"
+            "smaller marker (fewer false reviews)",
+            transform=ax.transAxes, ha="left", va="bottom", fontsize=9,
+            bbox={"boxstyle": "round,pad=0.4", "facecolor": "white",
+                  "edgecolor": "#999999", "alpha": 0.95},
+        )
         path = figures_root / "implementation_layers_performance_latency.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)
 
@@ -9701,8 +10017,10 @@ def generate_figures(
             metrics = with_histograms[name]
             hists = metrics["similarity_histograms"]
             for key, label, colour in (
-                ("mated_correct_identity", "Mated (correct identity)", "#4C72B0"),
-                ("non_mated_top1", "Non-mated (top-1)", "#DD8452"),
+                ("mated_correct_identity",
+                 "Mated: similarity to the probe's own enrolled template", "#4C72B0"),
+                ("non_mated_top1",
+                 "Non-mated: highest similarity against the gallery", "#DD8452"),
             ):
                 h = hists.get(key) or {}
                 counts, edges = h.get("counts") or [], h.get("bin_edges") or []
@@ -9714,9 +10032,15 @@ def generate_figures(
             threshold = metrics["development_threshold"]
             ax.axvline(threshold, color="black", linestyle="--", linewidth=1.2,
                        label=f"Frozen threshold {threshold:.3f}")
-            ax.set_xlabel("Cosine similarity")
-            ax.set_title(name.split("-")[0], fontsize=10)
-            ax.legend(fontsize=7)
+            ax.set_xlabel("Cosine similarity (dimensionless, -1 to 1)")
+            ax.set_title(pipeline_display_name(name), fontsize=11)
+            # Observed similarities occupy roughly the upper half of the range;
+            # plotting the full -1 to 1 span would leave most of the axis blank.
+            ax.set_xlim(0.0, 1.0)
+            # Headroom above the tallest bin, so the legend sits clear of the
+            # non-mated peak rather than on top of it.
+            ax.set_ylim(0, ax.get_ylim()[1] * 1.28)
+            ax.legend(fontsize=8, loc="upper right", framealpha=0.95)
             ax.grid(axis="y", alpha=0.3)
         axes[0].set_ylabel("Probe count")
         fig.suptitle(
@@ -9739,36 +10063,68 @@ def generate_figures(
     if per_pipeline_consistency:
         names = sorted(per_pipeline_consistency, key=lambda n: "opencv" not in n)
         outcomes = [
-            ("consistent_same_person_photographs", "Consistent\nsame-person"),
-            ("inconsistent_same_person_review_candidates", "Inconsistent\nreview candidate"),
+            ("consistent_same_person_photographs", "Consistent\nwith own profile"),
+            ("inconsistent_same_person_review_candidates", "Inconsistent\nreview opened"),
             ("open_set_non_mated_gallery_controls_correctly_identified",
-             "Open-set control\ncorrectly identified"),
+             "Correctly matched\nno enrolled profile"),
             ("open_set_non_mated_gallery_controls_false_consistent",
-             "Open-set control\nfalse-consistent"),
+             "Wrongly matched\nan enrolled profile"),
             ("wrong_profile_template_controls_correctly_inconsistent",
-             "Wrong-template\ncorrectly inconsistent"),
+             "Correctly inconsistent\nwith wrong profile"),
             ("wrong_profile_template_controls_false_consistent",
-             "Wrong-template\nfalse-consistent"),
+             "Wrongly consistent\nwith wrong profile"),
             ("same_person_extraction_failures", "Extraction\nfailure"),
             ("gallery_reference_unavailable", "Reference\nunavailable"),
         ]
-        fig, ax = plt.subplots(figsize=(11.0, 5.0))
+        # The eight outcomes answer four separate questions. Grouping them
+        # visually stops a reader comparing a same-person count directly with a
+        # control count, which have different denominators.
+        outcome_groups = (
+            ("Same-person photographs", 0, 2),
+            ("Open-set non-mated gallery control", 2, 4),
+            ("Wrong-profile-template control", 4, 6),
+            ("Unresolved", 6, 8),
+        )
+        fig, ax = plt.subplots(figsize=(15.0, 7.0))
         positions = np.arange(len(outcomes))
         width = 0.8 / max(len(names), 1)
         for index, name in enumerate(names):
             entry = per_pipeline_consistency[name]
             offset = (index - (len(names) - 1) / 2) * width
             values = [entry.get(key, 0) for key, _ in outcomes]
-            ax.bar(positions + offset, values, width, label=name.split("-")[0],
-                   color=("#4C72B0", "#DD8452")[index % 2])
-        ax.set_xticks(positions)
-        ax.set_xticklabels([label for _, label in outcomes], fontsize=7)
-        ax.set_ylabel("Photographs")
-        ax.set_title(
-            "Profile-photo consistency outcomes — an inconsistent result is a review "
-            "signal, not proof of photo theft or fraud"
+            bars = ax.bar(positions + offset, values, width,
+                          label=pipeline_display_name(name),
+                          color=("#4C72B0", "#DD8452")[index % 2])
+            # Several outcomes are two orders of magnitude smaller than the
+            # largest bar, so the count is printed rather than left to be read
+            # off an axis on which the bar is invisible.
+            ax.bar_label(bars, fmt="%d", fontsize=8, padding=2)
+
+        ceiling = max(
+            (entry.get(key, 0) or 0)
+            for entry in per_pipeline_consistency.values() for key, _ in outcomes
         )
-        ax.legend(fontsize=8)
+        # Headroom for the printed counts and the group headings above them.
+        ax.set_ylim(0, ceiling * 1.28 if ceiling else 1.0)
+        for label, start, stop in outcome_groups:
+            centre = (start + stop - 1) / 2.0
+            ax.text(centre, ceiling * 1.20, label, ha="center", va="bottom",
+                    fontsize=9, fontweight="bold", color="#333333")
+            if stop < len(outcomes):
+                # Separator sits between two groups, never through a bar.
+                ax.axvline(stop - 0.5, color="#BBBBBB", linewidth=0.8, zorder=0)
+        ax.set_xticks(positions)
+        ax.set_xticklabels([label for _, label in outcomes], fontsize=8)
+        ax.set_ylabel("Photographs (count)")
+        ax.set_title(
+            "Profile-photo consistency outcomes by category\n"
+            "An inconsistent result is a review signal, not proof of photo theft or fraud",
+            fontsize=11,
+        )
+        # Below the group headings and inside the empty left region, so it
+        # covers neither a heading nor a bar.
+        ax.legend(fontsize=9, loc="upper left", bbox_to_anchor=(0.01, 0.88),
+                  framealpha=0.95)
         ax.grid(axis="y", alpha=0.3)
         path = figures_root / "profile_photo_consistency_outcomes.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)
@@ -9840,25 +10196,43 @@ def generate_figures(
                         upper.append(max(_percent(float(row[f"{metric}_upper_95"])) - value, 0))
                     ax.errorbar(positions + offset, centre, yerr=[lower, upper], fmt="o",
                                 capsize=3, markersize=4, color=colour,
-                                label=name.split("-")[0])
+                                label=pipeline_display_name(name))
                 ax.set_xticks(positions)
-                ax.set_xticklabels([m.replace(suffix[1:], "") for m in members],
-                                   rotation=35, ha="right", fontsize=7)
+                # Strip the sex suffix, which the panel title already states,
+                # and render the remaining category as readable axis text.
+                ax.set_xticklabels(
+                    [subgroup_display_name(m.replace(suffix, "")) for m in members],
+                    rotation=30, ha="right", fontsize=9,
+                )
                 ax.set_title(title, fontsize=9)
                 ax.grid(axis="y", alpha=0.3)
                 # FPIR on its own bound; every other panel on the common
                 # 0-100% scale so they stay comparable with one another.
                 ax.set_ylim(0, fpir_limit if metric == "fpir" else 100)
+                # FPIR needs its own bound; the remaining panels stay on the
+                # common 0-100% scale so they compare with one another.
+                # The metric is bound as a default argument: a bare closure
+                # would capture the loop variable and give every panel the
+                # final metric's precision.
+                ax.yaxis.set_major_formatter(FuncFormatter(
+                    lambda v, _pos, is_fpir=(metric == "fpir"):
+                    f"{v:.2f}%" if is_fpir else f"{v:.0f}%"
+                ))
+                ax.tick_params(axis="y", labelsize=8)
                 if metric == "fpir":
-                    ax.set_ylabel("Per cent (95% identity-cluster CI)", fontsize=8)
-                    ax.tick_params(axis="y", labelsize=7)
-            axes[1].set_ylabel("Per cent (95% identity-cluster CI)")
+                    ax.set_ylabel("Per cent (95% identity-cluster CI)", fontsize=9)
+            axes[1].set_ylabel("Per cent (95% identity-cluster CI)", fontsize=9)
             handles, labels = axes[0].get_legend_handles_labels()
             fig.legend(handles[:len(pipeline_order)], labels[:len(pipeline_order)],
-                       loc="upper right", fontsize=8)
+                       loc="lower center", ncol=len(pipeline_order), fontsize=9,
+                       bbox_to_anchor=(0.5, -0.10), frameon=False)
             fig.suptitle(
-                f"{sex.capitalize()} subgroup performance, BFW held-out test", y=1.02
+                f"{sex.capitalize()} subgroup performance, BFW held-out test", y=1.03
             )
+            # Stated on the figure itself, because a zero-width interval is
+            # easily over-read as proof of a zero population error rate.
+            fig.text(0.5, -0.17, ZERO_EVENT_INTERVAL_NOTE, ha="center", fontsize=8,
+                     color="#444444")
             path = figures_root / f"{sex}_subgroup_pipeline_comparison.png"
             _save_figure(fig, path); plt.close(fig); written.append(path)
 
@@ -9867,15 +10241,20 @@ def generate_figures(
     if pipeline and (pipeline.get("held_out_metrics") or {}):
         for name, metrics in pipeline["held_out_metrics"].items():
             for sex, entry in (metrics.get("sex_aggregated") or {}).items():
-                sex_groups[f"{name.split('-')[0]} — {sex}"] = entry
+                sex_groups[f"{pipeline_display_name(name)} — {sex}"] = entry
     else:
         sex_path = aggregate_root / "bfw_sex_aggregated_metrics.json"
         if sex_path.is_file():
             for sex, entry in read_json_artifact(sex_path).get("groups", {}).items():
-                sex_groups[f"{MODEL_VERSION.split('-')[0]} — {sex}"] = entry
+                sex_groups[f"{pipeline_display_name(MODEL_VERSION)} — {sex}"] = entry
 
     if sex_groups:
-        names = sorted(sex_groups)
+        # Same pipeline order as every other comparison figure: the baseline
+        # YuNet + SFace pair first, then the InsightFace comparison.
+        names = sorted(
+            sex_groups,
+            key=lambda label: (PIPELINE_DISPLAY_NAMES["opencv"] not in label, label),
+        )
         palette = ("#4C72B0", "#8FB2D9", "#DD8452", "#EFB48C")
         width = 0.8 / max(len(names), 1)
 
@@ -9913,12 +10292,22 @@ def generate_figures(
                 ax.bar(positions + offset, centre, width, label=name,
                        color=palette[index % len(palette)], yerr=[lower, upper],
                        capsize=3)
-            ax.set_xticks(positions); ax.set_xticklabels(labels, fontsize=8)
-            ax.set_ylim(0, limit); ax.set_title(title, fontsize=9)
-            ax.set_ylabel("Per cent (95% identity-cluster CI)", fontsize=8)
+            ax.set_xticks(positions); ax.set_xticklabels(labels, fontsize=9)
+            ax.set_ylim(0, limit); ax.set_title(title, fontsize=10)
+            ax.set_ylabel("Per cent (95% identity-cluster CI)", fontsize=9)
+            # Bound as a default argument for the same reason as above.
+            ax.yaxis.set_major_formatter(FuncFormatter(
+                lambda v, _pos, fine=(limit < 10):
+                f"{v:.2f}%" if fine else f"{v:.0f}%"
+            ))
             ax.grid(axis="y", alpha=0.3)
-        axes[1].legend(fontsize=7)
+        # Placed below the panels so it cannot cover a bar or an interval.
+        handles, legend_labels = axes[1].get_legend_handles_labels()
+        fig.legend(handles, legend_labels, loc="lower center", ncol=2, fontsize=9,
+                   bbox_to_anchor=(0.5, -0.14), frameon=False)
         fig.suptitle("Aggregate female against male, pooled over identity outcomes")
+        fig.text(0.5, -0.21, ZERO_EVENT_INTERVAL_NOTE, ha="center", fontsize=8,
+                 color="#444444")
         path = figures_root / "female_male_aggregate_comparison.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)
 
@@ -9995,8 +10384,12 @@ def generate_figures(
         ys = [_percent(points[k]["tpir_rank1"]) for k in sorted(points)]
         ax.plot(xs, ys, "s-", label="Held-out test (never used to select)", color="#C44E52")
         ax.set_xscale("log")
-        ax.set_xlabel("FPIR (log scale)")
-        ax.set_ylabel("TPIR@1 (%)")
+        ax.set_xlabel(
+            "FPIR — false positive identification rate, proportion of non-mated "
+            "searches (log scale) — lower is better"
+        )
+        ax.set_ylabel("TPIR@1 (%) — higher is better")
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:.0f}%"))
         ax.set_ylim(0, 100)
         ax.set_title("Open-set operating points: TPIR@1 against FPIR")
         ax.legend(loc="lower right", fontsize=8)
@@ -10013,23 +10406,38 @@ def generate_figures(
         if rows:
             names = [r["subgroup"] for r in rows]
             positions = list(range(len(names)))
-            fig, axes = plt.subplots(2, 1, figsize=(8.5, 7.5), sharex=True)
+            fig, axes = plt.subplots(2, 1, figsize=(10.0, 7.0), sharex=True)
             for ax, key, title in (
-                (axes[0], "fpir", "FPIR by subgroup (95% CI)"),
-                (axes[1], "tpir_rank1", "TPIR@1 by subgroup (95% CI)"),
+                (axes[0], "fpir", "FPIR by subgroup, lower is better (95% CI)"),
+                (axes[1], "tpir_rank1", "TPIR@1 by subgroup, higher is better (95% CI)"),
             ):
                 centre = [_percent(float(r[key])) for r in rows]
                 lower = [max(centre[i] - _percent(float(rows[i][f"{key}_lower_95"])), 0) for i in positions]
                 upper = [max(_percent(float(rows[i][f"{key}_upper_95"])) - centre[i], 0) for i in positions]
                 ax.errorbar(positions, centre, yerr=[lower, upper], fmt="o", capsize=4,
                             color="#4C72B0")
-                ax.set_ylabel("Per cent")
-                ax.set_title(title)
-                ax.set_ylim(bottom=0)
+                ax.set_ylabel("Per cent (95% identity-cluster CI)", fontsize=9)
+                ax.set_title(title, fontsize=10)
+                # Each metric is bounded by its own observed interval rather
+                # than a shared 0-100% axis, on which a sub-one-per-cent FPIR
+                # and a 95% TPIR would both be unreadable.
+                top = max(centre[i] + upper[i] for i in positions)
+                ax.set_ylim(0 if key == "fpir"
+                            else max(0.0, min(centre[i] - lower[i] for i in positions) - 5.0),
+                            top * 1.10 if key == "fpir" else min(100.5, top + 2.0))
+                ax.yaxis.set_major_formatter(FuncFormatter(
+                    lambda v, _pos, is_fpir=(key == "fpir"):
+                    f"{v:.1f}%" if is_fpir else f"{v:.0f}%"
+                ))
                 ax.grid(axis="y", alpha=0.3)
             axes[1].set_xticks(positions)
-            axes[1].set_xticklabels(names, rotation=30, ha="right")
+            axes[1].set_xticklabels(
+                [subgroup_display_name(n) for n in names], rotation=30, ha="right",
+                fontsize=9,
+            )
             fig.suptitle("Subgroup performance of the review classifier", y=0.98)
+            fig.text(0.5, -0.06, ZERO_EVENT_INTERVAL_NOTE, ha="center", fontsize=8,
+                     color="#444444")
             path = figures_root / "subgroup_fpir_tpir_with_confidence_intervals.png"
             _save_figure(fig, path)
             plt.close(fig)
@@ -10045,7 +10453,12 @@ def generate_figures(
         ax.barh(order, weights, color=colours)
         ax.axvline(0.0, color="black", linewidth=0.8)
         ax.set_xlabel("Standardised logistic-regression coefficient")
-        ax.set_title("Review-classifier coefficients (association, not causation)")
+        ax.set_title(
+            "Review-classifier coefficients (association, not causation)\n"
+            "Positive raises the referral probability; negative lowers it. Feature "
+            "names are the model's own, as published in ml_review_model.json",
+            fontsize=10,
+        )
         ax.grid(axis="x", alpha=0.3)
         path = figures_root / "ml_review_classifier_coefficients.png"
         _save_figure(fig, path)
@@ -10057,37 +10470,50 @@ def generate_figures(
     if held_out:
         # Both evaluated pipelines, never the primary alone once ArcFace exists.
         names = sorted(held_out, key=lambda n: "opencv" not in n)
-        fig, (left, right) = plt.subplots(1, 2, figsize=(11.0, 4.6))
+        fig, (left, right) = plt.subplots(1, 2, figsize=(14.0, 5.4))
         coverage_labels = ["Gallery", "Mated probe", "Non-mated probe"]
         positions = np.arange(len(coverage_labels)); width = 0.35
         for offset, name, colour in zip((-width / 2, width / 2), names, ("#4C72B0", "#DD8452")):
             c = held_out[name]["coverage"]
-            left.bar(positions + offset, [
+            bars = left.bar(positions + offset, [
                 _percent(c["gallery_enrolment_coverage"]),
                 _percent(1.0 - c["mated_extraction_failure_rate"]),
                 _percent(1.0 - c["non_mated_extraction_failure_rate"]),
-            ], width, label=name.split("-")[0], color=colour)
+            ], width, label=pipeline_display_name(name), color=colour)
+            # Coverage sits near the ceiling. The axis stays 0-100% so the bars
+            # are not visually exaggerated, and the value is printed so the
+            # difference between 94% and 100% is still legible.
+            left.bar_label(bars, fmt="%.1f%%", fontsize=8, padding=2)
         left.set_xticks(positions); left.set_xticklabels(coverage_labels)
-        left.set_ylabel("Coverage (%) — higher is better"); left.set_ylim(0, 100)
-        left.set_title("Extraction coverage"); left.legend(fontsize=8)
+        left.set_ylabel("Coverage (%) — higher is better")
+        # Ticks stop at 100%, but the limit leaves room for the printed values
+        # so they do not run into the panel title.
+        left.set_ylim(0, 110); left.set_yticks(list(range(0, 101, 20)))
+        left.set_title("Extraction coverage")
+        # Coverage is near the ceiling, so a legend inside the axes would sit
+        # on top of the bars.
+        left.legend(fontsize=9, loc="lower left", framealpha=0.95)
+        left.yaxis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:.0f}%"))
         left.grid(axis="y", alpha=0.3)
 
         latency_keys = [
-            ("embedding_latency_mean_ms", "Embed\nmean"),
-            ("embedding_latency_p95_ms", "Embed\np95"),
-            ("complete_pipeline_latency_mean_ms", "Complete\nmean"),
-            ("complete_pipeline_latency_p95_ms", "Complete\np95"),
-            ("top1_search_time_mean_ms", "Search\nmean"),
-            ("top1_search_time_p95_ms", "Search\np95"),
+            ("embedding_latency_mean_ms", "Embedding, mean"),
+            ("embedding_latency_p95_ms", "Embedding, 95th pct"),
+            ("complete_pipeline_latency_mean_ms", "Complete pipeline, mean"),
+            ("complete_pipeline_latency_p95_ms", "Complete pipeline, 95th pct"),
+            ("top1_search_time_mean_ms", "Gallery search, mean"),
+            ("top1_search_time_p95_ms", "Gallery search, 95th pct"),
         ]
         positions = np.arange(len(latency_keys))
         for offset, name, colour in zip((-width / 2, width / 2), names, ("#4C72B0", "#DD8452")):
             c = held_out[name]["coverage"]
             values = [c.get(k) if isinstance(c.get(k), (int, float)) else float("nan")
                       for k, _ in latency_keys]
-            right.bar(positions + offset, values, width, label=name.split("-")[0], color=colour)
+            right.bar(positions + offset, values, width,
+                      label=pipeline_display_name(name), color=colour)
         right.set_xticks(positions)
-        right.set_xticklabels([lab for _, lab in latency_keys], fontsize=7)
+        right.set_xticklabels([lab for _, lab in latency_keys], fontsize=9,
+                              rotation=25, ha="right")
         right.set_ylabel("Milliseconds per image — lower is better")
         right.set_ylim(bottom=0); right.set_title("Latency (model loading excluded)")
         right.legend(fontsize=8); right.grid(axis="y", alpha=0.3)
@@ -10834,7 +11260,7 @@ def experiment_evaluate_lfw(
 
     protocol_sha256 = sha256_of_file(protocol_path)
     evaluated_images = {p.left_path for p in pairs} | {p.right_path for p in pairs}
-    # Recorded before any freeze rewrite, so a development artifact references
+    # Recorded before any freeze rewrite, so a development artefact references
     # the candidates file it actually selected from.
     threshold_artifact_sha256 = sha256_of_file(threshold_artifact)
     threshold_payload = read_json_artifact(threshold_artifact)
