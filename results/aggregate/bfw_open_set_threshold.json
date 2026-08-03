@@ -1,6 +1,6 @@
 {
   "artifact_type": "bfw_open_set_threshold",
-  "created_at": "2026-08-02T22:57:28.917600+00:00",
+  "created_at": "2026-08-03T01:53:25.396974+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
@@ -27,7 +27,7 @@
   "developed_on": "BFW development partition (identity-disjoint from test)",
   "limitations": [
     "This remains a proof of concept. No result here proves fraud, misuse or misrepresentation by any person.",
-    "No automatic sanction is applied. A score above threshold opens a case for human review and nothing else.",
+    "No automatic sanction is applied. Every outcome opens a case for human review and nothing else. In this gallery-screening experiment the referral is triggered by a high similarity to another enrolled identity; profile-photo consistency refers a low similarity to the profile's own template instead, and an extraction failure makes no decision at all.",
     "The BFW open-set evaluation uses a protocol defined by this project. BFW publishes verification and bias-analysis protocols, not an open-set identification protocol.",
     "Development and test identities are completely disjoint, and the operating threshold was frozen before the held-out test partition was scored.",
     "Extraction failures are counted as coverage failures, never as genuine no-match decisions.",
@@ -78,7 +78,7 @@
     }
   },
   "pipeline_name": "opencv-sface-2021dec-yunet-2023mar",
-  "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
+  "policy_note": "Duplicate-profile screening: a high similarity to another enrolled gallery identity opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity. This polarity applies to gallery screening; profile-photo consistency refers a *low* similarity instead, and an extraction failure makes no decision at all.",
   "preprocessing_revision": "opencv-yunet-sface-exif-bgr-l2-v1",
   "primary_fpir_target": 0.003,
   "protocol_digest": "549790b77cfc7abaf1a90748a7ebda86be9e988cb4aaf56af04136566b8191b1",

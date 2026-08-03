@@ -11,9 +11,19 @@ This is a research artefact, not a dating application and not a fraud
 detector. No face-detection or face-recognition network is trained or
 fine-tuned. Experiment 7 trains a small logistic-regression review classifier
 using identity-disjoint BFW development data. No website is scraped, and no
-account is ever banned, rejected, accused or classified as a scam. A
-similarity above the operating threshold opens a case for a human reviewer
-and nothing more.
+account is ever banned, rejected, accused or classified as a scam. Every
+outcome opens a case for a human reviewer and nothing more.
+
+The referral direction depends on the question, and the two must not be
+conflated:
+
+    duplicate-profile screening   a *high* similarity to another enrolled
+                                  gallery identity opens a duplicate-profile
+                                  review
+    profile-photo consistency     a *low* similarity to the profile's own
+                                  enrolled template opens an inconsistency
+                                  review
+    extraction failure            no match or mismatch decision is made
 
 Methodological boundary, enforced in code rather than only in prose:
 
@@ -27,7 +37,7 @@ Run it with the VS Code play button, or:
     python ACP_arden.py                    # interactive menu
     python ACP_arden.py --mode self-test   # deterministic synthetic tests
 
-Datasets and the two pinned ONNX model files are never stored in this
+Datasets and every ONNX model file are never stored in this
 project. Their locations are read from a local, git-ignored ``.env``.
 """
 
@@ -246,8 +256,11 @@ SCHEMA_VERSION = 1
 GALLERY_METHODOLOGY_REVISION = "open-set-gallery-accounting-v2"
 
 POLICY_NOTE = (
-    "A result above threshold opens a case for human review only. It is not "
-    "evidence of scam activity and does not ban, reject or accuse any identity."
+    "Duplicate-profile screening: a high similarity to another enrolled gallery "
+    "identity opens a case for human review only. It is not evidence of scam activity "
+    "and does not ban, reject or accuse any identity. This polarity applies to gallery "
+    "screening; profile-photo consistency refers a *low* similarity instead, and an "
+    "extraction failure makes no decision at all."
 )
 
 
@@ -4032,6 +4045,13 @@ class OpenSetSearchResult:
     gallery_size: Optional[int] = None
     probe_detection_confidence: Optional[float] = None
     probe_face_area_ratio: Optional[float] = None
+    # Supplementary direct profile-consistency control (section 27). One
+    # deterministically assigned wrong enrolled template, compared with this
+    # photograph alone. Recorded for non-mated probes only, and deliberately
+    # excluded from the review classifier's feature list: it is an evaluation
+    # measurement, not something a deployment would compute at decision time.
+    assigned_wrong_identity_hash: Optional[str] = None
+    assigned_wrong_template_similarity: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -4107,6 +4127,22 @@ def _call_embed(embed: Callable[..., Any], entry, detector, embedder):
         return result
     embedding, failure = result
     return embedding, failure, {}
+
+
+def assigned_wrong_template(
+    sample_id: str, enrolled: Sequence[EnrolledIdentity], *, seed: int
+) -> Optional[EnrolledIdentity]:
+    """Pick one wrong enrolled template for a control photograph.
+
+    Deterministic in the protocol seed and the opaque sample identifier, so the
+    same photograph always draws the same wrong profile and the control can be
+    reproduced without storing the assignment. The gallery is ordered by its
+    opaque identity hashes, never by a private name."""
+    if not enrolled:
+        return None
+    ordered = sorted(enrolled, key=lambda identity: identity.identity_hash)
+    offset = int(sha256_of_text(f"{seed}:wrong-template:{sample_id}"), 16)
+    return ordered[offset % len(ordered)]
 
 
 def run_open_set_method(
@@ -4246,6 +4282,22 @@ def run_open_set_method(
             impostors = [s for c, s in scored if c.identity_hash != entry.identity_hash]
             highest_impostor = max(impostors) if impostors else None
 
+        # Supplementary direct control: compare this photograph with exactly one
+        # deterministically assigned wrong enrolled template. A non-mated probe
+        # is enrolled nowhere, so every gallery identity is a wrong one and no
+        # exclusion is needed. Assignment is by the protocol seed and the opaque
+        # identifier alone, so it is reproducible and independent of scoring.
+        wrong_hash: Optional[str] = None
+        wrong_score: Optional[float] = None
+        if entry.role == "non_mated_probe":
+            wrong = assigned_wrong_template(entry.sample_id, enrolled, seed=protocol.seed)
+            if wrong is not None:
+                wrong_hash = wrong.identity_hash
+                wrong_score = next(
+                    score for candidate, score in similarities
+                    if candidate.identity_hash == wrong_hash
+                )
+
         top5_scores = [score for _candidate, score in scored[:5]]
         results.append(
             OpenSetSearchResult(
@@ -4258,6 +4310,7 @@ def run_open_set_method(
                 len(enrolled),
                 probe_meta.get("probe_detection_confidence"),
                 probe_meta.get("probe_face_area_ratio"),
+                wrong_hash, wrong_score,
             )
         )
 
@@ -4370,7 +4423,13 @@ def open_set_rates_at_threshold(
 # people. It holds no raw photograph, face embedding or enrolled template, and
 # it stays local, access-restricted and excluded from Git.
 CANONICAL_RUN_CACHE = RAW_ROOT / "canonical_primary_run.json"
-CANONICAL_CACHE_SCHEMA_VERSION = 2
+CANONICAL_CACHE_SCHEMA_VERSION = 3
+
+# Any change to extraction, template construction, search, ranking or failure
+# accounting changes what a cached run means, without necessarily changing a
+# model digest or a library version. Incrementing this revision retires every
+# cache produced by the previous logic.
+CANONICAL_PIPELINE_REVISION = "opencv-yunet-sface-open-set-v2"
 
 CANONICAL_CACHE_PRIVACY_NOTE = (
     "The cache contains privacy-sensitive derived face-comparison scores and decisions, "
@@ -4378,11 +4437,31 @@ CANONICAL_CACHE_PRIVACY_NOTE = (
     "access-restricted and excluded from Git."
 )
 
+# Owner-only, because the cache holds derived scores about identifiable people.
+CANONICAL_CACHE_DIR_MODE = 0o700
+CANONICAL_CACHE_FILE_MODE = 0o600
+
 # Every non-timing field of a search result contributes to the outcome digest.
 # Timing is excluded because it varies between runs by design.
 _DIGEST_EXCLUDED_FIELDS = frozenset({
     "top1_time_seconds", "top5_time_seconds",
 })
+
+# A cache is only trusted when every one of these is present with the right
+# type. A missing or retyped field means the file is not what this programme
+# wrote, so it is rebuilt rather than parsed defensively.
+_CACHE_REQUIRED_FIELDS: Dict[str, Any] = {
+    "cache_schema_version": int,
+    "canonical_run_digest": str,
+    "canonical_context": dict,
+    "canonical_context_sha256": str,
+    "method": str,
+    "partition": str,
+    "gallery_size": int,
+    "comparisons_per_probe": int,
+    "enrolment_outcomes": list,
+    "search_results": list,
+}
 
 
 def canonical_cache_path(partition: str, base: Path = CANONICAL_RUN_CACHE) -> Path:
@@ -4410,27 +4489,38 @@ def canonical_run_context(
 
     rows = protocol.partition(partition)
     provenance = bfw_dataset_provenance(dataset) if dataset is not None else {}
+    # Prefer the detector's own settings over the module constants, so a
+    # detector constructed with non-default settings cannot reuse a cache built
+    # under the defaults.
+    settings = getattr(detector, "settings", None) or DetectorSettings()
     return {
         "cache_schema_version": CANONICAL_CACHE_SCHEMA_VERSION,
+        "pipeline_revision": CANONICAL_PIPELINE_REVISION,
         "partition": partition,
         "dataset_metadata_sha256": provenance.get("metadata_sha256"),
         "evaluated_image_set_sha256": provenance.get("evaluated_image_set_sha256"),
         "protocol_version": BFW_PROTOCOL_VERSION,
-        "protocol_digest": sha256_of_text(
-            "\n".join(sorted(f"{e.partition}:{e.role}:{e.sample_id}" for e in protocol.entries))
-        ),
-        "public_manifest_digest": sha256_of_text(
-            "\n".join(sorted(f"{e.partition}:{e.role}:{e.sample_id}" for e in protocol.entries))
-        ),
+        # The published manifest digest covers sample, role and partition only.
+        # Kept unchanged because artefacts already reference it.
+        "public_manifest_digest": public_manifest_digest(protocol),
+        # Cache invalidation needs more: moving a sample to another identity or
+        # subgroup changes what a cached score means while leaving the sample
+        # identifier, role and partition untouched.
+        "private_cache_protocol_context_digest": private_protocol_context_digest(protocol),
         "model_filenames": [YUNET_FILENAME, SFACE_FILENAME],
         "model_sha256": {
             "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
             "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
         },
         "preprocessing_revision": PREPROCESSING_REVISION,
-        "detector_input_size": [320, 320],
-        "detector_score_threshold": DETECTOR_SCORE_THRESHOLD,
-        "detector_nms_threshold": DETECTOR_NMS_THRESHOLD,
+        # YuNet is re-sized to each image's own dimensions before detection, so
+        # the constructor size is only the initial value, never the size the
+        # detector actually runs at.
+        "detector_initial_input_size": [320, 320],
+        "detector_input_strategy": "native_image_dimensions_per_image",
+        "detector_score_threshold": settings.score_threshold,
+        "detector_nms_threshold": settings.nms_threshold,
+        "detector_top_k": settings.top_k,
         "exactly_one_face_required": True,
         "embedding_dimensions": EMBEDDING_DIMENSIONS,
         "gallery_images_per_identity": MULTI_IMAGE_ENROLMENT,
@@ -4457,6 +4547,42 @@ def canonical_run_context(
     }
 
 
+def public_manifest_digest(protocol: OpenSetProtocol) -> str:
+    """Digest over the published protocol manifest: sample, role and partition."""
+    return sha256_of_text(
+        "\n".join(sorted(f"{e.partition}:{e.role}:{e.sample_id}" for e in protocol.entries))
+    )
+
+
+def private_protocol_context_digest(protocol: OpenSetProtocol) -> str:
+    """Digest over the complete opaque assignment of every protocol entry.
+
+    Covers the identity and subgroup as well as the sample, role and partition,
+    together with the grouping of enrolment images under each opaque identity.
+    Reassigning a sample to a different identity or subgroup therefore
+    invalidates a cache even though the published manifest is unchanged.
+
+    Only opaque identifiers enter the digest. No private identity name,
+    absolute path or raw filename is hashed or stored."""
+    entries = sorted(
+        f"{e.partition}:{e.role}:{e.sample_id}:{e.identity_hash}:{e.subgroup}"
+        for e in protocol.entries
+    )
+    # The enrolment grouping is part of the context in its own right: the same
+    # images distributed differently across identities build different
+    # templates and so produce different scores.
+    grouping: Dict[str, List[str]] = {}
+    for entry in protocol.entries:
+        if entry.role == "gallery_enrolment":
+            grouping.setdefault(
+                f"{entry.partition}:{entry.identity_hash}", []
+            ).append(entry.sample_id)
+    grouped = sorted(
+        f"{key}=[{','.join(sorted(samples))}]" for key, samples in grouping.items()
+    )
+    return sha256_of_text("\n".join(entries) + "\n--\n" + "\n".join(grouped))
+
+
 def _package_version(name: str) -> Optional[str]:
     try:
         return importlib_metadata.version(name)
@@ -4464,11 +4590,29 @@ def _package_version(name: str) -> Optional[str]:
         return None
 
 
+def _stable_float(value: float) -> str:
+    """A round-trip-exact textual form for a float.
+
+    Decimal truncation would let two genuinely different similarities collide
+    in the digest, so the outcome hash uses float.hex(), which is exact and
+    distinguishes negative zero from zero. The non-finite values have no hex
+    form and are named explicitly."""
+    if value != value:
+        return "float:nan"
+    if value == math.inf:
+        return "float:+inf"
+    if value == -math.inf:
+        return "float:-inf"
+    return f"float:{value.hex()}"
+
+
 def _canonical_json(payload: Any) -> str:
-    """Stable serialisation: UTF-8, sorted keys, consistent float formatting."""
+    """Stable serialisation: UTF-8, sorted keys, exact float representation."""
     def normalise(value: Any) -> Any:
+        if isinstance(value, bool):
+            return value
         if isinstance(value, float):
-            return format(value, ".12g") if value == value else "nan"
+            return _stable_float(value)
         if isinstance(value, dict):
             return {k: normalise(v) for k, v in sorted(value.items())}
         if isinstance(value, (list, tuple)):
@@ -4529,6 +4673,7 @@ def save_canonical_run(
     digest = canonical_run_digest(run)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    _restrict_permissions(path.parent, CANONICAL_CACHE_DIR_MODE)
     payload = {
         "cache_schema_version": CANONICAL_CACHE_SCHEMA_VERSION,
         "canonical_run_digest": digest,
@@ -4543,9 +4688,64 @@ def save_canonical_run(
         "search_results": [_search_result_to_row(r) for r in run.search_results],
         "stage_times_seconds": run.stage_times_seconds,
         "privacy_note": CANONICAL_CACHE_PRIVACY_NOTE,
+        "permission_note": _cache_permission_note(),
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _atomic_private_write(
+        path, json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    )
     return digest
+
+
+def _restrict_permissions(target: Path, mode: int) -> bool:
+    """Owner-only permissions where the platform supports them.
+
+    Windows does not implement POSIX mode bits meaningfully. Failing the whole
+    evaluation over that would be wrong, so the limitation is recorded in the
+    cache instead of raised."""
+    if os.name != "posix":
+        return False
+    try:
+        os.chmod(target, mode)
+        return True
+    except OSError:
+        return False
+
+
+def _cache_permission_note() -> str:
+    if os.name == "posix":
+        return (
+            "Written atomically via a temporary file and os.replace(). Directory "
+            "restricted to 0700 and file to 0600, so only the owner can read the "
+            "derived scores."
+        )
+    return (
+        "Written atomically via a temporary file and os.replace(). POSIX mode bits "
+        "are not applied on this platform, so the cache inherits the directory's "
+        "access control instead; keep it inside access-restricted storage."
+    )
+
+
+def _atomic_private_write(path: Path, text: str) -> None:
+    """Write via a temporary file in the same directory, then os.replace().
+
+    A partially written cache must never be observable: os.replace() is atomic
+    within a filesystem, so a reader sees either the previous complete file or
+    the new complete one. The temporary file is created owner-only, so the
+    contents are never briefly world-readable."""
+    handle, temporary = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _restrict_permissions(temporary_path, CANONICAL_CACHE_FILE_MODE)
+        os.replace(temporary_path, path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def load_canonical_run(path: Path = CANONICAL_RUN_CACHE) -> Optional[OpenSetRunResult]:
@@ -4554,6 +4754,10 @@ def load_canonical_run(path: Path = CANONICAL_RUN_CACHE) -> Optional[OpenSetRunR
     if not path.is_file():
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
+    return _run_from_cached_payload(payload)
+
+
+def _run_from_cached_payload(payload: Mapping[str, Any]) -> OpenSetRunResult:
     return OpenSetRunResult(
         method=payload["method"],
         partition=payload["partition"],
@@ -4563,6 +4767,36 @@ def load_canonical_run(path: Path = CANONICAL_RUN_CACHE) -> Optional[OpenSetRunR
         comparisons_per_probe=payload["comparisons_per_probe"],
         stage_times_seconds=payload.get("stage_times_seconds", {}),
     )
+
+
+def cached_payload_integrity_reason(payload: Mapping[str, Any]) -> Optional[str]:
+    """Why a cached payload is not internally sound, or None when it is.
+
+    Checking the expected context against the stored context is not enough: it
+    proves the cache was built for this configuration, not that its contents
+    are still the ones that were built. A cache whose records were edited
+    afterwards would otherwise be loaded silently and republished under a
+    freshly computed digest, which is exactly the failure this prevents.
+
+    Names only the category or field at fault, never a stored value."""
+    schema = payload.get("cache_schema_version")
+    if schema != CANONICAL_CACHE_SCHEMA_VERSION:
+        return "cache schema version differs"
+    for field_name, expected_type in _CACHE_REQUIRED_FIELDS.items():
+        if field_name not in payload or payload[field_name] is None:
+            return f"cached field absent: {field_name}"
+        if not isinstance(payload[field_name], expected_type):
+            return f"cached field has the wrong type: {field_name}"
+    stored_context = payload["canonical_context"]
+    if context_digest(stored_context) != payload["canonical_context_sha256"]:
+        return "stored context digest does not match the stored context"
+    try:
+        rebuilt = _run_from_cached_payload(payload)
+    except (TypeError, KeyError, ValueError):
+        return "cached records could not be reconstructed"
+    if canonical_run_digest(rebuilt) != payload["canonical_run_digest"]:
+        return "stored outcome digest does not match the stored records"
+    return None
 
 
 def cache_invalidation_reason(
@@ -4579,11 +4813,12 @@ def cache_invalidation_reason(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return "cached run could not be read"
-    if payload.get("cache_schema_version") != CANONICAL_CACHE_SCHEMA_VERSION:
-        return "cache schema version differs"
-    stored = payload.get("canonical_context")
-    if not stored:
-        return "cached run carries no context"
+    if not isinstance(payload, dict):
+        return "cached run is not an object"
+    integrity = cached_payload_integrity_reason(payload)
+    if integrity is not None:
+        return integrity
+    stored = payload["canonical_context"]
     if context_digest(stored) == context_digest(expected_context):
         return None
     differing = sorted(
@@ -5060,8 +5295,11 @@ OPEN_SET_SUCCESS_CRITERIA = {
 OPEN_SET_LIMITATIONS = (
     "This remains a proof of concept. No result here proves fraud, misuse or "
     "misrepresentation by any person.",
-    "No automatic sanction is applied. A score above threshold opens a case for human "
-    "review and nothing else.",
+    "No automatic sanction is applied. Every outcome opens a case for human review and "
+    "nothing else. In this gallery-screening experiment the referral is triggered by a "
+    "high similarity to another enrolled identity; profile-photo consistency refers a "
+    "low similarity to the profile's own template instead, and an extraction failure "
+    "makes no decision at all.",
     "The BFW open-set evaluation uses a protocol defined by this project. BFW publishes "
     "verification and bias-analysis protocols, not an open-set identification protocol.",
     "Development and test identities are completely disjoint, and the operating threshold "
@@ -5197,9 +5435,15 @@ def run_open_set_experiment(
 
     # --- Method B development and freezing -----------------------------------
     announce("Running Method B (three-image template) on development")
+    # Reuse the cache rather than force a rebuild. Experiment 6 is the producer
+    # of the canonical runs, but forcing a refresh here re-rolled the primary
+    # pipeline on every invocation, and OpenCV detection is not bit-reproducible
+    # across processes, so a probe could change side between two runs of the
+    # same unchanged code. The context digest still rebuilds whenever anything
+    # capable of changing the result differs, including CANONICAL_PIPELINE_REVISION.
     proposed_dev, development_digest, development_context = canonical_primary_run(
         protocol, partition="development", detector=detector, embedder=embedder,
-        dataset=dataset, refresh=True,
+        dataset=dataset,
     )
     announce(f"Canonical development run digest {development_digest[:16]}")
 
@@ -5271,7 +5515,7 @@ def run_open_set_experiment(
         protocol, partition="test", method=METHOD_A, detector=detector, embedder=embedder
     )
     proposed_test, canonical_digest, test_context = canonical_primary_test_run(
-        protocol, detector=detector, embedder=embedder, dataset=dataset, refresh=True
+        protocol, detector=detector, embedder=embedder, dataset=dataset
     )
     announce(f"Canonical primary-pipeline run digest {canonical_digest[:16]}")
     provenance["canonical_run_digest"] = canonical_digest
@@ -5449,6 +5693,33 @@ PROFILE_CONSISTENCY_NOTE = (
     "consistent one does not, and an extraction failure resolves nothing."
 )
 
+# The whole consistency analysis reuses a threshold frozen for duplicate-profile
+# screening. That is a defensible exploratory reuse, not a validated design.
+PROFILE_CONSISTENCY_STATUS_NOTE = (
+    "Exploratory threshold reuse. The operating threshold was frozen for open-set "
+    "duplicate-profile screening and is applied here unchanged; no threshold was "
+    "calibrated for profile-photo consistency and none of these figures has been "
+    "separately validated. This is not a validated identity-authentication system "
+    "and must not be reported as one."
+)
+
+CONSISTENCY_CONTROL_DEFINITIONS = {
+    "open_set_non_mated_gallery_control": (
+        "A non-mated probe searched against the complete gallery. This control tests "
+        "whether a person absent from the gallery avoids matching any enrolled "
+        "profile. It is stricter than, and structurally different from, comparing one "
+        "photograph with one specified profile template."
+    ),
+    "wrong_profile_template_control": (
+        "The same control photograph compared with exactly one wrong enrolled profile "
+        "template, assigned deterministically from the protocol seed and the opaque "
+        "sample identifier. This is the direct one-photograph-to-one-profile "
+        "comparison. It is supplementary and does not replace the open-set control; "
+        "both apply the same frozen pipeline-specific threshold, and no threshold was "
+        "recalibrated for either."
+    ),
+}
+
 
 def profile_photo_consistency_summary(
     run: OpenSetRunResult, threshold: float
@@ -5482,10 +5753,14 @@ def profile_photo_consistency_summary(
         else:
             inconsistent += 1
 
-    # Deterministic mismatched-photo control: a non-mated probe has no enrolled
-    # template of its own, so a top similarity below threshold is the correct
-    # identification of a mismatch. At or above threshold is a false-consistent
-    # result — the control was not recognised as mismatched.
+    # Open-set non-mated gallery control. A non-mated probe is enrolled nowhere,
+    # so a top similarity below threshold means the search correctly returned no
+    # profile. At or above threshold is a false-consistent result.
+    #
+    # This asks whether a person absent from the gallery avoids matching *any*
+    # enrolled profile. It is stricter than, and structurally different from,
+    # comparing one photograph with one specified profile template, and must not
+    # be described as the latter.
     controls_correct = controls_false_consistent = control_failures = 0
     for row in run.search_results:
         if row.role != "non_mated_probe":
@@ -5497,10 +5772,26 @@ def profile_photo_consistency_summary(
         else:
             controls_false_consistent += 1
 
+    # Supplementary direct control: one photograph against exactly one wrong
+    # profile template, assigned deterministically. Reported separately and
+    # never in place of the open-set control above.
+    wrong_correct = wrong_false_consistent = wrong_failures = 0
+    for row in run.search_results:
+        if row.role != "non_mated_probe":
+            continue
+        if row.failure_code is not None or row.assigned_wrong_template_similarity is None:
+            wrong_failures += 1
+        elif row.assigned_wrong_template_similarity < threshold:
+            wrong_correct += 1
+        else:
+            wrong_false_consistent += 1
+
     intended_same_person = consistent + inconsistent + extraction_failures + unavailable
     scored_same_person = consistent + inconsistent
     intended_controls = controls_correct + controls_false_consistent + control_failures
     scored_controls = controls_correct + controls_false_consistent
+    intended_wrong = wrong_correct + wrong_false_consistent + wrong_failures
+    scored_wrong = wrong_correct + wrong_false_consistent
 
     def rate(numerator: int, denominator: int) -> float:
         return numerator / denominator if denominator else float("nan")
@@ -5514,12 +5805,33 @@ def profile_photo_consistency_summary(
         "inconsistent_same_person_review_candidates": inconsistent,
         "same_person_extraction_failures": extraction_failures,
         "gallery_reference_unavailable": unavailable,
-        # Mismatched controls.
-        "intended_mismatched_controls": intended_controls,
-        "scored_mismatched_controls": scored_controls,
-        "mismatched_controls_correctly_identified": controls_correct,
-        "mismatched_controls_false_consistent": controls_false_consistent,
-        "mismatched_control_extraction_failures": control_failures,
+        # Open-set non-mated gallery control: absent person against the whole
+        # gallery. Not a one-photograph-to-one-profile comparison.
+        "intended_open_set_non_mated_gallery_controls": intended_controls,
+        "scored_open_set_non_mated_gallery_controls": scored_controls,
+        "open_set_non_mated_gallery_controls_correctly_identified": controls_correct,
+        "open_set_non_mated_gallery_controls_false_consistent": controls_false_consistent,
+        "open_set_non_mated_gallery_control_extraction_failures": control_failures,
+        # Supplementary direct control: one photograph against exactly one
+        # deterministically assigned wrong profile template.
+        "wrong_profile_template_controls_scored": scored_wrong,
+        "wrong_profile_template_controls_correctly_inconsistent": wrong_correct,
+        "wrong_profile_template_controls_false_consistent": wrong_false_consistent,
+        "wrong_profile_template_control_extraction_failures": wrong_failures,
+        "wrong_profile_template_controls_intended": intended_wrong,
+        "wrong_profile_template_mismatch_detection_conditional": rate(
+            wrong_correct, scored_wrong
+        ),
+        "wrong_profile_template_mismatch_detection_end_to_end": rate(
+            wrong_correct, intended_wrong
+        ),
+        "wrong_profile_template_false_consistency_conditional": rate(
+            wrong_false_consistent, scored_wrong
+        ),
+        "wrong_profile_template_false_consistency_end_to_end": rate(
+            wrong_false_consistent, intended_wrong
+        ),
+        "wrong_profile_template_extraction_coverage": rate(scored_wrong, intended_wrong),
         # Conditional rates divide by what was scored; end-to-end rates divide
         # by what the protocol intended, so extraction failures reduce them.
         "same_person_consistency_rate_conditional": rate(consistent, scored_same_person),
@@ -5530,22 +5842,22 @@ def profile_photo_consistency_summary(
         "same_person_false_inconsistency_rate_end_to_end": rate(
             inconsistent, intended_same_person
         ),
-        "mismatch_detection_rate_conditional": rate(controls_correct, scored_controls),
-        "mismatch_false_consistency_rate_conditional": rate(
+        "open_set_non_mated_gallery_detection_conditional": rate(
+            controls_correct, scored_controls
+        ),
+        "open_set_non_mated_gallery_false_consistency_conditional": rate(
             controls_false_consistent, scored_controls
         ),
-        "mismatch_detection_rate_end_to_end": rate(controls_correct, intended_controls),
-        "mismatch_false_consistency_rate_end_to_end": rate(
+        "open_set_non_mated_gallery_detection_end_to_end": rate(
+            controls_correct, intended_controls
+        ),
+        "open_set_non_mated_gallery_false_consistency_end_to_end": rate(
             controls_false_consistent, intended_controls
         ),
         "same_person_extraction_coverage": rate(scored_same_person, intended_same_person),
-        "mismatched_control_extraction_coverage": rate(scored_controls, intended_controls),
-        # Retained under the earlier names so existing readers keep working.
-        "photographs_assessed": intended_same_person,
-        "inconsistent_review_candidates": inconsistent,
-        "extraction_failures": extraction_failures,
-        "consistency_rate": rate(consistent, intended_same_person),
-        "review_referral_rate": rate(inconsistent, intended_same_person),
+        "open_set_non_mated_gallery_control_extraction_coverage": rate(
+            scored_controls, intended_controls
+        ),
         "consistency_score_mean": statistics.fmean(scores) if scores else float("nan"),
         "consistency_score_median": statistics.median(scores) if scores else float("nan"),
         "outcome_policy": (
@@ -5553,10 +5865,28 @@ def profile_photo_consistency_summary(
             "opens a consistency review. An extraction failure resolves nothing and is a "
             "separate unresolved outcome, not a decision."
         ),
+        "control_definitions": CONSISTENCY_CONTROL_DEFINITIONS,
+        "analysis_status": PROFILE_CONSISTENCY_STATUS_NOTE,
         "interpretation_note": PROFILE_CONSISTENCY_NOTE,
         # The duplicate-screening note has the opposite referral direction and
         # must not be attached to a consistency result.
         "profile_consistency_policy_note": PROFILE_CONSISTENCY_POLICY_NOTE,
+        # Older names, kept only so an existing reader does not break. Every one
+        # of them hides its denominator, which is why the authoritative fields
+        # above state "conditional" or "end_to_end" explicitly. Do not cite
+        # these in a result.
+        "deprecated_compatibility_aliases": {
+            "photographs_assessed": intended_same_person,
+            "inconsistent_review_candidates": inconsistent,
+            "extraction_failures": extraction_failures,
+            "consistency_rate": rate(consistent, intended_same_person),
+            "review_referral_rate": rate(inconsistent, intended_same_person),
+            "deprecation_note": (
+                "Superseded by the explicit conditional, end-to-end and coverage "
+                "fields. Retained for backwards compatibility only; each of these "
+                "names leaves its denominator unstated."
+            ),
+        },
     }
 
 
@@ -5607,6 +5937,20 @@ def sex_aggregated_metrics(
             entry[f"{label_key}_upper_95"] = intervals[series]["upper_95"]
         entry["intended_mated_probes"] = len(mated)
         entry["intended_non_mated_probes"] = len(non_mated)
+        # A coverage percentage alone cannot be checked. Publishing the scored
+        # counts and the failures beside it lets a reader confirm that
+        # scored + failures = intended and that coverage = scored / intended,
+        # rather than taking the ratio on trust.
+        entry["scored_mated_probes"] = sum(1 for r in mated if r.failure_code is None)
+        entry["scored_non_mated_probes"] = sum(
+            1 for r in non_mated if r.failure_code is None
+        )
+        entry["mated_extraction_failures"] = sum(
+            1 for r in mated if r.failure_code is not None
+        )
+        entry["non_mated_extraction_failures"] = sum(
+            1 for r in non_mated if r.failure_code is not None
+        )
         entry["population_note"] = (
             "These benchmark categories do not represent every identity or any real "
             "dating-application population."
@@ -7234,9 +7578,26 @@ _REPORTED_PACKAGES = (
     "easydict", "prettytable", "requests",
 )
 
+# insightface 1.0.1 imports neither of these on the code paths this artefact
+# uses (model_zoo.get_model and utils.face_align). Recording them as absent
+# with an unexplained null would read as a broken environment, so their status
+# is stated instead.
+_NOT_REQUIRED_BY_INSIGHTFACE = frozenset({"easydict", "prettytable"})
+NOT_REQUIRED_STATUS = "not_required_by_insightface_1_0_1"
+
 
 def _reported_dependency_versions() -> Dict[str, Optional[str]]:
-    return {package: _package_version(package) for package in _REPORTED_PACKAGES}
+    """Installed versions, with a stated reason for a deliberate absence.
+
+    A null version is never published without an explanation: an absent package
+    is either a recorded non-requirement or a genuine gap worth seeing."""
+    reported: Dict[str, Optional[str]] = {}
+    for package in _REPORTED_PACKAGES:
+        version = _package_version(package)
+        if version is None and package in _NOT_REQUIRED_BY_INSIGHTFACE:
+            version = NOT_REQUIRED_STATUS
+        reported[package] = version
+    return reported
 
 
 def opencv_distribution_report() -> Dict[str, Any]:
@@ -8178,8 +8539,12 @@ def _render_comparison_result_sections(
 
     lines = [
         "", "## Held-out results", "",
-        "Both pipelines scored once on the same held-out identities, each under its own "
-        "frozen development threshold. Intervals are 95% percentile bounds from a "
+        "Both pipelines were evaluated on the held-out identities under thresholds "
+        "frozen using development data. The evaluation was repeated only to test "
+        "computational reproducibility; no repeated held-out result influenced model "
+        "selection, threshold selection or reported policy. Each pipeline was evaluated "
+        "under its own frozen development threshold. Intervals are 95% percentile "
+        "bounds from a "
         f"{payload.get('held_out_metrics', {}).get(names[0], {}).get('global_bootstrap_replicates', 2000)}"
         "-replicate identity-cluster bootstrap, resampling identities with their complete "
         "protocol outcomes and preserving subgroup stratification.",
@@ -8253,8 +8618,14 @@ def _render_comparison_result_sections(
 
     for sex in ("female", "male"):
         lines += ["", f"## {sex.capitalize()} aggregate", "",
-                  "| Pipeline | FPIR | TPIR@1 | TPIR@5 | Mated coverage | Non-mated coverage |",
-                  "| --- | --- | --- | --- | --- | --- |"]
+                  "Scored counts are published beside every coverage figure, so that "
+                  "scored + failures = intended and coverage = scored / intended can "
+                  "both be checked rather than taken on trust.",
+                  "",
+                  "| Pipeline | FPIR | TPIR@1 | TPIR@5 | Mated scored/intended | "
+                  "Mated failures | Mated coverage | Non-mated scored/intended | "
+                  "Non-mated failures | Non-mated coverage |",
+                  "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
         for name in names:
             entry = (held_out[name].get("sex_aggregated") or {}).get(sex)
             if not entry:
@@ -8264,7 +8635,12 @@ def _render_comparison_result_sections(
                 f"[{pct(entry['fpir_lower_95'])}–{pct(entry['fpir_upper_95'])}] | "
                 f"{pct(entry['tpir_rank1'])} "
                 f"[{pct(entry['tpir_rank1_lower_95'])}–{pct(entry['tpir_rank1_upper_95'])}] | "
-                f"{pct(entry['tpir_rank5'])} | {pct(entry['mated_probe_coverage'])} | "
+                f"{pct(entry['tpir_rank5'])} | "
+                f"{entry['scored_mated_probes']}/{entry['intended_mated_probes']} | "
+                f"{entry['mated_extraction_failures']} | "
+                f"{pct(entry['mated_probe_coverage'])} | "
+                f"{entry['scored_non_mated_probes']}/{entry['intended_non_mated_probes']} | "
+                f"{entry['non_mated_extraction_failures']} | "
                 f"{pct(entry['non_mated_probe_coverage'])} |"
             )
 
@@ -8286,10 +8662,10 @@ def _render_comparison_result_sections(
             )
 
     lines += ["", "## Profile-photo consistency", "",
+              f"*{PROFILE_CONSISTENCY_STATUS_NOTE}*", "",
               "| Pipeline | Consistency (cond.) | Consistency (end-to-end) | "
-              "Mismatch detection (cond.) | Mismatch detection (end-to-end) | "
-              "False-consistency | Same-person coverage |",
-              "| --- | --- | --- | --- | --- | --- | --- |"]
+              "Same-person coverage |",
+              "| --- | --- | --- | --- |"]
     for name in names:
         c = held_out[name].get("profile_photo_consistency")
         if not c:
@@ -8297,10 +8673,46 @@ def _render_comparison_result_sections(
         lines.append(
             f"| {name} | {pct(c['same_person_consistency_rate_conditional'])} | "
             f"{pct(c['same_person_consistency_rate_end_to_end'])} | "
-            f"{pct(c['mismatch_detection_rate_conditional'])} | "
-            f"{pct(c['mismatch_detection_rate_end_to_end'])} | "
-            f"{pct(c['mismatch_false_consistency_rate_conditional'])} | "
             f"{pct(c['same_person_extraction_coverage'])} |"
+        )
+
+    # The two controls answer different questions and are never merged.
+    lines += ["", "### Open-set non-mated gallery control", "",
+              CONSISTENCY_CONTROL_DEFINITIONS["open_set_non_mated_gallery_control"], "",
+              "| Pipeline | Scored | Correctly identified | False-consistent | "
+              "Detection (cond.) | Detection (end-to-end) | False-consistency (cond.) |",
+              "| --- | --- | --- | --- | --- | --- | --- |"]
+    for name in names:
+        c = held_out[name].get("profile_photo_consistency")
+        if not c:
+            continue
+        lines.append(
+            f"| {name} | {c['scored_open_set_non_mated_gallery_controls']} | "
+            f"{c['open_set_non_mated_gallery_controls_correctly_identified']} | "
+            f"{c['open_set_non_mated_gallery_controls_false_consistent']} | "
+            f"{pct(c['open_set_non_mated_gallery_detection_conditional'])} | "
+            f"{pct(c['open_set_non_mated_gallery_detection_end_to_end'])} | "
+            f"{pct(c['open_set_non_mated_gallery_false_consistency_conditional'])} |"
+        )
+    lines += ["", "### Wrong-profile-template control (supplementary)", "",
+              CONSISTENCY_CONTROL_DEFINITIONS["wrong_profile_template_control"], "",
+              "| Pipeline | Scored | Correctly inconsistent | False-consistent | "
+              "Failures | Detection (cond.) | Detection (end-to-end) | "
+              "False-consistency (cond.) | False-consistency (end-to-end) |",
+              "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for name in names:
+        c = held_out[name].get("profile_photo_consistency")
+        if not c:
+            continue
+        lines.append(
+            f"| {name} | {c['wrong_profile_template_controls_scored']} | "
+            f"{c['wrong_profile_template_controls_correctly_inconsistent']} | "
+            f"{c['wrong_profile_template_controls_false_consistent']} | "
+            f"{c['wrong_profile_template_control_extraction_failures']} | "
+            f"{pct(c['wrong_profile_template_mismatch_detection_conditional'])} | "
+            f"{pct(c['wrong_profile_template_mismatch_detection_end_to_end'])} | "
+            f"{pct(c['wrong_profile_template_false_consistency_conditional'])} | "
+            f"{pct(c['wrong_profile_template_false_consistency_end_to_end'])} |"
         )
     lines += ["", PROFILE_CONSISTENCY_POLICY_NOTE, ""]
 
@@ -8544,14 +8956,19 @@ def _write_figure_captions(
     if consistency:
         lines.append(
             f"- **profile_photo_consistency_outcomes** — every evaluated pipeline, over "
-            f"{consistency['photographs_assessed']} photographs per pipeline. Outcomes are "
-            f"not equivalent: a **consistent** photograph opens no case; an "
-            f"**inconsistent** one opens a consistency review; a **mismatched control** is "
-            f"correctly identified when it falls below threshold and false-consistent "
-            f"when it does not; an **extraction failure** resolves nothing and is a "
-            f"separate unresolved outcome rather than a decision. An inconsistent result "
-            f"is **not** proof of photo theft or fraud: pose, lighting, occlusion, image "
-            f"quality, age difference, detection failure and model error all produce it."
+            f"{consistency['intended_same_person_photographs']} same-person photographs "
+            f"per pipeline. Outcomes are not equivalent: a **consistent** photograph "
+            f"opens no case; an **inconsistent** one — a *low* similarity to the "
+            f"profile's own enrolled template — opens a consistency review; an "
+            f"**extraction failure** resolves nothing and is a separate unresolved "
+            f"outcome rather than a decision. Two different controls appear separately. "
+            f"The **open-set control** searches a person absent from the gallery against "
+            f"every enrolled profile, and is the stricter test; the **wrong-template "
+            f"control** compares one photograph with exactly one deterministically "
+            f"assigned wrong profile, and is the direct one-to-one comparison. An "
+            f"inconsistent result is **not** proof of photo theft or fraud: pose, "
+            f"lighting, occlusion, image quality, age difference, detection failure and "
+            f"model error all produce it."
         )
 
     lines += [
@@ -8561,23 +8978,39 @@ def _write_figure_captions(
         "Sex is an evaluation dimension only: never a classifier feature, threshold input, "
         "calibration variable, or reason to apply a different decision policy. The female "
         "panel covers asian, black, indian and white females; the male panel covers the "
-        "same four categories. Both use identical metric order, axis limits (0-100%), units "
-        "and interval format so they compare fairly.",
+        "same four categories. Both use identical metric order, units and interval format "
+        "so they compare fairly.",
+        "",
+        "FPIR is plotted on its own axis with a metric-specific upper bound, not on the "
+        "0-100% axis used for TPIR and coverage: these FPIR values are fractions of one "
+        "per cent, and compressing them against a 0-100% scale would flatten every bar to "
+        "the baseline and hide the difference the experiment is about. The female and male "
+        "companion figures share identical FPIR axis limits, computed across both sexes "
+        "and both pipelines before either figure is drawn.",
         "",
         "- **female_subgroup_pipeline_comparison** / **male_subgroup_pipeline_comparison** — "
-        "FPIR (lower better), TPIR@1 and TPIR@5 (higher better), mated coverage and "
-        "non-mated coverage, each with 95% identity-cluster bounds.",
+        "FPIR (lower better, own axis), TPIR@1 and TPIR@5 (higher better), mated coverage "
+        "and non-mated coverage, each with 95% identity-cluster bounds.",
         "- **female_male_aggregate_comparison** — pooled from underlying identity outcomes, "
         "not by averaging four subgroup percentages, which would weight a small subgroup as "
-        "heavily as a large one.",
+        "heavily as a large one. FPIR occupies a separate panel for the same reason.",
+        "",
+        "> A zero-event percentile-bootstrap interval such as 0%–0% means that no false "
+        "referral was observed among the resampled benchmark identities. It does not "
+        "establish that the population error probability is exactly zero.",
         "",
         "These are binary dataset categories. They do not represent the full range of "
         "gender identities, every identity, or any real dating-application population.",
         "",
         "## 9. Profile-photo consistency analysis",
         "",
-        "A same-identity probe stands for a photograph belonging to the enrolled person; a "
-        "non-mated probe is the mismatched control, where referral is the correct outcome.",
+        "A same-identity probe stands for a photograph belonging to the enrolled person. "
+        "Two different controls appear, and they are not interchangeable. The **open-set "
+        "non-mated gallery control** searches a person absent from the gallery against "
+        "every enrolled profile, testing whether they avoid matching any of them; it is "
+        "the stricter test. The **wrong-profile-template control** compares one photograph "
+        "with exactly one deterministically assigned wrong profile, and is the direct "
+        "one-to-one comparison. Referral is the correct outcome for both.",
         "",
         "> A non-match indicates that the photograph is inconsistent with the enrolled "
         "facial template under the evaluated model and threshold. It does not prove that "
@@ -8781,11 +9214,16 @@ CONSISTENCY_OUTCOME_FIELDS = (
     "inconsistent_same_person_review_candidates",
     "same_person_extraction_failures",
     "gallery_reference_unavailable",
-    "intended_mismatched_controls",
-    "scored_mismatched_controls",
-    "mismatched_controls_correctly_identified",
-    "mismatched_controls_false_consistent",
-    "mismatched_control_extraction_failures",
+    "intended_open_set_non_mated_gallery_controls",
+    "scored_open_set_non_mated_gallery_controls",
+    "open_set_non_mated_gallery_controls_correctly_identified",
+    "open_set_non_mated_gallery_controls_false_consistent",
+    "open_set_non_mated_gallery_control_extraction_failures",
+    "wrong_profile_template_controls_intended",
+    "wrong_profile_template_controls_scored",
+    "wrong_profile_template_controls_correctly_inconsistent",
+    "wrong_profile_template_controls_false_consistent",
+    "wrong_profile_template_control_extraction_failures",
 )
 
 CONSISTENCY_RATE_FIELDS = (
@@ -8793,12 +9231,17 @@ CONSISTENCY_RATE_FIELDS = (
     "same_person_false_inconsistency_rate_conditional",
     "same_person_consistency_rate_end_to_end",
     "same_person_false_inconsistency_rate_end_to_end",
-    "mismatch_detection_rate_conditional",
-    "mismatch_false_consistency_rate_conditional",
-    "mismatch_detection_rate_end_to_end",
-    "mismatch_false_consistency_rate_end_to_end",
+    "open_set_non_mated_gallery_detection_conditional",
+    "open_set_non_mated_gallery_false_consistency_conditional",
+    "open_set_non_mated_gallery_detection_end_to_end",
+    "open_set_non_mated_gallery_false_consistency_end_to_end",
+    "wrong_profile_template_mismatch_detection_conditional",
+    "wrong_profile_template_mismatch_detection_end_to_end",
+    "wrong_profile_template_false_consistency_conditional",
+    "wrong_profile_template_false_consistency_end_to_end",
     "same_person_extraction_coverage",
-    "mismatched_control_extraction_coverage",
+    "open_set_non_mated_gallery_control_extraction_coverage",
+    "wrong_profile_template_extraction_coverage",
 )
 
 
@@ -8874,7 +9317,9 @@ def write_pipeline_sex_aggregates(
     )
     columns = [
         "pipeline", "sex", "identities", "pipeline_threshold", "bootstrap_replicates", "seed",
-        "intended_mated_probes", "intended_non_mated_probes",
+        "intended_mated_probes", "scored_mated_probes", "mated_extraction_failures",
+        "intended_non_mated_probes", "scored_non_mated_probes",
+        "non_mated_extraction_failures",
         "fpir", "fpir_lower_95", "fpir_upper_95",
         "tpir_rank1", "tpir_rank1_lower_95", "tpir_rank1_upper_95",
         "tpir_rank5", "tpir_rank5_lower_95", "tpir_rank5_upper_95",
@@ -8996,9 +9441,10 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             "", f"## {heading}", "",
             "Pooled over identity outcomes, not by averaging subgroup percentages.",
             "",
-            "| Pipeline | Identities | FPIR | TPIR@1 | TPIR@5 | Mated coverage | "
-            "Non-mated coverage |",
-            "| --- | --- | --- | --- | --- | --- | --- |",
+            "| Pipeline | Identities | FPIR | TPIR@1 | TPIR@5 | "
+            "Mated scored/intended | Mated failures | Mated coverage | "
+            "Non-mated scored/intended | Non-mated failures | Non-mated coverage |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for name, entry in entries.items():
             lines.append(
@@ -9008,9 +9454,15 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
                 f"[{pct(entry['tpir_rank1_lower_95'])}–{pct(entry['tpir_rank1_upper_95'])}] | "
                 f"{pct(entry['tpir_rank5'])} "
                 f"[{pct(entry['tpir_rank5_lower_95'])}–{pct(entry['tpir_rank5_upper_95'])}] | "
+                f"{entry.get('scored_mated_probes', '')}/"
+                f"{entry.get('intended_mated_probes', '')} | "
+                f"{entry.get('mated_extraction_failures', '')} | "
                 f"{pct(entry['mated_probe_coverage'])} "
                 f"[{pct(entry['mated_probe_coverage_lower_95'])}–"
                 f"{pct(entry['mated_probe_coverage_upper_95'])}] | "
+                f"{entry.get('scored_non_mated_probes', '')}/"
+                f"{entry.get('intended_non_mated_probes', '')} | "
+                f"{entry.get('non_mated_extraction_failures', '')} | "
                 f"{pct(entry['non_mated_probe_coverage'])} "
                 f"[{pct(entry['non_mated_probe_coverage_lower_95'])}–"
                 f"{pct(entry['non_mated_probe_coverage_upper_95'])}] |"
@@ -9026,26 +9478,33 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             if metrics.get("profile_photo_consistency")
         } or {MODEL_VERSION: consistency}
         lines += ["", "## 9. Profile-photo identity consistency", "",
+                  PROFILE_CONSISTENCY_STATUS_NOTE, "",
                   "| Pipeline | Consistency (cond.) | Consistency (end-to-end) | "
-                  "Mismatch detection (cond.) | Mismatch detection (end-to-end) | "
-                  "False-consistency | Same-person coverage |",
+                  "Open-set control detection (cond.) | Wrong-template detection (cond.) | "
+                  "Wrong-template false-consistency (cond.) | Same-person coverage |",
                   "| --- | --- | --- | --- | --- | --- | --- |"]
         for name, entry in per_pipeline.items():
             lines.append(
                 f"| {name} | {pct(entry.get('same_person_consistency_rate_conditional'))} | "
                 f"{pct(entry.get('same_person_consistency_rate_end_to_end'))} | "
-                f"{pct(entry.get('mismatch_detection_rate_conditional'))} | "
-                f"{pct(entry.get('mismatch_detection_rate_end_to_end'))} | "
-                f"{pct(entry.get('mismatch_false_consistency_rate_conditional'))} | "
+                f"{pct(entry.get('open_set_non_mated_gallery_detection_conditional'))} | "
+                f"{pct(entry.get('wrong_profile_template_mismatch_detection_conditional'))} | "
+                f"{pct(entry.get('wrong_profile_template_false_consistency_conditional'))} | "
                 f"{pct(entry.get('same_person_extraction_coverage'))} |"
             )
         lines += [
             "",
-            "The four outcomes are not equivalent. A consistent photograph opens no case. "
-            "An inconsistent one opens a consistency review. A mismatched control is "
-            "correctly identified when it falls below threshold and false-consistent when "
-            "it does not. An extraction failure resolves nothing and is an unresolved "
-            "outcome rather than a decision.",
+            "The outcomes are not equivalent. A consistent photograph opens no case. An "
+            "inconsistent one — a *low* similarity to the profile's own template — opens "
+            "a consistency review. An extraction failure resolves nothing and is an "
+            "unresolved outcome rather than a decision. Duplicate screening runs in the "
+            "opposite direction: there a *high* similarity to another enrolled identity "
+            "opens the review.",
+            "",
+            "The two controls are also different questions. The open-set control searches "
+            "an absent person against the whole gallery, which is the stricter test. The "
+            "wrong-template control is the direct one-photograph-to-one-profile "
+            "comparison and is supplementary.",
             "", consistency["interpretation_note"],
         ]
 
@@ -9281,10 +9740,16 @@ def generate_figures(
         names = sorted(per_pipeline_consistency, key=lambda n: "opencv" not in n)
         outcomes = [
             ("consistent_same_person_photographs", "Consistent\nsame-person"),
-            ("inconsistent_review_candidates", "Inconsistent\nreview candidate"),
-            ("mismatched_controls_correctly_identified", "Control correctly\nidentified"),
-            ("mismatched_controls_false_consistent", "Control\nfalse-consistent"),
-            ("extraction_failures", "Extraction\nfailure"),
+            ("inconsistent_same_person_review_candidates", "Inconsistent\nreview candidate"),
+            ("open_set_non_mated_gallery_controls_correctly_identified",
+             "Open-set control\ncorrectly identified"),
+            ("open_set_non_mated_gallery_controls_false_consistent",
+             "Open-set control\nfalse-consistent"),
+            ("wrong_profile_template_controls_correctly_inconsistent",
+             "Wrong-template\ncorrectly inconsistent"),
+            ("wrong_profile_template_controls_false_consistent",
+             "Wrong-template\nfalse-consistent"),
+            ("same_person_extraction_failures", "Extraction\nfailure"),
             ("gallery_reference_unavailable", "Reference\nunavailable"),
         ]
         fig, ax = plt.subplots(figsize=(11.0, 5.0))
@@ -9335,13 +9800,29 @@ def generate_figures(
         )
         pipeline_order = sorted(by_pipeline, key=lambda n: "opencv" not in n)
         colours = ("#4C72B0", "#DD8452")
+        # FPIR here is a fraction of one per cent. Plotting it on the 0-100%
+        # axis the coverage panels need would flatten every bar to the
+        # baseline and hide the difference the experiment is about, so it gets
+        # its own axis with a metric-specific bound. The bound is computed
+        # across both sexes and both pipelines first, so the female and male
+        # companion figures remain directly comparable.
+        fpir_values = [
+            _percent(float(row["fpir_upper_95"] or 0) or 0)
+            for rows in by_pipeline.values() for row in rows.values()
+            if row.get("fpir_upper_95")
+        ] + [
+            _percent(float(row["fpir"] or 0) or 0)
+            for rows in by_pipeline.values() for row in rows.values()
+            if row.get("fpir")
+        ]
+        fpir_limit = max(0.5, math.ceil(max(fpir_values or [0.0]) * 1.15 * 4) / 4)
         for sex, suffix in (("female", "_females"), ("male", "_males")):
             members = sorted(
                 {s for rows in by_pipeline.values() for s in rows if s.endswith(suffix)}
             )
             if not members:
                 continue
-            fig, axes = plt.subplots(1, len(sex_metrics), figsize=(16.0, 4.6), sharey=True)
+            fig, axes = plt.subplots(1, len(sex_metrics), figsize=(16.0, 4.6))
             positions = np.arange(len(members))
             offsets = np.linspace(-0.16, 0.16, len(pipeline_order))
             for ax, (metric, title) in zip(axes, sex_metrics):
@@ -9365,8 +9846,13 @@ def generate_figures(
                                    rotation=35, ha="right", fontsize=7)
                 ax.set_title(title, fontsize=9)
                 ax.grid(axis="y", alpha=0.3)
-                ax.set_ylim(0, 100)
-            axes[0].set_ylabel("Per cent (95% identity-cluster CI)")
+                # FPIR on its own bound; every other panel on the common
+                # 0-100% scale so they stay comparable with one another.
+                ax.set_ylim(0, fpir_limit if metric == "fpir" else 100)
+                if metric == "fpir":
+                    ax.set_ylabel("Per cent (95% identity-cluster CI)", fontsize=8)
+                    ax.tick_params(axis="y", labelsize=7)
+            axes[1].set_ylabel("Per cent (95% identity-cluster CI)")
             handles, labels = axes[0].get_legend_handles_labels()
             fig.legend(handles[:len(pipeline_order)], labels[:len(pipeline_order)],
                        loc="upper right", fontsize=8)
@@ -9389,29 +9875,50 @@ def generate_figures(
                 sex_groups[f"{MODEL_VERSION.split('-')[0]} — {sex}"] = entry
 
     if sex_groups:
-        metrics_shown = ("fpir", "tpir_rank1", "mated_probe_coverage",
-                         "non_mated_probe_coverage")
-        labels = ["FPIR\n(lower better)", "TPIR@1\n(higher better)",
-                  "Mated coverage", "Non-mated coverage"]
-        fig, ax = plt.subplots(figsize=(10.5, 5.0))
-        positions = np.arange(len(metrics_shown))
         names = sorted(sex_groups)
-        width = 0.8 / max(len(names), 1)
         palette = ("#4C72B0", "#8FB2D9", "#DD8452", "#EFB48C")
-        for index, name in enumerate(names):
-            entry = sex_groups[name]
-            offset = (index - (len(names) - 1) / 2) * width
-            centre = [_percent(entry.get(m)) for m in metrics_shown]
-            lower = [max(centre[i] - _percent(entry.get(f"{metrics_shown[i]}_lower_95")), 0)
-                     for i in range(len(metrics_shown))]
-            upper = [max(_percent(entry.get(f"{metrics_shown[i]}_upper_95")) - centre[i], 0)
-                     for i in range(len(metrics_shown))]
-            ax.bar(positions + offset, centre, width, label=name,
-                   color=palette[index % len(palette)], yerr=[lower, upper], capsize=3)
-        ax.set_xticks(positions); ax.set_xticklabels(labels, fontsize=8)
-        ax.set_ylabel("Per cent (95% identity-cluster CI)"); ax.set_ylim(0, 100)
-        ax.set_title("Aggregate female against male, pooled over identity outcomes")
-        ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.3)
+        width = 0.8 / max(len(names), 1)
+
+        # Same reasoning as the subgroup companions: a sub-one-per-cent FPIR
+        # compressed onto a 0-100% axis shows nothing at all, so it is given
+        # its own panel and its own bound.
+        aggregate_fpir = [
+            _percent(entry.get(key))
+            for entry in sex_groups.values() for key in ("fpir", "fpir_upper_95")
+            if entry.get(key) is not None
+        ]
+        aggregate_limit = max(
+            0.5, math.ceil(max(aggregate_fpir or [0.0]) * 1.15 * 4) / 4
+        )
+
+        panels = (
+            (("fpir",), ["FPIR\n(lower better)"], aggregate_limit, "FPIR"),
+            (("tpir_rank1", "mated_probe_coverage", "non_mated_probe_coverage"),
+             ["TPIR@1\n(higher better)", "Mated coverage", "Non-mated coverage"],
+             100.0, "Identification and coverage"),
+        )
+        fig, axes = plt.subplots(
+            1, 2, figsize=(11.5, 5.0), gridspec_kw={"width_ratios": [1, 3]}
+        )
+        for ax, (metrics_shown, labels, limit, title) in zip(axes, panels):
+            positions = np.arange(len(metrics_shown))
+            for index, name in enumerate(names):
+                entry = sex_groups[name]
+                offset = (index - (len(names) - 1) / 2) * width
+                centre = [_percent(entry.get(m)) for m in metrics_shown]
+                lower = [max(centre[i] - _percent(entry.get(f"{m}_lower_95")), 0)
+                         for i, m in enumerate(metrics_shown)]
+                upper = [max(_percent(entry.get(f"{m}_upper_95")) - centre[i], 0)
+                         for i, m in enumerate(metrics_shown)]
+                ax.bar(positions + offset, centre, width, label=name,
+                       color=palette[index % len(palette)], yerr=[lower, upper],
+                       capsize=3)
+            ax.set_xticks(positions); ax.set_xticklabels(labels, fontsize=8)
+            ax.set_ylim(0, limit); ax.set_title(title, fontsize=9)
+            ax.set_ylabel("Per cent (95% identity-cluster CI)", fontsize=8)
+            ax.grid(axis="y", alpha=0.3)
+        axes[1].legend(fontsize=7)
+        fig.suptitle("Aggregate female against male, pooled over identity outcomes")
         path = figures_root / "female_male_aggregate_comparison.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)
 

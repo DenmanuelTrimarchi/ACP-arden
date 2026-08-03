@@ -71,9 +71,32 @@ try:
 except Exception as exc:                          # pragma: no cover - install check
     failures.append(f"insightface.utils.face_align failed to import: {exc}")
 
-for package in ("insightface", "onnxruntime", "onnx", "scipy", "scikit-image",
-                "tqdm", "requests", "numpy"):
-    print(f"{package:16} {version(package)}")
+# Every directly pinned version is verified, not merely printed. A silently
+# resolved-away pin is exactly the failure that changed the published numbers
+# once already.
+import re
+from pathlib import Path
+
+pins = {}
+for source in ("requirements-comparison.txt", "requirements-comparison-deps.txt"):
+    for line in Path(source).read_text(encoding="utf-8").splitlines():
+        line = line.split("#")[0].strip()
+        match = re.fullmatch(r"([A-Za-z0-9._-]+)==([A-Za-z0-9._+!-]+)", line)
+        if match:
+            pins[match.group(1)] = match.group(2)
+
+print("\nVerifying every direct pin:")
+for package in sorted(pins):
+    expected, installed = pins[package], version(package)
+    status = "OK" if installed == expected else "MISMATCH"
+    print(f"  {package:26} {str(installed):14} expected {expected:14} {status}")
+    if installed != expected:
+        failures.append(
+            f"{package} is {installed}, expected {expected} (pin was not honoured)"
+        )
+
+if not pins:
+    failures.append("no pinned versions were found; the requirement files are unreadable")
 
 if failures:
     print("\nDEPENDENCY CONTRACT VIOLATED:", file=sys.stderr)

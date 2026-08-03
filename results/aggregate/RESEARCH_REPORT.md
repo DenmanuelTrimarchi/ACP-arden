@@ -32,28 +32,32 @@ The primary hypothesis was that the classifier would reduce false review referra
 
 Pooled over identity outcomes, not by averaging subgroup percentages.
 
-| Pipeline | Identities | FPIR | TPIR@1 | TPIR@5 | Mated coverage | Non-mated coverage |
-| --- | --- | --- | --- | --- | --- | --- |
-| insightface-scrfd-arcface-buffalo_l | 200 | 0.27% [0.00%–0.74%] | 97.40% [95.60%–99.20%] | 97.40% [95.60%–99.20%] | 100.00% [100.00%–100.00%] | 99.73% [99.47%–99.93%] |
-| opencv-sface-2021dec-yunet-2023mar | 200 | 0.90% [0.28%–1.66%] | 90.64% [86.64%–94.38%] | 90.64% [86.64%–94.38%] | 96.20% [94.40%–97.80%] | 96.13% [94.67%–97.47%] |
+| Pipeline | Identities | FPIR | TPIR@1 | TPIR@5 | Mated scored/intended | Mated failures | Mated coverage | Non-mated scored/intended | Non-mated failures | Non-mated coverage |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| insightface-scrfd-arcface-buffalo_l | 200 | 0.27% [0.00%–0.74%] | 97.40% [95.60%–99.20%] | 97.40% [95.60%–99.20%] | 500/500 | 0 | 100.00% [100.00%–100.00%] | 1496/1500 | 4 | 99.73% [99.47%–99.93%] |
+| opencv-sface-2021dec-yunet-2023mar | 200 | 0.90% [0.28%–1.66%] | 90.64% [86.64%–94.38%] | 90.64% [86.64%–94.38%] | 481/500 | 19 | 96.20% [94.40%–97.80%] | 1442/1500 | 58 | 96.13% [94.67%–97.47%] |
 
 ## 8. Male subgroup analysis
 
 Pooled over identity outcomes, not by averaging subgroup percentages.
 
-| Pipeline | Identities | FPIR | TPIR@1 | TPIR@5 | Mated coverage | Non-mated coverage |
-| --- | --- | --- | --- | --- | --- | --- |
-| insightface-scrfd-arcface-buffalo_l | 200 | 0.00% [0.00%–0.00%] | 96.19% [94.20%–97.99%] | 96.19% [94.20%–97.99%] | 99.80% [99.40%–100.00%] | 99.40% [99.00%–99.73%] |
-| opencv-sface-2021dec-yunet-2023mar | 200 | 0.14% [0.00%–0.35%] | 94.58% [92.41%–96.72%] | 94.58% [92.41%–96.72%] | 92.20% [88.60%–95.20%] | 94.47% [93.00%–95.73%] |
+| Pipeline | Identities | FPIR | TPIR@1 | TPIR@5 | Mated scored/intended | Mated failures | Mated coverage | Non-mated scored/intended | Non-mated failures | Non-mated coverage |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| insightface-scrfd-arcface-buffalo_l | 200 | 0.00% [0.00%–0.00%] | 96.19% [94.20%–97.99%] | 96.19% [94.20%–97.99%] | 499/500 | 1 | 99.80% [99.40%–100.00%] | 1491/1500 | 9 | 99.40% [99.00%–99.73%] |
+| opencv-sface-2021dec-yunet-2023mar | 200 | 0.14% [0.00%–0.35%] | 94.58% [92.41%–96.72%] | 94.58% [92.41%–96.72%] | 461/500 | 39 | 92.20% [88.60%–95.20%] | 1417/1500 | 83 | 94.47% [93.00%–95.73%] |
 
 ## 9. Profile-photo identity consistency
 
-| Pipeline | Consistency (cond.) | Consistency (end-to-end) | Mismatch detection (cond.) | Mismatch detection (end-to-end) | False-consistency | Same-person coverage |
-| --- | --- | --- | --- | --- | --- | --- |
-| insightface-scrfd-arcface-buffalo_l | 96.80% | 96.70% | 99.87% | 99.43% | 0.13% | 99.90% |
-| opencv-sface-2021dec-yunet-2023mar | 92.57% | 87.20% | 99.48% | 94.80% | 0.52% | 94.20% |
+Exploratory threshold reuse. The operating threshold was frozen for open-set duplicate-profile screening and is applied here unchanged; no threshold was calibrated for profile-photo consistency and none of these figures has been separately validated. This is not a validated identity-authentication system and must not be reported as one.
 
-The four outcomes are not equivalent. A consistent photograph opens no case. An inconsistent one opens a consistency review. A mismatched control is correctly identified when it falls below threshold and false-consistent when it does not. An extraction failure resolves nothing and is an unresolved outcome rather than a decision.
+| Pipeline | Consistency (cond.) | Consistency (end-to-end) | Open-set control detection (cond.) | Wrong-template detection (cond.) | Wrong-template false-consistency (cond.) | Same-person coverage |
+| --- | --- | --- | --- | --- | --- | --- |
+| insightface-scrfd-arcface-buffalo_l | 96.80% | 96.70% | 99.87% | 100.00% | 0.00% | 99.90% |
+| opencv-sface-2021dec-yunet-2023mar | 92.57% | 87.20% | 99.48% | 100.00% | 0.00% | 94.20% |
+
+The outcomes are not equivalent. A consistent photograph opens no case. An inconsistent one — a *low* similarity to the profile's own template — opens a consistency review. An extraction failure resolves nothing and is an unresolved outcome rather than a decision. Duplicate screening runs in the opposite direction: there a *high* similarity to another enrolled identity opens the review.
+
+The two controls are also different questions. The open-set control searches an absent person against the whole gallery, which is the stricter test. The wrong-template control is the direct one-photograph-to-one-profile comparison and is supplementary.
 
 A non-match indicates that the photograph is inconsistent with the enrolled facial template under the evaluated model and threshold. It does not prove that the photograph belongs to another person or that fraud occurred. Pose, lighting, occlusion, image quality, age difference, face-detection failure and model error can all produce the same result. An inconsistent photograph opens a human-review case; a consistent one does not, and an extraction failure resolves nothing.
 
@@ -66,8 +70,8 @@ A non-match indicates that the photograph is inconsistent with the enrolled faci
 
 | Pipeline | End-to-end (95% CI) | Zero-face | Multiple-face | Embed mean | Complete mean | Model size |
 | --- | --- | --- | --- | --- | --- | --- |
-| insightface-scrfd-arcface-buffalo_l | 96.70% [95.40%–97.90%] | 2 | 12 | 63.59 ms | 96.19 ms | 182.4 MB |
-| opencv-sface-2021dec-yunet-2023mar | 87.20% [84.30%–89.90%] | 189 | 0 | 17.71 ms | 21.42 ms | 37.1 MB |
+| insightface-scrfd-arcface-buffalo_l | 96.70% [95.40%–97.90%] | 2 | 12 | 62.30 ms | 94.28 ms | 182.4 MB |
+| opencv-sface-2021dec-yunet-2023mar | 87.20% [84.30%–89.90%] | 189 | 0 | 17.89 ms | 21.72 ms | 37.1 MB |
 
 Each pipeline was calibrated on its own development scores; the SFace threshold is never applied to ArcFace. This is a complete-pipeline comparison — detection, alignment, preprocessing, embedding width and runtime all differ — so no difference is attributable to the embedding model alone.
 
@@ -89,7 +93,7 @@ Neither is proof of fraud, ownership or identity, and an extraction failure reso
 No face-detection or face-recognition network is trained or fine-tuned. Experiment 7 trains a small logistic-regression review classifier on identity-disjoint BFW development data and evaluates it on untouched held-out identities.
 
 - This remains a proof of concept. No result here proves fraud, misuse or misrepresentation by any person.
-- No automatic sanction is applied. A score above threshold opens a case for human review and nothing else.
+- No automatic sanction is applied. Every outcome opens a case for human review and nothing else. In this gallery-screening experiment the referral is triggered by a high similarity to another enrolled identity; profile-photo consistency refers a low similarity to the profile's own template instead, and an extraction failure makes no decision at all.
 - The BFW open-set evaluation uses a protocol defined by this project. BFW publishes verification and bias-analysis protocols, not an open-set identification protocol.
 - Development and test identities are completely disjoint, and the operating threshold was frozen before the held-out test partition was scored.
 - Extraction failures are counted as coverage failures, never as genuine no-match decisions.

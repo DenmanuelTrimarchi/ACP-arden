@@ -1240,19 +1240,24 @@ def test_the_implementation_layer_artefact_lists_every_available_layer() -> None
         assert r["threshold_source"]
 
 
-def test_the_profile_consistency_artefacts_include_mismatched_controls() -> None:
+def test_the_profile_consistency_artefacts_include_both_controls() -> None:
     path = _AGG / "profile_photo_consistency_metrics.json"
     if not path.is_file():
         pytest.skip("consistency artefact not generated in this checkout")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    # Pipeline-scoped since the comparison publishes both. Renamed when the
-    # consistency polarity was separated from screening: a mismatched control
-    # is *identified*, not *referred*.
+    # Pipeline-scoped since the comparison publishes both. The open-set control
+    # searches an absent person against the whole gallery; the wrong-template
+    # control is the direct one-photograph-to-one-profile comparison. Both are
+    # published, and neither stands in for the other.
     entries = payload.get("pipelines") or {"primary": payload}
     for entry in entries.values():
-        for key in ("consistent_same_person_photographs", "inconsistent_review_candidates",
-                    "mismatched_controls_correctly_identified",
-                    "mismatched_controls_false_consistent", "extraction_failures",
+        for key in ("consistent_same_person_photographs",
+                    "inconsistent_same_person_review_candidates",
+                    "open_set_non_mated_gallery_controls_correctly_identified",
+                    "open_set_non_mated_gallery_controls_false_consistent",
+                    "wrong_profile_template_controls_correctly_inconsistent",
+                    "wrong_profile_template_controls_false_consistent",
+                    "same_person_extraction_failures",
                     "gallery_reference_unavailable"):
             assert key in entry, key
     note = payload.get("interpretation_note") or next(iter(entries.values()))[
@@ -1447,11 +1452,19 @@ def test_consistency_controls_use_the_consistency_polarity() -> None:
     payload = json.loads(path.read_text())
     entries = payload.get("pipelines") or {"primary": payload}
     for entry in entries.values():
-        for key in ("mismatched_controls_correctly_identified",
-                    "mismatched_controls_false_consistent",
-                    "mismatched_control_extraction_failures"):
+        for key in ("open_set_non_mated_gallery_controls_correctly_identified",
+                    "open_set_non_mated_gallery_controls_false_consistent",
+                    "open_set_non_mated_gallery_control_extraction_failures",
+                    "wrong_profile_template_controls_correctly_inconsistent",
+                    "wrong_profile_template_controls_false_consistent",
+                    "wrong_profile_template_control_extraction_failures"):
             assert key in entry, key
         assert "mismatched_controls_correctly_referred" not in entry
+        # The open-set control must not be described as a direct one-to-one
+        # comparison; that is what the wrong-template control is for.
+        definitions = entry["control_definitions"]
+        assert "stricter than" in definitions["open_set_non_mated_gallery_control"]
+        assert "supplementary" in definitions["wrong_profile_template_control"]
         # A consistent photograph must not be described as opening a case.
         assert "does not open a case" in entry["outcome_policy"]
     note = payload.get("interpretation_note") or next(iter(entries.values()))[
@@ -1621,10 +1634,10 @@ def test_the_report_shows_the_mismatched_controls() -> None:
     if not report.is_file():
         pytest.skip("report not generated")
     text = report.read_text(encoding="utf-8")
-    # Section 9 reports rates rather than raw counts; the counts live in the
-    # Experiment 8 report and the consistency artefacts.
-    assert "Mismatch detection (cond.)" in text
-    assert "Mismatch detection (end-to-end)" in text
-    assert "False-consistency" in text
+    # Section 9 reports rates rather than raw counts, and names both controls
+    # separately; the counts live in the Experiment 8 report and the artefacts.
+    assert "Open-set control detection (cond.)" in text
+    assert "Wrong-template detection (cond.)" in text
+    assert "Wrong-template false-consistency (cond.)" in text
     # The two referral directions must remain distinguished.
     assert "a *high* similarity" in text and "a *low* similarity" in text

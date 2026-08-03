@@ -36,8 +36,16 @@ trained or fine-tuned**; those models are pretrained and frozen. Experiment 7
 trains a small logistic-regression review classifier using BFW development
 identities only, and no test identity is used during training. No website is
 scraped, and no account is ever banned, rejected, accused or classified as a
-scam. A similarity above the operating threshold opens a case for a human
-reviewer and nothing more.
+scam. Every outcome opens a case for a human reviewer and nothing more.
+
+The referral direction depends on the question, and the two are not
+interchangeable:
+
+| Decision | What opens a review |
+| --- | --- |
+| Duplicate-profile screening | A **high** similarity to another enrolled gallery identity |
+| Profile-photo consistency | A **low** similarity to the profile's own enrolled template |
+| Extraction failure | Nothing — no match or mismatch decision is made |
 
 ## What it does
 
@@ -132,8 +140,12 @@ network, so the code can be checked before any biometric data is touched.
 
 ## Datasets and models
 
-Neither the benchmark images nor the two model binaries are stored in this
-repository, and nothing here downloads them automatically. Their locations are
+Neither the benchmark images nor any model binary is stored in this
+repository, and nothing here downloads them automatically. Four weight files
+are involved in total: the **two baseline OpenCV models** (YuNet detection,
+SFace recognition), which every experiment except the comparison needs, and
+the **two optional InsightFace comparison models** (SCRFD `det_10g`, ArcFace
+`w600k_r50`), which only Experiment 8 needs. Their locations are
 read from a git-ignored `.env` beside `ACP_arden.py`:
 
 ```bash
@@ -145,12 +157,12 @@ cp .env.example .env   # then fill in your own storage paths
 | `FACE_DATA_ROOT` | Extracted dataset image directories, including `lfw_funneled/` |
 | `FACE_PROTOCOL_ROOT` | `pairsDevTrain.txt`, `pairsDevTest.txt`, `pairs.txt`, `pairs_CPLFW.txt` |
 | `FACE_CPLFW_RAW_ROOT` | Flat directory of the authors' raw CPLFW images |
-| `FACE_MODEL_ROOT` | The two pinned `.onnx` model files |
+| `FACE_MODEL_ROOT` | The two pinned baseline OpenCV `.onnx` model files (YuNet, SFace) |
 | `FACE_ID_HMAC_KEY` | **Required.** Secret key for the opaque public identifiers |
 | `FACE_CACHE_ROOT` | Optional embedding cache; leave unset by default |
 | `FACE_BFW_ROOT` | Optional. Extracted BFW tree, for Experiment 6 |
 | `FACE_BFW_METADATA_ROOT` | Optional. Where the official BFW datatable lives; defaults to `FACE_BFW_ROOT` |
-| `FACE_ARCFACE_MODEL_ROOT` | Optional. InsightFace weights; the comparison is reported as not run |
+| `FACE_ARCFACE_MODEL_ROOT` | Required only to rerun Experiment 8 locally. It must point directly to the verified `det_10g.onnx` and `w600k_r50.onnx` files. The repository already contains the aggregate evaluated results, but never the weight files |
 
 **Datasets.** LFW (Labeled Faces in the Wild) is the primary dataset; CPLFW
 (Cross-Pose LFW) is the secondary one. CPLFW ships two non-interchangeable
@@ -314,9 +326,10 @@ CONVERSION_MAP.md   component-to-section map
 REFERENCES.md       code attribution and reference register
 requirements.txt        pinned runtime dependencies
 requirements-dev.txt    pinned test and type-checking dependencies
-requirements-comparison.txt       optional comparison; install via the script below
-requirements-comparison-deps.txt  exact InsightFace dependency pins
-scripts/install_comparison_environment.sh  verified installer
+requirements-comparison.txt       optional comparison; the two direct requirements
+requirements-comparison-deps.txt  direct pins (NOT a complete transitive lock)
+requirements-comparison-lock.txt  full pip freeze of the verified environment
+scripts/install_comparison_environment.sh  the only supported installer
 pyrightconfig.json  type-checker configuration
 .env.example        template for local storage paths
 .vscode/            run configuration for the play button
@@ -455,7 +468,30 @@ their weights is claimed.
 **Setup.** Obtain the official `buffalo_l` pack, store it in local research
 storage outside version control, point `FACE_ARCFACE_MODEL_ROOT` at the
 directory *directly* containing `det_10g.onnx` and `w600k_r50.onnx`, pin both
-SHA-256 digests in source, and install `requirements-comparison.txt`.
+SHA-256 digests in source, and install the comparison environment with the one
+supported command:
+
+```bash
+bash scripts/install_comparison_environment.sh
+```
+
+Do **not** run a plain `pip install -r requirements-comparison.txt`. `insightface`
+depends on `opencv-python`, which ships the same `cv2` module as the pinned
+`opencv-python-headless` and shadows it on import. That silently changed YuNet
+detection and SFace embedding numerics while package metadata still reported
+the pinned version. A constraints file does not prevent it: constraints bound
+the version of a package that is installed, they do not stop a different
+distribution being resolved. The script installs `insightface` with
+`--no-deps`, supplies the dependencies itself, removes any conflicting
+`opencv-python`, then verifies every pinned version and the imported `cv2`
+before exiting successfully.
+
+Three files describe the environment, and they are not the same thing.
+`requirements-comparison.txt` holds the two direct requirements.
+`requirements-comparison-deps.txt` holds the direct pins this project chose and
+is **not** a complete transitive lock. `requirements-comparison-lock.txt` is
+the full `pip freeze` of the verified clean environment, transitive packages
+included, and is what records exactly what produced the published results.
 
 Nothing is downloaded automatically. Each ONNX file is loaded by its exact
 verified path through `insightface.model_zoo`; `FaceAnalysis` is deliberately
@@ -470,8 +506,8 @@ coverage is not inflated by lowering the decision bar.
 
 #### Held-out outcome — extraction, not ranking
 
-Status **`evaluated_non_commercial_academic_research`**. Both pipelines scored once on the same held-out
-identities, each under its own frozen development threshold:
+Status **`evaluated_non_commercial_academic_research`**. Both pipelines were evaluated on the held-out identities under thresholds frozen using development data. The evaluation was repeated only to test computational reproducibility; no repeated held-out result influenced model selection, threshold selection or reported policy. Each pipeline
+was evaluated under its own frozen development threshold:
 
 | | YuNet + SFace | SCRFD + ArcFace |
 | --- | --- | --- |

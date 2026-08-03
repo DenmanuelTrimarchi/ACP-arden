@@ -1,10 +1,10 @@
 {
   "artifact_type": "pipeline_comparison_protocol",
-  "cache_schema_version": 2,
-  "canonical_development_context_sha256": "c1b31c545a3966075a1496a1586344a07949fc4f0deb75b5ada9cb19b400bd41",
-  "canonical_development_run_digest": "d618ff188259aff5233a23ec3f79de51e1bb87ca56b20aee327a686b70137c5a",
-  "canonical_test_context_sha256": "02a65a0ee28d238f16821fb0a71a607b6d01477ac73664e9e4303da5d76ebcea",
-  "canonical_test_run_digest": "6eb3d677ae20d2a608f0dbfd3719dd5f59c646e330efb9686e078f1f1efa137e",
+  "cache_schema_version": 3,
+  "canonical_development_context_sha256": "f03a419ee5f410851b5a087220aa99d4eec85090ec77e7629bd2a119a5bb6b40",
+  "canonical_development_run_digest": "075c533342de36315d20488c7f3c97464daef983f157f7da017cebe4a78d1515",
+  "canonical_test_context_sha256": "1b14ced717122ff65352bea5bd1b899835ba3882285d648091a9f4825bdca698",
+  "canonical_test_run_digest": "69e2c6b6c8414f47d97127e78f7714de98f9586b5182786f1ced9b18b5b71e1a",
   "comparison_pipeline": {
     "comparison_scope": "Complete pipeline: detection, preprocessing and embedding. A difference between pipelines cannot be attributed to the embedding model alone.",
     "detector_name": "InsightFace SCRFD (det_10g)",
@@ -18,7 +18,7 @@
     "pipeline_name": "insightface-scrfd-arcface-buffalo_l",
     "preprocessing_revision": "insightface-arcface-112x112-v1"
   },
-  "created_at": "2026-08-02T23:19:36.022197+00:00",
+  "created_at": "2026-08-03T02:12:33.758614+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -45,14 +45,14 @@
   },
   "dependency_versions": {
     "Pillow": "12.3.0",
-    "easydict": null,
+    "easydict": "not_required_by_insightface_1_0_1",
     "insightface": "1.0.1",
     "matplotlib": "3.11.1",
     "numpy": "2.5.1",
     "onnx": "1.22.0",
     "onnxruntime": "1.28.0",
     "opencv-python-headless": "4.13.0.92",
-    "prettytable": null,
+    "prettytable": "not_required_by_insightface_1_0_1",
     "requests": "2.34.2",
     "scikit-image": "0.26.0",
     "scikit-learn": "1.9.0",
@@ -70,7 +70,7 @@
   "licence_note": "InsightFace publishes its pretrained models for non-commercial research use. This project is an MSc academic research artefact: it is not a commercial service, is not deployed to real users, makes no commercial decisions, and neither sells, licenses nor redistributes the pretrained weights. The evaluation is local and non-commercial and publishes only aggregate metrics, so it falls within those research terms. The models were created and trained externally by the InsightFace project; no face-recognition network is trained or fine-tuned here. The MIT licence covering InsightFace source code does not automatically extend to every pretrained weight file, and no ownership of the models, their training data or their weights is claimed here.",
   "limitations": [
     "This remains a proof of concept. No result here proves fraud, misuse or misrepresentation by any person.",
-    "No automatic sanction is applied. A score above threshold opens a case for human review and nothing else.",
+    "No automatic sanction is applied. Every outcome opens a case for human review and nothing else. In this gallery-screening experiment the referral is triggered by a high similarity to another enrolled identity; profile-photo consistency refers a low similarity to the profile's own template instead, and an extraction failure makes no decision at all.",
     "The BFW open-set evaluation uses a protocol defined by this project. BFW publishes verification and bias-analysis protocols, not an open-set identification protocol.",
     "Development and test identities are completely disjoint, and the operating threshold was frozen before the held-out test partition was scored.",
     "Extraction failures are counted as coverage failures, never as genuine no-match decisions.",
@@ -124,7 +124,7 @@
     "imported_cv2_version": "4.13.0",
     "opencv_distribution": "opencv-python-headless"
   },
-  "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
+  "policy_note": "Duplicate-profile screening: a high similarity to another enrolled gallery identity opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity. This polarity applies to gallery screening; profile-photo consistency refers a *low* similarity instead, and an extraction failure makes no decision at all.",
   "preprocessing_revision": "opencv-yunet-sface-exif-bgr-l2-v1",
   "primary_pipeline": {
     "comparison_scope": "Complete pipeline: detection, preprocessing and embedding. A difference between pipelines cannot be attributed to the embedding model alone.",

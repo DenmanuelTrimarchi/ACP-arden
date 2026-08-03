@@ -84,7 +84,7 @@
     }
   },
   "calibration_rows": 1128,
-  "created_at": "2026-08-02T23:04:10.109141+00:00",
+  "created_at": "2026-08-03T01:56:52.958661+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -111,14 +111,14 @@
   },
   "dependency_versions": {
     "Pillow": "12.3.0",
-    "easydict": null,
+    "easydict": "not_required_by_insightface_1_0_1",
     "insightface": "1.0.1",
     "matplotlib": "3.11.1",
     "numpy": "2.5.1",
     "onnx": "1.22.0",
     "onnxruntime": "1.28.0",
     "opencv-python-headless": "4.13.0.92",
-    "prettytable": null,
+    "prettytable": "not_required_by_insightface_1_0_1",
     "requests": "2.34.2",
     "scikit-image": "0.26.0",
     "scikit-learn": "1.9.0",
@@ -159,7 +159,7 @@
     "pipeline_name": "opencv-sface-2021dec-yunet-2023mar",
     "preprocessing_revision": "opencv-yunet-sface-exif-bgr-l2-v1"
   },
-  "policy_note": "A result above threshold opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity.",
+  "policy_note": "Duplicate-profile screening: a high similarity to another enrolled gallery identity opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity. This polarity applies to gallery screening; profile-photo consistency refers a *low* similarity instead, and an extraction failure makes no decision at all.",
   "preprocessing_revision": "opencv-yunet-sface-exif-bgr-l2-v1",
   "protocol_digest": "549790b77cfc7abaf1a90748a7ebda86be9e988cb4aaf56af04136566b8191b1",
   "protocol_version": "acp-arden-bfw-open-set-v1",
