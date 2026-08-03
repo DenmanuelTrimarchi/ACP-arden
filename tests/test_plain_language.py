@@ -257,10 +257,18 @@ def test_the_experiment_eight_summary_carries_real_comparison_values() -> None:
     if payload.get("evaluated") != "yes":
         pytest.skip("comparison not evaluated in this checkout")
     text = acp.render_pipeline_plain_summary(AGG)
-    for row in ("Known duplicate detection", "End-to-end detection",
-                "New profiles wrongly sent for review", "False reviews per 1,000",
-                "Mean complete processing time", "Model storage"):
+    for row in ("Known duplicate-profile test cases detected", "End-to-end detection",
+                "New profiles incorrectly referred for review",
+                "False reviews per 1,000", "Mean complete processing time",
+                "Model storage", "embedding dimensions"):
         assert row in text, row
+    # Section 1: the plain wording leads, the technical name follows it.
+    for plain, technical in (
+        ("Known duplicate-profile test cases detected", "TPIR@1"),
+        ("New profiles incorrectly referred for review", "FPIR"),
+    ):
+        line = next(l for l in text.splitlines() if plain in l)
+        assert line.index(plain) < line.index(technical), plain
     # Real values, not placeholders.
     assert "[value]" not in text and "not available" not in text
     assert "%" in text and "ms" in text and "MB" in text
@@ -446,3 +454,151 @@ def test_the_academic_reports_keep_their_technical_wording(name: str) -> None:
         for phrase in ("limitation", "cannot be attributed", "not proof",
                        "does not prove")
     ), name
+
+
+# --- Section 17: the two headings ------------------------------------------------
+
+
+def test_both_section_headings_are_produced() -> None:
+    """The plain layer is only useful if it is announced as such."""
+    plain = acp.render_plain_section("body")
+    technical = acp.render_technical_section("body")
+    assert "PLAIN-LANGUAGE SUMMARY" in plain
+    assert "TECHNICAL DETAILS" in technical
+    assert plain.startswith("=" * 78)
+    assert technical.startswith("=" * 78)
+
+
+def test_the_reference_section_carries_the_overviews_and_glossary() -> None:
+    text = acp.render_reference_section()
+    assert "REFERENCE INFORMATION" in text
+    assert "MODELS USED" in text
+    assert "DATASETS USED" in text
+    assert "TERMS USED" in text
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["action_show_summary", "action_show_open_set_summary",
+     "action_show_ml_review_summary", "action_show_pipeline_comparison_summary"],
+)
+def test_every_summary_option_prints_all_three_sections(
+    action: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Plain language, then technical detail, then reference material - in that
+    order, for every option that displays a saved result."""
+    getattr(acp, action)(AGG)
+    printed = capsys.readouterr().out
+    for heading in ("PLAIN-LANGUAGE SUMMARY", "TECHNICAL DETAILS",
+                    "REFERENCE INFORMATION"):
+        assert heading in printed, f"{action} omitted {heading}"
+    assert (printed.index("PLAIN-LANGUAGE SUMMARY")
+            < printed.index("TECHNICAL DETAILS")
+            < printed.index("REFERENCE INFORMATION")), action
+    # The glossary must reach every summary, not only the first one.
+    assert "TPIR@1:" in printed and "Conditional rate:" in printed
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["action_show_summary", "action_show_open_set_summary",
+     "action_show_ml_review_summary", "action_show_pipeline_comparison_summary"],
+)
+def test_the_technical_section_retains_the_academic_figures(
+    action: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Moving the technical block below the plain text must not remove it."""
+    getattr(acp, action)(AGG)
+    technical = capsys.readouterr().out.split("TECHNICAL DETAILS", 1)[1]
+    assert any(term in technical for term in ("threshold", "Threshold", "FPIR", "TPIR"))
+
+
+# --- Section 20: the specified helper names --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "helper",
+    ["format_count_and_percentage", "plain_metric_description",
+     "render_plain_pipeline_table", "render_dataset_overview",
+     "render_model_overview", "render_glossary", "render_overall_conclusion"],
+)
+def test_the_presentation_helpers_exist(helper: str) -> None:
+    assert callable(getattr(acp, helper)), helper
+
+
+def test_the_table_helper_aligns_its_columns() -> None:
+    table = acp.render_plain_pipeline_table(
+        ["Metric", "A", "B"], [["a very long row label", "1", "2"], ["short", "3", "4"]]
+    )
+    lines = table.splitlines()
+    # The header and the rule beneath it define the column layout.
+    assert len(lines[0]) == len(lines[1])
+    assert set(lines[1].strip()) == {"-", " "}
+
+
+def test_plain_metric_description_covers_the_reported_metrics() -> None:
+    for key in ("fpir", "tpir_rank1", "end_to_end", "false_reviews_per_1000",
+                "mated_coverage", "non_mated_coverage"):
+        description = acp.plain_metric_description(key)
+        assert description != key, key
+        assert description[0].isupper(), key
+
+
+# --- Section 2: the prescribed vocabulary -----------------------------------------
+
+
+def test_the_prescribed_referral_vocabulary_is_used() -> None:
+    text = _all_plain_text()
+    for phrase in ("known duplicate-profile test cases correctly detected",
+                   "new profiles incorrectly referred for review"):
+        assert phrase in text, phrase
+
+
+# --- Section 21: no scientific value is produced by the presentation layer ---------
+
+
+def test_the_presentation_layer_reads_values_and_never_computes_them() -> None:
+    """Every displayed figure must come from an artefact.
+
+    Rendering twice from the same files must give byte-identical output, and
+    rendering must not write anything back."""
+    import hashlib
+
+    def digest_tree() -> str:
+        sha = hashlib.sha256()
+        for path in sorted(AGG.rglob("*")):
+            if path.is_file():
+                sha.update(path.name.encode())
+                sha.update(path.read_bytes())
+        return sha.hexdigest()
+
+    before = digest_tree()
+    first = "\n".join(getattr(acp, name)(AGG) for name in PLAIN_RENDERERS)
+    second = "\n".join(getattr(acp, name)(AGG) for name in PLAIN_RENDERERS)
+    assert first == second, "the plain summaries are not deterministic"
+    assert digest_tree() == before, "rendering a summary modified an artefact"
+
+
+def test_no_result_number_is_hard_coded_in_the_presentation_layer() -> None:
+    """The published figures must not be duplicated as literals in source."""
+    source = Path(acp.__file__).read_text(encoding="utf-8")
+    payload = json.loads((AGG / "bfw_open_set_test_metrics.json").read_text())
+    primary = payload["methods"][acp.METHOD_B]["primary_operating_point"]
+    for value in (primary["fpir"], primary["tpir_rank1"],
+                  payload["operating_threshold"]):
+        assert repr(float(value)) not in source, (
+            f"{value} is hard-coded in source instead of read from the artefact"
+        )
+        assert f"{float(value) * 100:.2f}%" not in source, value
+
+
+def test_the_plain_summaries_match_the_stored_values() -> None:
+    """A spot check that the displayed figures are the stored ones."""
+    payload = json.loads((AGG / "bfw_open_set_test_metrics.json").read_text())
+    primary = payload["methods"][acp.METHOD_B]["primary_operating_point"]
+    text = acp.render_open_set_plain_summary(AGG)
+    assert f"{primary['fpir'] * 100:.2f}%" in text
+    assert f"{primary['tpir_rank1'] * 100:.2f}%" in text
+    coverage = payload["methods"][acp.METHOD_B]["coverage"]
+    assert f"{coverage['scored_mated_probes']:,}" in text
+    assert f"{coverage['intended_mated_probes']:,}" in text

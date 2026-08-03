@@ -6712,8 +6712,37 @@ SCRFD_WARNING_EXPLANATION = (
     "image size. These warnings are expected in this verified configuration and\n"
     "do not indicate that the evaluation has failed.\n"
     "\n"
+    "They are withheld inside this detector's own ONNX Runtime session only.\n"
+    "Errors are not withheld: a model-loading failure, an invalid tensor, a\n"
+    "provider failure or a missing output is still reported.\n"
+    "\n"
     "The programme will stop if the returned detector outputs are invalid."
 )
+
+
+def _quiet_scrfd_detector(model_path: Path) -> Any:
+    """Load SCRFD with its own ONNX Runtime session at ERROR severity.
+
+    The dynamic SCRFD graph makes ONNX Runtime print one output-shape warning
+    per output on every detection call, which buries the programme's own
+    progress messages. The severity is raised on *this session only*, never
+    globally and never for the recognition model, so warnings from any other
+    session still appear.
+
+    ERROR severity is deliberate: model-loading failures, invalid tensors,
+    provider failures and missing outputs are errors and continue to surface.
+    Only the informational shape warning is withheld, and the detector's actual
+    outputs are validated immediately afterwards regardless."""
+    import onnxruntime as ort
+    from insightface.model_zoo.scrfd import SCRFD  # type: ignore[import-not-found]
+
+    options = ort.SessionOptions()
+    # 0 verbose, 1 info, 2 warning, 3 error, 4 fatal.
+    options.log_severity_level = 3
+    session = ort.InferenceSession(
+        str(model_path), sess_options=options, providers=["CPUExecutionProvider"]
+    )
+    return SCRFD(model_file=str(model_path), session=session)
 
 
 def validate_scrfd_outputs(detector_model: Any) -> None:
@@ -6806,7 +6835,7 @@ def load_arcface_pipeline(config: Optional[EnvironmentConfig] = None):
     print("")
 
     root = Path(config.arcface_model_root)  # type: ignore[arg-type]
-    detector_model = cast(Any, get_model(str(root / ARCFACE_DETECTOR_FILENAME)))
+    detector_model = cast(Any, _quiet_scrfd_detector(root / ARCFACE_DETECTOR_FILENAME))
     detector_model.prepare(
         ctx_id=-1,
         input_size=(ARCFACE_DETECTION_INPUT_SIZE, ARCFACE_DETECTION_INPUT_SIZE),
@@ -11244,7 +11273,7 @@ def wrap_plain(text: str, width: int = 78) -> str:
     )
 
 
-def render_plain_table(
+def render_plain_pipeline_table(
     headers: Sequence[str], rows: Sequence[Sequence[str]], *, indent: str = "  "
 ) -> str:
     """A fixed-width text table. Column widths follow the widest cell, so a
@@ -11374,13 +11403,13 @@ def render_ml_review_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str
         "Did the classifier reduce unnecessary reviews compared with the",
         "calibrated similarity threshold?",
         "",
-        render_plain_table(
+        render_plain_pipeline_table(
             ["", "Similarity threshold", "Logistic classifier"],
             [
-                ["Known duplicate cases correctly detected",
+                ["Known duplicate-profile test cases correctly detected (TPIR@1)",
                  _percentage_of(comparator.get("tpir_rank1")),
                  _percentage_of(classifier.get("tpir_rank1"))],
-                ["New profiles wrongly sent for review",
+                ["New profiles incorrectly referred for review (FPIR)",
                  _percentage_of(comparator.get("fpir")),
                  _percentage_of(classifier.get("fpir"))],
                 ["False reviews per 1,000 new profiles",
@@ -11471,20 +11500,20 @@ def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             return "not available"
 
     rows = [
-        ["Known duplicate detection (ranked first)",
+        ["Known duplicate-profile test cases detected (TPIR@1)",
          *[cell(n, lambda m: _percentage_of(m["rates"]["tpir_rank1"])) for n in names]],
-        ["End-to-end detection",
+        ["End-to-end detection (all intended photographs)",
          *[cell(n, lambda m: _percentage_of(m["end_to_end_duplicate_detection_rate"]))
            for n in names]],
-        ["New profiles wrongly sent for review",
+        ["New profiles incorrectly referred for review (FPIR)",
          *[cell(n, lambda m: _percentage_of(m["rates"]["fpir"])) for n in names]],
         ["False reviews per 1,000 new profiles",
          *[cell(n, lambda m: f"{m['rates']['false_reviews_per_1000_non_mated']:.1f}")
            for n in names]],
-        ["Known-duplicate photographs processed",
+        ["Known-duplicate photographs processed (mated coverage)",
          *[cell(n, lambda m: _percentage_of(
              1.0 - m["coverage"]["mated_extraction_failure_rate"])) for n in names]],
-        ["New-profile photographs processed",
+        ["New-profile photographs processed (non-mated coverage)",
          *[cell(n, lambda m: _percentage_of(
              1.0 - m["coverage"]["non_mated_extraction_failure_rate"])) for n in names]],
         ["Mean complete processing time per image",
@@ -11510,7 +11539,7 @@ def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         return f"{total:.1f} MB" if total else "not available"
 
     rows += [
-        ["Numerical face representation size",
+        ["Numerical face representation size (embedding dimensions)",
          *[f"{descriptors.get(n, {}).get('embedding_dimensions', 'not available')} values"
            for n in names]],
         ["Model storage", *[total_megabytes(n) for n in names]],
@@ -11523,7 +11552,7 @@ def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "",
         "No model was trained or fine-tuned.",
         "",
-        render_plain_table(
+        render_plain_pipeline_table(
             ["Metric", *[pipeline_display_name(n) for n in names]], rows
         ),
         "",
@@ -11757,6 +11786,36 @@ def announce_stage(step: int, total: int, title: str, detail: str = "") -> None:
         print(f"  {detail}")
 
 
+def section_heading(title: str) -> str:
+    """A banner separating the plain-language layer from the technical one.
+
+    Both headings come from here, so a summary cannot show one style of banner
+    in one place and a different style in another."""
+    rule = "=" * 78
+    return f"{rule}\n{title}\n{rule}"
+
+
+def render_plain_section(body: str) -> str:
+    """The plain-language half of a summary, under its own heading."""
+    return f"{section_heading('PLAIN-LANGUAGE SUMMARY')}\n\n{body}"
+
+
+def render_technical_section(body: str) -> str:
+    """The technical half: thresholds, FPIR, TPIR, intervals, digests and the
+    pipeline identifier, kept complete and merely moved below the plain text."""
+    return f"{section_heading('TECHNICAL DETAILS')}\n\n{body}"
+
+
+def render_reference_section() -> str:
+    """Model provenance, dataset roles and the glossary, offered at the end of
+    every summary so a reader meeting a term for the first time need not look
+    elsewhere."""
+    return "\n\n".join(
+        [section_heading("REFERENCE INFORMATION"), render_model_overview(),
+         render_dataset_overview(), render_glossary()]
+    )
+
+
 def missing_artefact_message(what: str, option: str) -> str:
     """A clear instruction rather than a traceback when an optional experiment
     has not been run yet."""
@@ -11816,8 +11875,8 @@ def render_baseline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         format_count_and_percentage(lfw["failed_pairs"], total, noun="pairs") + ".",
         "",
         "Meaning:",
-        "The model performed well on successfully processed LFW pairs, but a",
-        "share of pairs did not reach comparison at all.",
+        "The model performed well on successfully processed LFW pairs, but",
+        "approximately one in ten pairs did not reach comparison.",
         "",
     ]
     if cplfw:
@@ -11850,12 +11909,12 @@ def render_baseline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         lines += [
             "ORIGINAL DUPLICATE-PROFILE GALLERY TEST",
             "",
-            "Known duplicate test cases correctly detected:",
+            "Known duplicate-profile test cases correctly detected:",
             format_count_and_percentage(
                 detected, intended_dup, noun="intended duplicate cases"
             ) + " end-to-end.",
             "",
-            "New profiles incorrectly sent for human review:",
+            "New profiles incorrectly referred for review:",
             format_count_and_percentage(
                 referred, scored_new, noun="scored new profiles"
             ) + " conditional.",
@@ -11896,13 +11955,13 @@ def render_open_set_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "Model:",
         "YuNet face detector + SFace face-recognition model.",
         "",
-        render_plain_table(
+        render_plain_pipeline_table(
             ["", "Old 1:1 threshold", "Gallery-calibrated threshold"],
             [
-                ["New profiles wrongly sent for review",
+                ["New profiles incorrectly referred for review (FPIR)",
                  _percentage_of(control.get("fpir")),
                  _percentage_of(primary.get("fpir"))],
-                ["Known duplicate cases correctly detected",
+                ["Known duplicate-profile test cases correctly detected (TPIR@1)",
                  _percentage_of(control.get("tpir_rank1")),
                  _percentage_of(primary.get("tpir_rank1"))],
                 ["False reviews per 1,000 new profiles",
@@ -12590,19 +12649,11 @@ def action_show_summary(output_root: Path = AGGREGATE_ROOT) -> int:
     try:
         # Plain language first, then the technical block, then the reference
         # material. The formal reports keep their own unchanged wording.
-        print(render_baseline_plain_summary(output_root))
+        print(render_plain_section(render_baseline_plain_summary(output_root)))
         print("")
-        print("=" * 78)
-        print("TECHNICAL DETAILS")
-        print("=" * 78)
+        print(render_technical_section(render_results_summary(output_root)))
         print("")
-        print(render_results_summary(output_root))
-        print("")
-        print(render_model_overview())
-        print("")
-        print(render_dataset_overview())
-        print("")
-        print(render_glossary())
+        print(render_reference_section())
     except ArtifactError:
         print(
             "No results are available yet. Run option 3 (the complete five-experiment "
@@ -12661,22 +12712,20 @@ def action_run_open_set_evaluation(output_root: Path = AGGREGATE_ROOT) -> int:
     for line in report_optional_dataset_status():
         print(line)
     print("")
-    print(render_open_set_plain_summary(output_root))
+    print(render_plain_section(render_open_set_plain_summary(output_root)))
     print("")
-    print(render_open_set_summary(output_root))
+    print(render_technical_section(render_open_set_summary(output_root)))
+    print("")
+    print(render_reference_section())
     return 0
 
 
 def action_show_open_set_summary(output_root: Path = AGGREGATE_ROOT) -> int:
-    print(render_open_set_plain_summary(output_root))
+    print(render_plain_section(render_open_set_plain_summary(output_root)))
     print("")
-    print("=" * 78)
-    print("TECHNICAL DETAILS")
-    print("=" * 78)
+    print(render_technical_section(render_open_set_summary(output_root)))
     print("")
-    print(render_open_set_summary(output_root))
-    print("")
-    print(render_glossary())
+    print(render_reference_section())
     return 0
 
 
@@ -12687,44 +12736,40 @@ def action_run_ml_review(output_root: Path = AGGREGATE_ROOT) -> int:
     written = generate_figures(aggregate_root=output_root)
     announce(f"Wrote {len(written)} figure(s) to {project_relative(FIGURES_ROOT)}")
     print("")
-    print(render_ml_review_plain_summary(output_root))
+    print(render_plain_section(render_ml_review_plain_summary(output_root)))
     print("")
-    print(render_ml_review_summary(output_root))
+    print(render_technical_section(render_ml_review_summary(output_root)))
+    print("")
+    print(render_reference_section())
     return 0
 
 
 def action_show_ml_review_summary(output_root: Path = AGGREGATE_ROOT) -> int:
-    print(render_ml_review_plain_summary(output_root))
+    print(render_plain_section(render_ml_review_plain_summary(output_root)))
     print("")
-    print("=" * 78)
-    print("TECHNICAL DETAILS")
-    print("=" * 78)
+    print(render_technical_section(render_ml_review_summary(output_root)))
     print("")
-    print(render_ml_review_summary(output_root))
-    print("")
-    print(render_glossary())
+    print(render_reference_section())
     return 0
 
 
 def action_run_pipeline_comparison(output_root: Path = AGGREGATE_ROOT) -> int:
     run_pipeline_comparison(output_root=output_root)
     print("")
-    print(render_pipeline_plain_summary(output_root))
+    print(render_plain_section(render_pipeline_plain_summary(output_root)))
     print("")
-    print(render_pipeline_comparison_summary(output_root))
+    print(render_technical_section(render_pipeline_comparison_summary(output_root)))
+    print("")
+    print(render_reference_section())
     return 0
 
 
 def action_show_pipeline_comparison_summary(output_root: Path = AGGREGATE_ROOT) -> int:
-    print(render_pipeline_plain_summary(output_root))
+    print(render_plain_section(render_pipeline_plain_summary(output_root)))
     print("")
-    print("=" * 78)
-    print("TECHNICAL DETAILS")
-    print("=" * 78)
+    print(render_technical_section(render_pipeline_comparison_summary(output_root)))
     print("")
-    print(render_pipeline_comparison_summary(output_root))
-    print("")
-    print(render_glossary())
+    print(render_reference_section())
     return 0
 
 
@@ -12739,23 +12784,19 @@ def action_run_extensions(output_root: Path = AGGREGATE_ROOT) -> int:
     written = generate_figures(aggregate_root=output_root)
     announce(f"Wrote {len(written)} figure(s) to {project_relative(FIGURES_ROOT)}")
     print("")
-    print(render_ml_review_plain_summary(output_root))
+    print(render_plain_section(
+        render_ml_review_plain_summary(output_root) + "\n\n"
+        + render_pipeline_plain_summary(output_root)
+    ))
     print("")
-    print(render_pipeline_plain_summary(output_root))
+    print(render_technical_section(
+        render_ml_review_summary(output_root) + "\n\n"
+        + render_pipeline_comparison_summary(output_root)
+    ))
     print("")
-    print("=" * 78)
-    print("TECHNICAL DETAILS")
-    print("=" * 78)
+    print(render_reference_section())
     print("")
-    print(render_ml_review_summary(output_root))
-    print("")
-    print(render_pipeline_comparison_summary(output_root))
-    print("")
-    print(render_model_overview())
-    print("")
-    print(render_dataset_overview())
-    print("")
-    print(render_glossary())
+    print(section_heading("OVERALL PROJECT CONCLUSION"))
     print("")
     print(render_overall_conclusion(output_root))
     return 0 if status else 1
