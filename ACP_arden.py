@@ -45,10 +45,8 @@ project. Their locations are read from a local, git-ignored ``.env``.
 # 1. Imports and programme metadata
 # =============================================================================
 
-# ``from __future__ import annotations`` stores every type annotation in this
-# file as a string rather than evaluating it at definition time. Two practical
-# consequences: a class may be named in a signature before it is defined, and
-# the annotations impose no runtime cost.
+# Allow type annotations to refer to classes defined later in this single-file
+# research artefact.
 from __future__ import annotations
 
 import argparse
@@ -367,10 +365,8 @@ class EnvironmentConfig:
     bfw_metadata_root: Optional[Path] = None
     arcface_model_root: Optional[Path] = None
 
-    # A ``@classmethod`` receives the class itself as its first argument rather
-    # than an instance, which is the idiomatic way to offer an alternative
-    # constructor: ``EnvironmentConfig.load()`` builds and returns an instance.
-    # ``Optional[X]`` is shorthand for "an X or None".
+    # Build the configuration directly from the environment. Optional paths let
+    # the baseline experiments run without BFW or the ArcFace comparison models.
     @classmethod
     def load(cls, env: Optional[Mapping[str, str]] = None) -> "EnvironmentConfig":
         """Process environment first, then the local ``.env`` as a fallback, so
@@ -420,10 +416,9 @@ class EnvironmentConfig:
                 f"{BFW_METADATA_ROOT_VARIABLE or BFW_ROOT_VARIABLE}. Expected the official "
                 f"metadata table shipped with the dataset."
             )
-        # The release ships the table twice, once with a version in the name and
-        # once without. Prefer the versioned copy so provenance records which
-        # release was read; ``next(... , default)`` returns the first match or
-        # falls back rather than raising when none is versioned.
+        # The release ships the metadata table twice, once with a version in the
+        # name and once without. Prefer the versioned copy so the recorded
+        # provenance identifies which BFW release was evaluated.
         versioned = next((m for m in matches if re.search(r"v\d", m.name)), None)
         return Path(self.bfw_root), versioned or matches[0]
 
@@ -564,10 +559,8 @@ _ID_HMAC_KEY: Optional[bytes] = None
 def sha256_of_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
-        # ``iter(callable, sentinel)`` repeatedly calls the first argument until
-        # it returns the second. Here that reads the file a megabyte at a time
-        # and stops at the empty bytestring marking end-of-file, so a large
-        # model binary is never held in memory in full.
+        # Digest the file a megabyte at a time, so a large model binary is never
+        # held in memory in full while its pinned hash is verified.
         for chunk in iter(lambda: handle.read(chunk_size), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -780,11 +773,8 @@ class ImageLoadError(RuntimeError):
     """Raised for any image that cannot be safely and strictly loaded."""
 
 
-# ``@dataclass`` generates __init__, __repr__ and __eq__ from the annotated
-# attributes below, so the class body declares data rather than boilerplate.
-# ``frozen=True`` additionally makes instances immutable: assigning to a field
-# after construction raises, which is what stops a loaded image being mutated
-# in place halfway through the pipeline.
+# Keep a loaded image immutable, so no stage of the pipeline can alter the
+# pixels another stage has already measured.
 @dataclass(frozen=True)
 class LoadedImage:
     bgr: np.ndarray  # HxWx3 uint8, OpenCV's BGR channel order
@@ -793,10 +783,8 @@ class LoadedImage:
     source_path: Path
 
 
-# The bare ``*`` in the signature marks every parameter after it as
-# keyword-only: a caller must write ``max_bytes=...`` rather than passing a
-# bare number positionally. For two same-typed limits that is the difference
-# between a readable call and a silently transposed pair of bounds.
+# The size limits must be named at the call site, because two same-typed bounds
+# passed positionally could be transposed without any error being raised.
 def load_image_bgr(
     path: Path,
     *,
@@ -838,16 +826,15 @@ def load_image_bgr(
     except ImageLoadError:
         raise
     except Exception as exc:  # noqa: BLE001 - normalise every decode failure
-        # ``raise ... from exc`` records the original decode error as the new
-        # exception's cause, so the traceback keeps both the library's message
-        # and this project's failure taxonomy.
+        # Keep the underlying decode error alongside this project's own failure
+        # category, so an unreadable image is still counted as an extraction
+        # failure rather than crashing the run.
         raise ImageLoadError(f"Could not decode image {path}: {exc}") from exc
 
-    # ``array[:, :, ::-1]`` keeps every row and column but walks the third axis
-    # (colour) backwards, converting Pillow's RGB order to the BGR order OpenCV
-    # expects. Negative-step slicing only produces a view, so
-    # ``ascontiguousarray`` copies it into a contiguous buffer that OpenCV's C++
-    # layer can read directly.
+    # Convert Pillow's RGB channel order to the BGR order OpenCV expects, and
+    # copy into a contiguous buffer the detector can read. Every experiment
+    # loads images this way, so the channel order is part of the pinned
+    # preprocessing revision.
     bgr = np.ascontiguousarray(array[:, :, ::-1])
     return LoadedImage(bgr=bgr, width=width, height=height, source_path=path)
 
@@ -861,12 +848,9 @@ def load_image_bgr(
 # are counted as explicit outcomes in section 12, never silently dropped.
 
 
-# A ``Protocol`` describes a shape rather than an ancestry: any object with a
-# matching ``detect_single_face`` method satisfies this type without inheriting
-# from it. That is what lets the evaluators accept either the real OpenCV
-# wrapper or a deterministic synthetic stand-in. ``@runtime_checkable``
-# additionally permits ``isinstance`` against the protocol, which checks only
-# that the named methods exist.
+# Accept the real OpenCV wrapper, the InsightFace comparison wrapper and the
+# deterministic synthetic stand-ins used by the self-tests through one
+# evaluation interface, so no experiment depends on a particular class.
 @runtime_checkable
 class FaceDetector(Protocol):
     """Returns one detected face's row, or raises ``FaceCountError``."""
@@ -1196,10 +1180,9 @@ def parse_lfw_pairs(protocol_path: Path, dataset_root: Path) -> List[Pair]:
 
 def _cplfw_identity_from_filename(filename: str) -> str:
     stem = Path(filename).stem
-    # ``rpartition`` splits once at the *last* separator and always returns
-    # three parts, so this cannot raise on a name without an underscore. The
-    # middle value is the separator itself; ``_`` is the conventional name for a
-    # value that is deliberately discarded.
+    # CPLFW filenames end in an image number, so the identity is everything
+    # before the final underscore. A name without that suffix is returned
+    # unchanged rather than truncated.
     prefix, _, suffix = stem.rpartition("_")
     return prefix if prefix and suffix.isdigit() else stem
 
@@ -1299,10 +1282,8 @@ def parse_cplfw_pairs(protocol_path: Path, dataset_root: Path) -> List[Pair]:
 # "score >= threshold implies a predicted match". Implemented in plain NumPy so
 # the dependency contract stays small and fully pinned.
 
-# Type aliases: a name bound to a type expression, used purely to keep the
-# signatures below readable. ``Union[A, B]`` means "either an A or a B", so
-# every entry point accepts a plain Python sequence or a NumPy array and
-# internal calls need not convert back and forth.
+# Every metric entry point accepts either a plain sequence or a NumPy array, so
+# callers need not convert scores back and forth between the two.
 ScoreInput = Union[Sequence[float], np.ndarray]
 LabelInput = Union[Sequence[int], np.ndarray]
 
@@ -1348,9 +1329,9 @@ class ConfusionMatrix:
         }
 
 
-# A single leading underscore marks a helper as internal by convention: it is
-# not part of the surface this file offers to its tests or to a reader, and may
-# change without notice. Python does not enforce this; it is a signal.
+# Reject empty, ragged, non-finite or single-class input before any metric is
+# calculated, so a malformed evaluation stops rather than reporting a figure
+# derived from unusable scores.
 def _validate_inputs(scores: ScoreInput, labels: LabelInput) -> Tuple[np.ndarray, np.ndarray]:
     scores_arr = np.asarray(scores, dtype=np.float64)
     labels_arr = np.asarray(labels, dtype=np.int64)
@@ -1457,9 +1438,8 @@ def roc_auc(scores: ScoreInput, labels: LabelInput) -> float:
     average ranks. Equivalent to the trapezoidal-rule area, without pulling in
     a machine-learning framework for one statistic."""
     scores_arr, labels_arr = _validate_inputs(scores, labels)
-    # ``kind="mergesort"`` requests a stable sort: equal scores keep their
-    # original relative order. Stability makes the tie handling below
-    # reproducible run to run rather than dependent on the sort's internals.
+    # A stable sort keeps equal scores in their original order, so the tie
+    # handling below gives the same ROC-AUC on every run.
     order = np.argsort(scores_arr, kind="mergesort")
     sorted_scores = scores_arr[order]
     ranks = np.empty(len(scores_arr), dtype=np.float64)
@@ -1705,12 +1685,10 @@ def select_final_threshold(
             "balanced_accuracy": balanced_accuracy,
         }
 
-    # Returning a tuple gives a lexicographic ordering: Python compares the
-    # first element, and only consults the second when those are equal, then
-    # the third. Negating balanced accuracy turns "highest is best" into
-    # "smallest sorts first", so a single ``min`` expresses the whole published
-    # selection rule -- and the final element being the candidate's name
-    # guarantees a total order, leaving no tie for chance to break.
+    # The published selection rule in one key: highest balanced accuracy first,
+    # then lowest false match rate, then the candidate name. Including the name
+    # guarantees a total order, so the chosen threshold is deterministic and no
+    # tie is left for chance to break.
     def sort_key(name: str) -> Tuple[float, float, str]:
         metrics = per_candidate_dev_metrics[name]
         return (-metrics["balanced_accuracy"], metrics["false_match_rate"], name)
@@ -1770,10 +1748,8 @@ class EvaluationResult:
     failures: Dict[str, int] = field(default_factory=dict)
     embedding_times_seconds: List[float] = field(default_factory=list)
 
-    # ``@property`` exposes a method as though it were an attribute, so callers
-    # write ``result.valid_scores`` rather than ``result.valid_scores()``. Each
-    # one below is derived from the stored pairs on every access, which means
-    # the counts can never drift out of step with the data they describe.
+    # Each figure below is derived from the stored pairs on every access, so a
+    # reported count can never drift out of step with the pairs it describes.
     @property
     def valid_scores(self) -> List[float]:
         return [s.similarity for s in self.scored_pairs if s.similarity is not None]
@@ -2428,10 +2404,8 @@ def _atomic_write(path: Path, content: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
-        # ``os.replace`` is atomic within a filesystem: the destination either
-        # holds the whole old file or the whole new one, never a partial write.
-        # Writing to a temporary neighbour and renaming is therefore what stops
-        # an interrupted run leaving a half-written result behind.
+        # Replace the artefact in one step, so an interrupted run cannot leave a
+        # half-written result that a later stage would read as complete.
         os.replace(tmp_path, path)
     except Exception:
         if os.path.exists(tmp_path):
@@ -2496,9 +2470,8 @@ def format_percentage(value: Any) -> str:
 
 def format_number(value: Any, digits: int = 4) -> str:
     try:
-        # The inner ``{digits}`` is substituted into the format specification
-        # itself, so the number of decimal places is chosen by the caller
-        # rather than fixed in the literal.
+        # The caller chooses the precision, so a rate and a threshold can be
+        # rendered to different numbers of decimal places.
         return f"{float(value):.{digits}f}"
     except (TypeError, ValueError):
         return "n/a"
@@ -2937,10 +2910,8 @@ def assert_no_leakage(record: Mapping[str, Any], *, context: str = "") -> None:
         if isinstance(value, str) and (value.startswith("/") or value.startswith("~")):
             raise PrivacyLeakError(f"{label}: value looks like an absolute path: {value}")
 
-        # ``all(... for ...)`` is a generator expression: it tests each item in
-        # turn and stops at the first failure rather than building an
-        # intermediate list. A long, purely numeric sequence is the shape of a
-        # raw embedding, which must never reach a published artefact.
+        # A long, purely numeric sequence has the shape of a raw face embedding,
+        # which must never reach a published artefact.
         if (
             isinstance(value, (list, tuple))
             and len(value) >= 32
@@ -3168,10 +3139,8 @@ class ReviewCase:
     decided_at: Optional[str]
 
 
-# ``@contextmanager`` turns a generator into something usable with ``with``:
-# everything before ``yield`` runs on entry, the yielded value is bound to the
-# ``as`` name, and the ``finally`` clause runs on exit however the block ends.
-# That is what guarantees the connection closes even if the caller raises.
+# Close the review database even when the caller raises, so an interrupted
+# review session cannot leave the local case file locked.
 @contextmanager
 def review_database(db_path: Path) -> Iterator[sqlite3.Connection]:
     db_path = Path(db_path)
@@ -4312,9 +4281,8 @@ def run_open_set_method(
             continue
 
         # Two separate measurements of what a deployment would actually pay.
-        # Retrieving the single best candidate needs only a running maximum;
-        # retrieving five needs a partial selection. ``heapq.nlargest`` keeps a
-        # heap of size k rather than ordering the whole gallery, so it reflects
+        # Retrieving the single best candidate costs a running maximum;
+        # retrieving five costs a partial selection over the gallery, which is
         # the real cost of a five-candidate review queue.
         start = time.perf_counter()
         similarities = [(c, cosine_similarity(probe_embedding, c.template)) for c in enrolled]
@@ -10379,14 +10347,11 @@ def generate_figures(
                 )
                 ax.set_title(title, fontsize=9)
                 ax.grid(axis="y", alpha=0.3)
-                # FPIR on its own bound; every other panel on the common
-                # 0-100% scale so they stay comparable with one another.
+                # FPIR gets its own bound; every other panel stays on the common
+                # 0-100% scale so they remain comparable with one another.
                 ax.set_ylim(0, fpir_limit if metric == "fpir" else 100)
-                # FPIR needs its own bound; the remaining panels stay on the
-                # common 0-100% scale so they compare with one another.
-                # The metric is bound as a default argument: a bare closure
-                # would capture the loop variable and give every panel the
-                # final metric's precision.
+                # Fix the metric for this panel, so each axis keeps its own
+                # decimal precision rather than the last panel's.
                 ax.yaxis.set_major_formatter(FuncFormatter(
                     lambda v, _pos, is_fpir=(metric == "fpir"):
                     f"{v:.2f}%" if is_fpir else f"{v:.0f}%"
@@ -10468,7 +10433,8 @@ def generate_figures(
             ax.set_xticks(positions); ax.set_xticklabels(labels, fontsize=9)
             ax.set_ylim(0, limit); ax.set_title(title, fontsize=10)
             ax.set_ylabel("Per cent (95% identity-cluster CI)", fontsize=9)
-            # Bound as a default argument for the same reason as above.
+            # Fix the bound for this panel, so the FPIR and percentage axes
+            # keep their own decimal precision.
             ax.yaxis.set_major_formatter(FuncFormatter(
                 lambda v, _pos, fine=(limit < 10):
                 f"{v:.2f}%" if fine else f"{v:.0f}%"
@@ -12284,10 +12250,9 @@ def experiment_calibrate(
             "failure_breakdown": dict(result.failures),
             "model_version": MODEL_VERSION,
             "preprocessing_revision": PREPROCESSING_REVISION,
-            # ``getattr(obj, name, default)`` returns the attribute if present
-            # and the default otherwise. The evaluators are typed structurally,
-            # so a stand-in stage need not carry a digest; the real wrappers
-            # always do, and it is their verified value that is recorded.
+            # Record the verified model digests. The synthetic stand-ins used by
+            # the self-tests carry none; the real wrappers always do, and it is
+            # their verified value that reaches the artefact.
             "model_sha256": {
                 "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
                 "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
@@ -12383,9 +12348,9 @@ def experiment_evaluate_lfw(
             "threshold_source": project_relative(threshold_artifact),
             "threshold_artifact_sha256": threshold_artifact_sha256,
             "threshold_status": FROZEN_STATUS,
-            # ``**`` unpacks a dictionary's items into the one being built. Order
-            # matters: later keys overwrite earlier ones, and ``extra_fields`` is
-            # empty unless this is the selection stage.
+            # Add the stage-specific evidence to the shared result metadata.
+            # Order matters: later keys overwrite earlier ones, and
+            # ``extra_fields`` is empty unless this is the selection stage.
             **extra_fields,
             **summary,
             "model_version": MODEL_VERSION,
