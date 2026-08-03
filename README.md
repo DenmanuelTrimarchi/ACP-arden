@@ -72,25 +72,43 @@ Open this folder in VS Code, select `.venv/bin/python` as the interpreter,
 open `ACP_arden.py`, and press the **Run Python File** play button. A menu
 appears; nothing long-running starts until you choose an option.
 
+The programme prints a short statement of its purpose and limits, then a
+menu grouped by what each option is for. Every long-running option prints a
+preview of what it will do before it starts, and every result summary opens
+with a plain-language section before the technical figures.
+
 ```text
 ACP-arden — Face Verification Research Artefact
 
-1. Check local environment
-2. Verify models and benchmark datasets
-3. Run the complete five-experiment evaluation
-4. Show the existing results summary
-5. Launch the local human-review interface
-6. Run synthetic self-tests
-7. Exit
-8. Run BFW open-set development and held-out evaluation
-9. Show open-set results summary
-10. Train and evaluate the machine-learning review classifier
-11. Show review-classifier summary
-12. Compare pretrained pipelines
-13. Run both extension experiments and regenerate figures
+SETUP AND VALIDATION
+
+  1. Check the software environment
+  2. Verify models and datasets
+  6. Run quick programme self-tests
+
+ORIGINAL FIVE EXPERIMENTS
+
+  3. Run Experiments 1-5
+  4. Show the saved results from Experiments 1-5
+  5. Open the local human-review demonstration
+
+BFW EXTENSION EXPERIMENTS
+
+  8. Run Experiment 6 - BFW duplicate-profile evaluation
+  9. Show the saved Experiment 6 results
+ 10. Run Experiment 7 - logistic-regression review classifier
+ 11. Show the saved Experiment 7 results
+ 12. Run Experiment 8 - compare YuNet + SFace with SCRFD + ArcFace
+ 13. Run Experiments 7 and 8, then regenerate all figures
+
+  7. Exit
 
 Select an option:
 ```
+
+Option 13 runs Experiments 7 and 8 and rebuilds the figures. It does not run
+Experiment 6, which must already have been completed because both extensions
+reuse its frozen threshold and its canonical run.
 
 ### Setup
 

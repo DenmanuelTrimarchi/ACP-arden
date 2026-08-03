@@ -3091,6 +3091,15 @@ def check_public_outputs(paths: Sequence[Path]) -> bool:
 # that opened the case. It applies no sanction of any kind.
 
 REVIEW_STATUSES = ["open", "confirmed_duplicate", "false_match", "dismissed"]
+
+# Display wording for the stored status values. The stored strings themselves
+# are unchanged, because the review database schema is part of the artefact.
+REVIEW_STATUS_WORDING = {
+    "open": "awaiting review",
+    "confirmed_duplicate": "marked for further review",
+    "false_match": "closed as no action",
+    "dismissed": "dismissed",
+}
 ALLOWED_REVIEW_STATUSES = set(REVIEW_STATUSES)
 
 REVIEW_SCHEMA = """
@@ -3321,12 +3330,33 @@ def render_review_page(db_path: Path) -> None:
     st.set_page_config(page_title="Duplicate-profile review (local only)", layout="wide")
 
     st.title("Duplicate-profile review — local demonstration only")
-    st.warning(
-        "Similarity above threshold is evidence for human review, not proof of misuse or scam "
-        "activity. No account is banned, suspended or accused by this page. Case, probe and "
-        "candidate identifiers are opaque one-way hashes; no real name or file path is ever "
-        "shown here."
+    st.error(
+        "**These cases are not confirmed duplicate profiles.** They were created by "
+        "Experiment 5 using the original LFW gallery method. That threshold produced a "
+        "high false-review rate and is included as a research baseline. This page "
+        "demonstrates the review workflow, not a production moderation decision."
     )
+    st.warning(
+        "A high similarity to an enrolled profile is a review signal, not proof that two "
+        "profiles belong to the same person, that a photograph was stolen or that fraud "
+        "occurred. No account is banned, suspended or accused by this page. Case, probe "
+        "and candidate identifiers are opaque one-way hashes; no real name, file path or "
+        "face embedding is ever shown here."
+    )
+
+    # Aggregate counts only. No identifier, path or score is summarised here.
+    with review_database(db_path) as summary_connection:
+        totals = {
+            "Cases currently stored": count_review_cases(summary_connection),
+            **{
+                f"Cases {REVIEW_STATUS_WORDING.get(state, state)}":
+                    count_review_cases(summary_connection, status=state)
+                for state in REVIEW_STATUSES
+            },
+        }
+    count_columns = st.columns(len(totals))
+    for column, (label, value) in zip(count_columns, totals.items()):
+        column.metric(label, f"{value:,}")
 
     filter_column, page_size_column = st.columns([2, 1])
     status_filter = filter_column.selectbox("Filter by status", ["all", *REVIEW_STATUSES])
@@ -3390,6 +3420,11 @@ def launch_review_interface(db_path: Path) -> int:
             f"No review database at {project_relative(db_path)} yet. The page will open empty; "
             f"run option 3 (complete evaluation) first to populate it."
         )
+    # Stated before the browser opens, because the queue shown here was built
+    # by the deliberately high-false-review Experiment 5 baseline.
+    print("")
+    print(render_experiment_preview("review"))
+    print("")
     child_environment = dict(os.environ)
     child_environment["ACP_ARDEN_REVIEW_CHILD"] = "1"
     print("Starting the local review interface (Ctrl+C in this terminal to stop it).")
@@ -5469,7 +5504,8 @@ def run_open_set_experiment(
     image_root, metadata_path = config.require_bfw_roots()
 
     detector, embedder = load_models(config.require_model_root())
-    announce("Loading BFW metadata and validating the pinned schema")
+    announce_stage(1, 6, "Loading and validating the BFW dataset",
+                   "The pinned metadata schema is checked before anything is scored.")
     dataset = load_bfw_dataset(image_root, metadata_path)
     announce(f"BFW: {len(dataset.images)} images across {len(dataset.by_identity())} identities")
 
@@ -5496,12 +5532,16 @@ def run_open_set_experiment(
         lfw_payload, context=project_relative(threshold_artifact)
     )
 
+    announce_stage(2, 6, "Building development and held-out identity groups",
+                   "The groups do not share any person.")
     announce("Running Method A (single-image enrolment, LFW 1:1 threshold) on development")
     control_dev = run_open_set_method(
         protocol, partition="development", method=METHOD_A, detector=detector, embedder=embedder
     )
 
     # --- Method B development and freezing -----------------------------------
+    announce_stage(3, 6, "Creating enrolled profile templates",
+                   "Three photographs are combined to represent each profile.")
     announce("Running Method B (three-image template) on development")
     # Reuse the cache rather than force a rebuild. Experiment 6 is the producer
     # of the canonical runs, but forcing a refresh here re-rolled the primary
@@ -5535,6 +5575,8 @@ def run_open_set_experiment(
     }
     policy_path = output_root / "bfw_open_set_threshold.json"
     write_json_artifact(policy_path, policy_payload)
+    announce_stage(4, 6, "Selecting the review threshold",
+                   "Only development identities are used at this stage.")
     announce(f"Froze the open-set policy at {project_relative(policy_path)}")
 
     frozen_threshold = require_frozen_open_set_policy(
@@ -5578,6 +5620,8 @@ def run_open_set_experiment(
     )
 
     # --- Held-out test, frozen policy applied unchanged -----------------------
+    announce_stage(5, 6, "Testing unseen identities",
+                   "The frozen threshold is now applied to the held-out test group.")
     announce("Scoring the held-out test partition with the frozen policy")
     control_test = run_open_set_method(
         protocol, partition="test", method=METHOD_A, detector=detector, embedder=embedder
@@ -5731,6 +5775,9 @@ def run_open_set_experiment(
         )
     assert_no_identifier_key_leak(output_root)
     announce("Privacy validation passed for every open-set artefact")
+    announce_stage(6, 6, "Calculating uncertainty and writing reports",
+                   f"{BOOTSTRAP_REPLICATES:,} identity-level bootstrap samples are used "
+                   f"for confidence intervals.")
 
     return test_payload
 
@@ -6657,6 +6704,78 @@ def arcface_pipeline_description(config: Optional[EnvironmentConfig] = None) -> 
     )
 
 
+SCRFD_WARNING_EXPLANATION = (
+    "Loading SCRFD + ArcFace.\n"
+    "\n"
+    "The SCRFD model uses dynamic output dimensions. ONNX Runtime may print\n"
+    "technical output-shape warnings while adapting the model to the selected\n"
+    "image size. These warnings are expected in this verified configuration and\n"
+    "do not indicate that the evaluation has failed.\n"
+    "\n"
+    "The programme will stop if the returned detector outputs are invalid."
+)
+
+
+def validate_scrfd_outputs(detector_model: Any) -> None:
+    """Check that the loaded detector returns usable geometry.
+
+    The output-shape warnings are only acceptable because this runs afterwards:
+    a detector that warns and then returns malformed boxes must stop the
+    evaluation rather than be explained away. A synthetic image is used, so no
+    benchmark photograph is needed to validate the load."""
+    probe = np.zeros(
+        (ARCFACE_DETECTION_INPUT_SIZE, ARCFACE_DETECTION_INPUT_SIZE, 3), dtype=np.uint8
+    )
+    try:
+        outputs = detector_model.detect(probe, max_num=0, metric="default")
+    except Exception as exc:  # pragma: no cover - depends on the optional model
+        raise PipelineUnavailableError(
+            f"[{PIPELINE_STATUS_DEPENDENCIES_MISSING}] the SCRFD detector failed to "
+            f"produce outputs during validation: {exc}"
+        ) from exc
+
+    if not isinstance(outputs, tuple) or len(outputs) != 2:
+        raise PipelineUnavailableError(
+            f"[{PIPELINE_STATUS_DEPENDENCIES_MISSING}] the SCRFD detector returned "
+            f"an unexpected number of outputs."
+        )
+    boxes, landmarks = outputs
+    # An empty detection on a blank image is the correct outcome; only the
+    # shape and value contract is being checked here.
+    if boxes is not None and len(boxes):
+        array = np.asarray(boxes, dtype=np.float64)
+        if array.ndim != 2 or array.shape[1] < 4:
+            raise PipelineUnavailableError(
+                f"[{PIPELINE_STATUS_DEPENDENCIES_MISSING}] the SCRFD detector returned "
+                f"bounding boxes of an unexpected rank or width."
+            )
+        if not np.isfinite(array).all():
+            raise PipelineUnavailableError(
+                f"[{PIPELINE_STATUS_DEPENDENCIES_MISSING}] the SCRFD detector returned "
+                f"non-finite bounding-box values."
+            )
+        widths = array[:, 2] - array[:, 0]
+        heights = array[:, 3] - array[:, 1]
+        if float(np.min(widths)) <= 0.0 or float(np.min(heights)) <= 0.0:
+            raise PipelineUnavailableError(
+                f"[{PIPELINE_STATUS_DEPENDENCIES_MISSING}] the SCRFD detector returned "
+                f"a bounding box without positive width and height."
+            )
+    if landmarks is not None and len(landmarks):
+        points = np.asarray(landmarks, dtype=np.float64)
+        if points.ndim != 3 or points.shape[1:] != (5, 2):
+            raise PipelineUnavailableError(
+                f"[{PIPELINE_STATUS_DEPENDENCIES_MISSING}] the SCRFD detector returned "
+                f"landmarks of an unexpected shape."
+            )
+        if not np.isfinite(points).all():
+            raise PipelineUnavailableError(
+                f"[{PIPELINE_STATUS_DEPENDENCIES_MISSING}] the SCRFD detector returned "
+                f"non-finite landmark values."
+            )
+    announce("SCRFD output validation passed.")
+
+
 def load_arcface_pipeline(config: Optional[EnvironmentConfig] = None):
     """Load the comparator through InsightFace's documented API.
 
@@ -6679,6 +6798,13 @@ def load_arcface_pipeline(config: Optional[EnvironmentConfig] = None):
     # fetches the pack from the network when that directory is empty, which
     # would both download automatically and evaluate files other than the
     # pinned ones.
+    # Explained before loading, because ONNX Runtime prints output-shape
+    # warnings while adapting the dynamic SCRFD graph to the selected input
+    # size. Those are expected here and are not evaluation failures.
+    print("")
+    print(SCRFD_WARNING_EXPLANATION)
+    print("")
+
     root = Path(config.arcface_model_root)  # type: ignore[arg-type]
     detector_model = cast(Any, get_model(str(root / ARCFACE_DETECTOR_FILENAME)))
     detector_model.prepare(
@@ -6690,6 +6816,10 @@ def load_arcface_pipeline(config: Optional[EnvironmentConfig] = None):
     recognition_model.prepare(ctx_id=-1)
 
     detector = ArcFaceDetector(detector_model, description.model_sha256["detector"])
+    # The warning is tolerated only because the detector's actual outputs are
+    # checked. A malformed box, a non-finite value or a missing output stops
+    # the run rather than being explained away.
+    validate_scrfd_outputs(detector_model)
     embedder = ArcFaceEmbedder(
         recognition_model, detector, description.model_sha256["recognition"],
         dimensions=description.embedding_dimensions,
@@ -7707,6 +7837,8 @@ def run_ml_review_experiment(
     image_root, metadata_path = config.require_bfw_roots()
     detector, embedder = load_models(config.require_model_root())
 
+    announce_stage(1, 4, "Loading BFW and rebuilding the identity groups",
+                   "Training, calibration and held-out identities share no person.")
     announce("Loading BFW and rebuilding the identity-disjoint protocol")
     dataset = load_bfw_dataset(image_root, metadata_path)
     protocol = build_open_set_protocol(dataset, seed=seed)
@@ -7727,6 +7859,9 @@ def run_ml_review_experiment(
         f"calibration, {len(test_ids)} held-out test (disjoint)"
     )
 
+    announce_stage(2, 4, "Measuring each development photograph",
+                   "Search and image-quality measurements only; no demographic "
+                   "attribute is used.")
     announce("Scoring the development partition once for both classifier groups")
     development, development_digest, development_context = canonical_primary_run(
         protocol, partition="development", detector=detector, embedder=embedder, dataset=dataset
@@ -7817,6 +7952,9 @@ def run_ml_review_experiment(
     frozen_probability = require_frozen_review_policy(
         read_json_artifact(policy_path), context=project_relative(policy_path)
     )
+    announce_stage(3, 4, "Selecting the referral probability",
+                   "Separate calibration identities are used; no held-out identity "
+                   "is seen.")
     announce(f"Froze the review classifier at probability {frozen_probability:.6f}")
 
     write_json_artifact(
@@ -7835,6 +7973,9 @@ def run_ml_review_experiment(
     )
 
     # --- Held-out test, scored once ------------------------------------------
+    announce_stage(4, 4, "Testing unseen identities",
+                   "The frozen referral probability is applied without further "
+                   "adjustment.")
     announce("Scoring the held-out test partition")
     test_run, canonical_digest, test_context = canonical_primary_test_run(
         protocol, detector=detector, embedder=embedder, dataset=dataset
@@ -8601,7 +8742,8 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
     (output_root / "PRETRAINED_PIPELINE_COMPARISON_REPORT.md").write_text(
         "\n".join(report) + "\n", encoding="utf-8"
     )
-    announce(f"Pipeline comparison recorded with status {payload['status']}")
+    # Readable wording in the terminal; the exact internal status stays in JSON.
+    announce(f"Pipeline comparison: {plain_status(payload['status'])}")
     return payload
 
 
@@ -8852,7 +8994,9 @@ def render_pipeline_comparison_summary(output_root: Path = AGGREGATE_ROOT) -> st
         "",
         f"  Primary pipeline: {payload['primary_pipeline']['pipeline_name']} "
         f"({payload['primary_pipeline']['embedding_dimensions']}-dimensional)",
-        f"  Evaluated: {payload['evaluated']}   Status: {payload['status']}",
+        f"  Evaluated: {payload['evaluated']}",
+        f"  Status: {plain_status(payload['status'])}",
+        f"  Internal status value (as stored in JSON): {payload['status']}",
     ]
     if payload.get("reason"):
         lines.append(f"  Reason: {payload['reason']}")
@@ -10971,6 +11115,842 @@ def run_self_tests(verbose: bool = True) -> Tuple[int, int]:
     return passed, failed
 
 
+
+###############################################################################
+# Plain-language presentation layer
+###############################################################################
+#
+# Presentation only. Nothing here computes, recalculates or rounds a scientific
+# quantity into a stored artefact: every value is read back from the published
+# JSON and CSV files and formatted for a reader who does not already know what
+# FPIR, TPIR, enrolment or a cluster bootstrap are. The formal reports under
+# results/aggregate/ keep their technical wording unchanged.
+
+# Repeated wherever a referral count is shown. The programme produces review
+# signals; it establishes none of the facts a reader might otherwise infer.
+REFERRAL_DISCLAIMER = (
+    "A referral is a model-generated review signal. It is not proof that two "
+    "profiles belong to the same person, that a photograph was stolen or that "
+    "fraud occurred."
+)
+
+# Printed once at start-up, so the scope of the artefact is stated before any
+# result is shown.
+PROGRAMME_INTRODUCTION = f"""{PROGRAMME_TITLE}
+
+Purpose:
+This programme evaluates whether pretrained face-comparison models can help
+a human moderator review possible duplicate profiles and inconsistent profile
+photographs.
+
+The programme does not automatically identify fraud, ban users or prove that
+two profiles belong to the same person.
+
+It uses public academic benchmark datasets and pretrained models. No
+face-recognition model is trained or fine-tuned by this project."""
+
+# Internal status vocabulary is machine-readable and stays in the JSON exactly
+# as it is. These are display strings only.
+PLAIN_STATUS_WORDING = {
+    "evaluated_non_commercial_academic_research":
+        "Evaluation completed for non-commercial academic research.",
+    "ml_review_tested": "Classifier evaluation completed.",
+    "open_set_tested": "Held-out open-set evaluation completed.",
+    "not_run_licensing_unresolved":
+        "Not run: the optional comparison models were not available.",
+    "not_run_models_unavailable":
+        "Not run: the optional comparison model files were not found.",
+}
+
+
+def plain_status(status: Optional[str]) -> str:
+    """Readable wording for an internal status value.
+
+    An unrecognised status is shown as-is rather than hidden, so a new internal
+    state cannot silently display as something it is not."""
+    if not status:
+        return "Status not recorded."
+    return PLAIN_STATUS_WORDING.get(status, status)
+
+
+def format_count_and_percentage(
+    count: Optional[float],
+    denominator: Optional[float],
+    *,
+    technical: str = "",
+    noun: str = "",
+) -> str:
+    """One consistent way to state a result: count, denominator and percentage.
+
+    A percentage on its own cannot be checked and hides whether it was measured
+    over every intended item or only over those successfully processed, so the
+    denominator is always shown beside it."""
+    if not isinstance(count, (int, float)) or count != count:
+        return "not available"
+    if not isinstance(denominator, (int, float)) or denominator != denominator or not denominator:
+        return f"{int(round(count)):,}" + (f" {noun}" if noun else "")
+    share = 100.0 * float(count) / float(denominator)
+    body = f"{int(round(count)):,} of {int(round(denominator)):,}"
+    if noun:
+        body += f" {noun}"
+    body += f" ({share:.2f}%)"
+    return f"{body} [{technical}]" if technical else body
+
+
+def _percentage_of(value: Optional[float], *, technical: str = "") -> str:
+    """A stored proportion rendered as a percentage, with its technical name."""
+    if not isinstance(value, (int, float)) or value != value:
+        return "not available"
+    text = f"{float(value) * 100.0:.2f}%"
+    return f"{text} [{technical}]" if technical else text
+
+
+def plain_metric_description(key: str) -> str:
+    """The plain-language meaning of a metric, ahead of its technical name."""
+    return PLAIN_METRIC_DESCRIPTIONS.get(key, key)
+
+
+PLAIN_METRIC_DESCRIPTIONS = {
+    "fpir": "New profiles incorrectly sent for human review",
+    "tpir_rank1": "Known duplicate test cases whose correct profile ranked first",
+    "tpir_rank5": "Known duplicate test cases whose correct profile ranked in the top five",
+    "end_to_end": "Known duplicate test cases correctly detected",
+    "false_reviews_per_1000": "Unnecessary reviews per 1,000 new profiles",
+    "mated_coverage": "Known-duplicate photographs successfully processed",
+    "non_mated_coverage": "New-profile photographs successfully processed",
+    "gallery_coverage": "Profiles successfully enrolled into the searchable gallery",
+}
+
+# The conditional and end-to-end denominators answer different questions, and a
+# reader comparing them without knowing which is which would draw the wrong
+# conclusion.
+DENOMINATOR_NOTE = (
+    "Conditional results use only the photographs the model processed "
+    "successfully. End-to-end results use every photograph the experiment "
+    "intended to process, including those that failed."
+)
+
+
+
+def wrap_plain(text: str, width: int = 78) -> str:
+    """Wrap a paragraph to a terminal-friendly width.
+
+    Presentation only; the wrapped text is never written into an artefact."""
+    import textwrap
+
+    return "\n".join(
+        textwrap.fill(paragraph, width=width) if paragraph.strip() else ""
+        for paragraph in text.split("\n")
+    )
+
+
+def render_plain_table(
+    headers: Sequence[str], rows: Sequence[Sequence[str]], *, indent: str = "  "
+) -> str:
+    """A fixed-width text table. Column widths follow the widest cell, so a
+    long pipeline name cannot push a column out of alignment."""
+    columns = [list(headers)] + [list(row) for row in rows]
+    widths = [
+        max(len(str(column[index])) for column in columns)
+        for index in range(len(headers))
+    ]
+    def line(cells: Sequence[str]) -> str:
+        return indent + "  ".join(
+            str(cell).ljust(widths[index]) for index, cell in enumerate(cells)
+        ).rstrip()
+    out = [line(headers), indent + "  ".join("-" * w for w in widths)]
+    out += [line(row) for row in rows]
+    return "\n".join(out)
+
+
+def render_model_overview() -> str:
+    """What each model does and who trained it. Nothing here is trained by this
+    project except the logistic-regression review classifier."""
+    return """MODELS USED
+
+YuNet
+Purpose: Locates faces in photographs.
+Source: OpenCV Zoo.
+Training: Pretrained externally; not trained by this project.
+
+SFace
+Purpose: Converts a detected face into a numerical representation used for
+face comparison.
+Source: OpenCV Zoo.
+Training: Pretrained externally; not trained by this project.
+
+SCRFD
+Purpose: Higher-capacity face detector used in the comparison experiment.
+Source: InsightFace.
+Training: Pretrained externally; not trained by this project.
+
+ArcFace
+Purpose: Higher-capacity face-recognition model used in the comparison.
+Source: InsightFace buffalo_l model pack.
+Training: Pretrained externally; not trained by this project.
+
+Logistic regression
+Purpose: Combines search and image-quality measurements to decide whether a
+case should be sent for human review.
+Training: Fitted by this project using BFW development identities only."""
+
+
+def render_dataset_overview() -> str:
+    """Which benchmark is used where. These are public research benchmarks and
+    the people in them are not users of any application."""
+    return """DATASETS USED
+
+LFW
+Used for one-to-one face comparison and the original gallery experiment.
+
+CPLFW
+Used to test cross-pose generalisation.
+
+BFW
+Used for open-set duplicate-profile evaluation, subgroup reporting, classifier
+evaluation and the pretrained pipeline comparison.
+
+These are public academic benchmark datasets. The people photographed in them
+are research subjects, not users of a dating application."""
+
+
+def render_glossary() -> str:
+    """Offered at the end of every summary, so a reader meeting a term for the
+    first time does not have to look elsewhere."""
+    return """TERMS USED
+
+Enrolment:
+Creating a profile representation from one or more photographs.
+
+Gallery:
+The set of enrolled profile representations searched by the model.
+
+Mated probe:
+A test photograph whose correct profile is already enrolled.
+
+Non-mated probe:
+A test photograph belonging to a person who is not enrolled in the gallery.
+
+False review:
+A new or non-mated profile incorrectly sent for duplicate-profile review.
+
+TPIR@1:
+The percentage of successfully processed known duplicate cases whose correct
+profile was ranked first and passed the threshold.
+
+FPIR:
+The percentage of successfully processed new profiles incorrectly sent for
+review.
+
+Conditional rate:
+Calculated only from photographs successfully processed.
+
+End-to-end rate:
+Calculated from every intended photograph, including processing failures.
+
+Confidence interval:
+A range showing the uncertainty in a benchmark result."""
+
+
+
+
+def render_ml_review_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """Experiment 7 in plain language, including the negative finding."""
+    payload = _load_optional(aggregate_root, "ml_review_test_metrics.json")
+    if not payload:
+        return missing_artefact_message("Experiment 7", "option 10")
+    classifier = payload["classifier"]
+    comparator = payload["comparator_three_image_open_set_calibrated"]["rates"]
+
+    detection_gain = (
+        (classifier.get("tpir_rank1", 0.0) - comparator.get("tpir_rank1", 0.0)) * 100.0
+    )
+    base_reviews = comparator.get("false_reviews_per_1000_non_mated", float("nan"))
+    new_reviews = classifier.get("false_reviews_per_1000_non_mated", float("nan"))
+    lines = [
+        "EXPERIMENT 7 - LOGISTIC-REGRESSION REVIEW CLASSIFIER",
+        "",
+        "Question:",
+        "Did the classifier reduce unnecessary reviews compared with the",
+        "calibrated similarity threshold?",
+        "",
+        render_plain_table(
+            ["", "Similarity threshold", "Logistic classifier"],
+            [
+                ["Known duplicate cases correctly detected",
+                 _percentage_of(comparator.get("tpir_rank1")),
+                 _percentage_of(classifier.get("tpir_rank1"))],
+                ["New profiles wrongly sent for review",
+                 _percentage_of(comparator.get("fpir")),
+                 _percentage_of(classifier.get("fpir"))],
+                ["False reviews per 1,000 new profiles",
+                 f"{base_reviews:.1f}", f"{new_reviews:.1f}"],
+            ],
+        ),
+        "",
+        "Outcome:",
+        "",
+        wrap_plain(
+            f"The classifier detected approximately {abs(detection_gain):.1f} percentage "
+            f"points {'more' if detection_gain >= 0 else 'fewer'} known duplicate cases, "
+            f"but it also created more unnecessary reviews."
+        ),
+        "",
+        wrap_plain(
+            f"The main hypothesis was not achieved because false reviews increased from "
+            f"approximately {base_reviews:.0f} to {new_reviews:.0f} per 1,000 new profiles."
+        ),
+        "",
+        wrap_plain(
+            "This is a valid negative research finding. It does not indicate that the "
+            "programme failed to run."
+        ),
+        "",
+        "Success criteria:",
+        "",
+    ]
+    # Display wording only. The machine-readable criterion keys and their
+    # nested target/actual/outcome objects stay untouched in the JSON.
+    for key, entry in sorted((payload.get("success_criteria") or {}).items()):
+        if isinstance(entry, Mapping):
+            outcome = entry.get("outcome")
+        else:
+            # A plain boolean, such as the declared-before-test flag.
+            outcome = "achieved" if entry else "not_achieved"
+        label = PLAIN_CRITERION_WORDING.get(key, key.replace("_", " ").capitalize())
+        lines.append(f"  {label}: {str(outcome).replace('_', ' ')}")
+    lines += ["", wrap_plain(DENOMINATOR_NOTE), "",
+              wrap_plain(REFERRAL_DISCLAIMER)]
+    return "\n".join(lines)
+
+
+# Display wording for the pre-declared criteria. The original keys remain the
+# machine-readable names inside the JSON artefact.
+PLAIN_CRITERION_WORDING = {
+    "criteria_declared_before_test":
+        "Success criteria were declared before the held-out test",
+    "end_to_end_detection_within_2pp_of_threshold_method":
+        "End-to-end detection remained within the permitted difference",
+    "fewer_false_reviews_than_threshold_method":
+        "Fewer unnecessary reviews than the similarity method",
+    "gallery_enrolment_coverage_at_least_90_percent":
+        "At least 90% gallery enrolment coverage",
+    "primary_fpir_at_or_below_1_percent":
+        "New profiles wrongly reviewed stayed at or below 1%",
+    "probe_extraction_coverage_at_least_90_percent":
+        "At least 90% probe processing coverage",
+    "tpir_rank1_at_least_90_percent": "At least 90% rank-one detection",
+    "tpir_rank5_at_least_95_percent": "At least 95% top-five detection",
+}
+
+
+def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """Experiment 8 in plain language, as a side-by-side pipeline table."""
+    payload = _load_optional(aggregate_root, "pipeline_comparison_metrics.json")
+    if not payload:
+        return missing_artefact_message("Experiment 8", "option 12")
+    held_out = payload.get("held_out_metrics") or {}
+    if payload.get("evaluated") != "yes" or not held_out:
+        return "\n".join([
+            "EXPERIMENT 8 - PRETRAINED PIPELINE COMPARISON",
+            "",
+            plain_status(payload.get("status")),
+            "",
+            wrap_plain(
+                "The optional comparison models were not available, so no comparison "
+                "figures can be shown. Every other experiment is unaffected."
+            ),
+        ])
+
+    # Baseline pipeline first, so the columns match every figure and report.
+    names = sorted(held_out, key=lambda n: "opencv" not in n)
+    def cell(name: str, getter) -> str:
+        try:
+            return getter(held_out[name])
+        except (KeyError, TypeError):
+            return "not available"
+
+    rows = [
+        ["Known duplicate detection (ranked first)",
+         *[cell(n, lambda m: _percentage_of(m["rates"]["tpir_rank1"])) for n in names]],
+        ["End-to-end detection",
+         *[cell(n, lambda m: _percentage_of(m["end_to_end_duplicate_detection_rate"]))
+           for n in names]],
+        ["New profiles wrongly sent for review",
+         *[cell(n, lambda m: _percentage_of(m["rates"]["fpir"])) for n in names]],
+        ["False reviews per 1,000 new profiles",
+         *[cell(n, lambda m: f"{m['rates']['false_reviews_per_1000_non_mated']:.1f}")
+           for n in names]],
+        ["Known-duplicate photographs processed",
+         *[cell(n, lambda m: _percentage_of(
+             1.0 - m["coverage"]["mated_extraction_failure_rate"])) for n in names]],
+        ["New-profile photographs processed",
+         *[cell(n, lambda m: _percentage_of(
+             1.0 - m["coverage"]["non_mated_extraction_failure_rate"])) for n in names]],
+        ["Mean complete processing time per image",
+         *[cell(n, lambda m: f"{m['coverage']['complete_pipeline_latency_mean_ms']:.1f} ms")
+           for n in names]],
+    ]
+    # Embedding width and weight-file size are pipeline properties, recorded
+    # once at the top of the artefact rather than per held-out result.
+    descriptors = {
+        names[0]: payload.get("primary_pipeline") or {},
+        names[-1]: payload.get("comparison_pipeline") or {},
+    }
+    sizes = payload.get("model_file_sizes") or {}
+    size_groups = {names[0]: sizes.get("primary") or {},
+                   names[-1]: sizes.get("comparison") or {}}
+
+    def total_megabytes(name: str) -> str:
+        group = size_groups.get(name) or {}
+        total = sum(
+            entry.get("megabytes", 0.0) for entry in group.values()
+            if isinstance(entry, Mapping)
+        )
+        return f"{total:.1f} MB" if total else "not available"
+
+    rows += [
+        ["Numerical face representation size",
+         *[f"{descriptors.get(n, {}).get('embedding_dimensions', 'not available')} values"
+           for n in names]],
+        ["Model storage", *[total_megabytes(n) for n in names]],
+    ]
+    lines = [
+        "EXPERIMENT 8 - PRETRAINED PIPELINE COMPARISON",
+        "",
+        "Dataset:",
+        "BFW held-out test identities.",
+        "",
+        "No model was trained or fine-tuned.",
+        "",
+        render_plain_table(
+            ["Metric", *[pipeline_display_name(n) for n in names]], rows
+        ),
+        "",
+        "Plain-language result:",
+        "",
+    ]
+    # The conclusion is generated from the values rather than asserted, so it
+    # cannot contradict the table above it.
+    baseline, comparison = names[0], names[-1]
+    better_detection = (held_out[comparison]["rates"]["tpir_rank1"]
+                        > held_out[baseline]["rates"]["tpir_rank1"])
+    fewer_reviews = (held_out[comparison]["rates"]["fpir"]
+                     < held_out[baseline]["rates"]["fpir"])
+    slower = (held_out[comparison]["coverage"]["complete_pipeline_latency_mean_ms"]
+              > held_out[baseline]["coverage"]["complete_pipeline_latency_mean_ms"])
+    verdict = (
+        f"{pipeline_display_name(comparison)} detected "
+        f"{'more' if better_detection else 'no more'} known duplicate cases and sent "
+        f"{'fewer' if fewer_reviews else 'no fewer'} new profiles for unnecessary review."
+    )
+    lines += [
+        wrap_plain(verdict),
+        "",
+        wrap_plain(
+            "The improvement required larger model files and more processing time."
+            if slower else
+            "The comparison pipeline did not cost additional processing time here."
+        ),
+        "",
+        wrap_plain(
+            "Because the detector, alignment, preprocessing and recognition model all "
+            "changed, the improvement must be described as a complete-pipeline result."
+        ),
+        "",
+        "Technical pipeline identifiers:",
+    ]
+    for name in names:
+        lines.append(f"  {pipeline_display_name(name)}: {name}")
+    lines += ["", wrap_plain(DENOMINATOR_NOTE), "",
+              wrap_plain(REFERRAL_DISCLAIMER)]
+    return "\n".join(lines)
+
+
+def render_overall_conclusion(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """The five project-level findings, with the figures read from artefacts."""
+    open_set = _load_optional(aggregate_root, "bfw_open_set_test_metrics.json")
+    review = _load_optional(aggregate_root, "ml_review_test_metrics.json")
+    pipeline = _load_optional(aggregate_root, "pipeline_comparison_metrics.json")
+
+    def reviews_per_1000(source: Optional[Mapping[str, Any]], *keys: str) -> str:
+        node: Any = source
+        for key in keys:
+            if not isinstance(node, Mapping):
+                return "not available"
+            node = node.get(key)
+        return f"{node:.1f}" if isinstance(node, (int, float)) else "not available"
+
+    control = reviews_per_1000(
+        open_set, "methods", METHOD_A, "rates", "false_reviews_per_1000_non_mated")
+    calibrated = reviews_per_1000(
+        open_set, "methods", METHOD_B, "primary_operating_point",
+        "false_reviews_per_1000_non_mated")
+    classifier = reviews_per_1000(
+        review, "classifier", "false_reviews_per_1000_non_mated")
+
+    lines = [
+        "OVERALL PROJECT CONCLUSION",
+        "",
+        wrap_plain(
+            f"1. The original one-to-one threshold was not suitable for searching a "
+            f"large profile gallery because it produced too many unnecessary reviews "
+            f"({control} per 1,000 new profiles)."
+        ),
+        "",
+        wrap_plain(
+            f"2. Selecting a threshold specifically for open-set gallery search reduced "
+            f"the false-review burden substantially, to {calibrated} per 1,000."
+        ),
+        "",
+        wrap_plain(
+            f"3. The logistic-regression classifier increased duplicate detection "
+            f"slightly but did not reduce false reviews ({classifier} per 1,000). Its "
+            f"main hypothesis was therefore not achieved."
+        ),
+        "",
+    ]
+    if pipeline and pipeline.get("evaluated") == "yes":
+        held_out = pipeline.get("held_out_metrics") or {}
+        arcface = next((v for k, v in held_out.items() if "arcface" in k.lower()), None)
+        if arcface:
+            lines += [wrap_plain(
+                f"4. SCRFD + ArcFace produced the strongest benchmark results, with "
+                f"{arcface['rates']['false_reviews_per_1000_non_mated']:.1f} false reviews "
+                f"per 1,000 and "
+                f"{_percentage_of(arcface['rates']['tpir_rank1'])} detection, but required "
+                f"more processing time and larger model files."
+            ), ""]
+    else:
+        lines += [wrap_plain(
+            "4. The pretrained pipeline comparison has not been run in this checkout, so "
+            "no comparison finding is reported."
+        ), ""]
+    lines += [wrap_plain(
+        "5. Every result is a benchmark-based human-review signal. The project does not "
+        "prove identity, photograph ownership, fraud or profile duplication."
+    )]
+    return "\n".join(lines)
+
+
+# --- Previews shown before a long-running option starts -----------------------
+
+EXPERIMENT_PREVIEWS = {
+    "full": """Selected: Experiments 1-5 - the original five-experiment evaluation
+
+Purpose:
+Choose a one-to-one face-comparison threshold on LFW, test it on unseen LFW
+pairs, test how it transfers when facial pose changes, and then show what
+happens when that same one-to-one threshold is used to search one photograph
+against many enrolled profiles.
+
+Datasets:
+LFW and CPLFW, using the official published pair protocols.
+
+Models:
+YuNet face detector + SFace face-recognition model.
+
+This evaluation will:
+1. Produce candidate thresholds from the LFW training pairs only.
+2. Select and freeze one threshold using the LFW development pairs.
+3. Evaluate the frozen threshold on the untouched final LFW pairs.
+4. Apply the same frozen threshold to CPLFW without recalibrating it.
+5. Search a 1:N profile gallery under that same one-to-one threshold.
+
+No model will be trained or fine-tuned.""",
+
+    "open-set": """Selected: Experiment 6 - BFW duplicate-profile evaluation
+
+Purpose:
+Test whether a face-comparison system can recognise known duplicate-profile
+test cases while avoiding unnecessary human reviews of new profiles.
+
+Dataset:
+BFW - 20,000 facial images from 800 benchmark identities.
+
+Models:
+YuNet face detector + SFace face-recognition model.
+
+This experiment will:
+1. Create separate development and held-out identity groups.
+2. Build three-image profile templates.
+3. Choose the operating threshold using development identities only.
+4. Test the frozen threshold on unseen identities.
+5. Report detection, false reviews and processing failures.
+
+No model will be trained or fine-tuned.""",
+
+    "ml-review": """Selected: Experiment 7 - machine-learning review classifier
+
+Purpose:
+Test whether a logistic-regression classifier can reduce unnecessary human
+reviews while retaining duplicate-profile detection.
+
+Dataset:
+BFW, using identity groups that share no person with one another.
+
+The classifier uses similarity and image-quality measurements. It does not use
+sex, ethnicity, identity names, image paths or face embeddings as predictor
+variables.
+
+This experiment will:
+1. Build search features for each test photograph.
+2. Fit the classifier on development identities only.
+3. Freeze a referral probability using separate calibration identities.
+4. Apply the frozen probability to unseen held-out identities.
+5. Compare the outcome with the similarity threshold of Experiment 6.
+
+No face-recognition model will be trained or fine-tuned.""",
+
+    "pipeline-compare": """Selected: Experiment 8 - pretrained pipeline comparison
+
+Purpose:
+Compare the existing YuNet + SFace pipeline with the higher-capacity
+SCRFD + ArcFace pipeline.
+
+Both pipelines use:
+- the same BFW identities;
+- the same development and held-out partitions;
+- separate thresholds selected using development data only;
+- the same human-review policy.
+
+This is a complete-pipeline comparison. Differences cannot be attributed only
+to the recognition model because detection, alignment and preprocessing also
+differ.
+
+No model will be trained or fine-tuned.""",
+
+    "extensions": """Selected: Experiments 7 and 8, then regenerate all figures
+
+Purpose:
+Run the logistic-regression review classifier and the pretrained pipeline
+comparison, then rebuild every figure from the resulting artefacts.
+
+This option runs Experiments 7 and 8 only. Experiment 6 must already have been
+run, because both extensions reuse its frozen threshold and its canonical run.
+
+No model will be trained or fine-tuned.""",
+
+    "review": """LOCAL HUMAN-REVIEW DEMONSTRATION
+
+This interface displays cases created by Experiment 5 using the original LFW
+gallery method.
+
+These cases are not confirmed duplicate profiles.
+
+The original Experiment 5 threshold produced a high false-review rate and is
+included as a research baseline. The interface demonstrates the review
+workflow, not a production moderation decision.""",
+}
+
+
+def render_experiment_preview(key: str) -> str:
+    """The preview for one option, or an empty string when none is defined."""
+    return EXPERIMENT_PREVIEWS.get(key, "")
+
+
+def announce_stage(step: int, total: int, title: str, detail: str = "") -> None:
+    """Progress in named stages rather than internal method labels, so a reader
+    can follow what the programme is doing while it runs."""
+    announce(f"Step {step} of {total} - {title}")
+    if detail:
+        print(f"  {detail}")
+
+
+def missing_artefact_message(what: str, option: str) -> str:
+    """A clear instruction rather than a traceback when an optional experiment
+    has not been run yet."""
+    return (
+        f"This result is not available yet.\n"
+        f"Run {option} before showing the {what} summary."
+    )
+
+
+# --- Plain-language summaries, read back from the published artefacts ---------
+
+
+def _load_optional(aggregate_root: Path, name: str) -> Optional[Dict[str, Any]]:
+    """Read an artefact if it exists. A missing optional experiment is a normal
+    state, not an error."""
+    path = aggregate_root / name
+    return read_json_artifact(path) if path.is_file() else None
+
+
+def render_baseline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """Experiments 1-5 in plain language, with every count read from file."""
+    lfw = _load_optional(aggregate_root, "lfw_final_metrics.json")
+    cplfw = _load_optional(aggregate_root, "cplfw_metrics.json")
+    gallery = _load_optional(aggregate_root, "duplicate_gallery_metrics_v2.json")
+    if not lfw:
+        return missing_artefact_message("Experiments 1-5", "option 3")
+
+    lines = [
+        "WHAT THIS PART OF THE PROJECT TESTED",
+        "",
+        "The first experiments tested the original YuNet + SFace pipeline.",
+        "",
+        "LFW was used to choose and test a one-to-one face-comparison threshold.",
+        "CPLFW tested how that threshold performed when facial pose changed.",
+        "The final LFW gallery experiment tested what happened when the same",
+        "one-to-one threshold was used to search one photograph against many",
+        "profiles.",
+        "",
+        wrap_plain(DENOMINATOR_NOTE),
+        "",
+        "FINAL LFW FACE COMPARISON",
+        "",
+    ]
+    scored, total = lfw["scored_pairs"], lfw["total_pairs"]
+    # Correct decisions are recovered from the stored confusion matrix rather
+    # than recomputed, so the printed count cannot drift from the artefact.
+    matrix = lfw["confusion_matrix"]
+    correct = matrix["true_positive"] + matrix["true_negative"]
+    lines += [
+        "Successfully processed:",
+        format_count_and_percentage(scored, total, noun="image pairs") + ".",
+        "",
+        "Correct decisions among processed pairs:",
+        format_count_and_percentage(correct, scored, noun="scored pairs") + ".",
+        "",
+        "Processing failures:",
+        format_count_and_percentage(lfw["failed_pairs"], total, noun="pairs") + ".",
+        "",
+        "Meaning:",
+        "The model performed well on successfully processed LFW pairs, but a",
+        "share of pairs did not reach comparison at all.",
+        "",
+    ]
+    if cplfw:
+        scored_c, total_c = cplfw["scored_pairs"], cplfw["total_pairs"]
+        matrix_c = cplfw["confusion_matrix"]
+        correct_c = matrix_c["true_positive"] + matrix_c["true_negative"]
+        lines += [
+            "CPLFW CROSS-POSE TEST",
+            "",
+            "Successfully processed:",
+            format_count_and_percentage(scored_c, total_c, noun="pairs") + ".",
+            "",
+            "Correct decisions among processed pairs:",
+            format_count_and_percentage(correct_c, scored_c, noun="scored pairs") + ".",
+            "",
+            "Processing failures:",
+            format_count_and_percentage(cplfw["failed_pairs"], total_c, noun="pairs") + ".",
+            "",
+            "Meaning:",
+            "Accuracy remained relatively high among processed pairs, but pose",
+            "variation caused a large number of face-extraction failures.",
+            "",
+        ]
+    if gallery:
+        intended_dup = gallery["duplicate_probe_count"]
+        detected = round(gallery["end_to_end_duplicate_detection_rate"] * intended_dup)
+        intended_new = gallery["unknown_probe_count"]
+        scored_new = intended_new - gallery["unknown_probe_failures"]
+        referred = round(gallery["false_duplicate_review_rate"] * scored_new)
+        lines += [
+            "ORIGINAL DUPLICATE-PROFILE GALLERY TEST",
+            "",
+            "Known duplicate test cases correctly detected:",
+            format_count_and_percentage(
+                detected, intended_dup, noun="intended duplicate cases"
+            ) + " end-to-end.",
+            "",
+            "New profiles incorrectly sent for human review:",
+            format_count_and_percentage(
+                referred, scored_new, noun="scored new profiles"
+            ) + " conditional.",
+            "",
+            "New-profile photographs successfully processed:",
+            format_count_and_percentage(
+                scored_new, intended_new, noun="intended new profiles"
+            ) + ".",
+            "",
+            "Meaning:",
+            "The original one-to-one threshold detected many known duplicate",
+            "cases, but it also referred far too many genuinely new profiles.",
+            "This experiment demonstrates why gallery search needs its own",
+            "threshold.",
+            "",
+        ]
+    lines.append(wrap_plain(REFERRAL_DISCLAIMER))
+    return "\n".join(lines)
+
+
+def render_open_set_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """Experiment 6 in plain language, comparing the transferred threshold with
+    the gallery-calibrated one side by side."""
+    payload = _load_optional(aggregate_root, "bfw_open_set_test_metrics.json")
+    if not payload:
+        return missing_artefact_message("Experiment 6", "option 8")
+    proposed = payload["methods"][METHOD_B]
+    control = payload["methods"][METHOD_A]["rates"]
+    primary = proposed["primary_operating_point"]
+    coverage = proposed["coverage"]
+
+    lines = [
+        "EXPERIMENT 6 - BFW DUPLICATE-PROFILE EVALUATION",
+        "",
+        "Dataset:",
+        "BFW, using held-out identities not used for threshold selection.",
+        "",
+        "Model:",
+        "YuNet face detector + SFace face-recognition model.",
+        "",
+        render_plain_table(
+            ["", "Old 1:1 threshold", "Gallery-calibrated threshold"],
+            [
+                ["New profiles wrongly sent for review",
+                 _percentage_of(control.get("fpir")),
+                 _percentage_of(primary.get("fpir"))],
+                ["Known duplicate cases correctly detected",
+                 _percentage_of(control.get("tpir_rank1")),
+                 _percentage_of(primary.get("tpir_rank1"))],
+                ["False reviews per 1,000 new profiles",
+                 f"{control.get('false_reviews_per_1000_non_mated', float('nan')):.1f}",
+                 f"{primary.get('false_reviews_per_1000_non_mated', float('nan')):.1f}"],
+            ],
+        ),
+        "",
+        "Plain-language result:",
+        "",
+        wrap_plain(
+            f"The gallery-calibrated method reduced unnecessary human reviews from "
+            f"approximately {control.get('false_reviews_per_1000_non_mated', 0):.0f} per "
+            f"1,000 new profiles to approximately "
+            f"{primary.get('false_reviews_per_1000_non_mated', 0):.0f} per 1,000."
+        ),
+        "",
+        wrap_plain(
+            f"It retained approximately {primary.get('tpir_rank1', 0) * 100:.0f} of every "
+            f"100 successfully processed known duplicate cases."
+        ),
+        "",
+        "This is a referral system only. It does not prove that a real profile",
+        "is fake or duplicated.",
+        "",
+        "Photographs successfully processed:",
+        "",
+        "Known-duplicate photographs:",
+        format_count_and_percentage(
+            coverage.get("scored_mated_probes"), coverage.get("intended_mated_probes"),
+            noun="intended photographs",
+        ) + ".",
+        "",
+        "New-profile photographs:",
+        format_count_and_percentage(
+            coverage.get("scored_non_mated_probes"),
+            coverage.get("intended_non_mated_probes"), noun="intended photographs",
+        ) + ".",
+        "",
+        wrap_plain(DENOMINATOR_NOTE),
+        "",
+        wrap_plain(REFERRAL_DISCLAIMER),
+    ]
+    return "\n".join(lines)
+
+
+
+
 # =============================================================================
 # 30. Interactive VS Code launcher
 # =============================================================================
@@ -10978,22 +11958,51 @@ def run_self_tests(verbose: bool = True) -> Tuple[int, int]:
 # Running this file with no arguments prints a menu rather than starting a
 # multi-minute benchmark, so the VS Code play button is safe to press.
 
+# Grouped by purpose rather than by internal option number, and every entry
+# states what it does in plain language before it is chosen.
 MENU_TEXT = f"""
 {PROGRAMME_TITLE}
 
-1. Check local environment
-2. Verify models and benchmark datasets
-3. Run the complete five-experiment evaluation
-4. Show the existing results summary
-5. Launch the local human-review interface
-6. Run synthetic self-tests
-7. Exit
-8. Run BFW open-set development and held-out evaluation
-9. Show open-set results summary
-10. Train and evaluate the machine-learning review classifier
-11. Show review-classifier summary
-12. Compare pretrained pipelines
-13. Run both extension experiments and regenerate figures
+SETUP AND VALIDATION
+
+  1. Check the software environment
+     Confirms that the required Python packages and settings are available.
+
+  2. Verify models and datasets
+     Confirms that model files and benchmark protocols are present and unchanged.
+
+  6. Run quick programme self-tests
+     Tests the calculations using synthetic data. No real face image is processed.
+
+
+ORIGINAL FIVE EXPERIMENTS
+
+  3. Run Experiments 1-5
+     Calibrates the original model, evaluates LFW and CPLFW, and demonstrates
+     duplicate-profile gallery screening.
+
+  4. Show the saved results from Experiments 1-5
+
+  5. Open the local human-review demonstration
+     Shows review cases created by the original LFW gallery experiment.
+
+
+BFW EXTENSION EXPERIMENTS
+
+  8. Run Experiment 6 - BFW duplicate-profile evaluation
+
+  9. Show the saved Experiment 6 results
+
+ 10. Run Experiment 7 - logistic-regression review classifier
+
+ 11. Show the saved Experiment 7 results
+
+ 12. Run Experiment 8 - compare YuNet + SFace with SCRFD + ArcFace
+
+ 13. Run Experiments 7 and 8, then regenerate all figures
+
+
+  7. Exit
 """
 
 MODES = (
@@ -11579,7 +12588,21 @@ def action_run_complete_evaluation(
 
 def action_show_summary(output_root: Path = AGGREGATE_ROOT) -> int:
     try:
+        # Plain language first, then the technical block, then the reference
+        # material. The formal reports keep their own unchanged wording.
+        print(render_baseline_plain_summary(output_root))
+        print("")
+        print("=" * 78)
+        print("TECHNICAL DETAILS")
+        print("=" * 78)
+        print("")
         print(render_results_summary(output_root))
+        print("")
+        print(render_model_overview())
+        print("")
+        print(render_dataset_overview())
+        print("")
+        print(render_glossary())
     except ArtifactError:
         print(
             "No results are available yet. Run option 3 (the complete five-experiment "
@@ -11638,12 +12661,22 @@ def action_run_open_set_evaluation(output_root: Path = AGGREGATE_ROOT) -> int:
     for line in report_optional_dataset_status():
         print(line)
     print("")
+    print(render_open_set_plain_summary(output_root))
+    print("")
     print(render_open_set_summary(output_root))
     return 0
 
 
 def action_show_open_set_summary(output_root: Path = AGGREGATE_ROOT) -> int:
+    print(render_open_set_plain_summary(output_root))
+    print("")
+    print("=" * 78)
+    print("TECHNICAL DETAILS")
+    print("=" * 78)
+    print("")
     print(render_open_set_summary(output_root))
+    print("")
+    print(render_glossary())
     return 0
 
 
@@ -11654,24 +12687,44 @@ def action_run_ml_review(output_root: Path = AGGREGATE_ROOT) -> int:
     written = generate_figures(aggregate_root=output_root)
     announce(f"Wrote {len(written)} figure(s) to {project_relative(FIGURES_ROOT)}")
     print("")
+    print(render_ml_review_plain_summary(output_root))
+    print("")
     print(render_ml_review_summary(output_root))
     return 0
 
 
 def action_show_ml_review_summary(output_root: Path = AGGREGATE_ROOT) -> int:
+    print(render_ml_review_plain_summary(output_root))
+    print("")
+    print("=" * 78)
+    print("TECHNICAL DETAILS")
+    print("=" * 78)
+    print("")
     print(render_ml_review_summary(output_root))
+    print("")
+    print(render_glossary())
     return 0
 
 
 def action_run_pipeline_comparison(output_root: Path = AGGREGATE_ROOT) -> int:
     run_pipeline_comparison(output_root=output_root)
     print("")
+    print(render_pipeline_plain_summary(output_root))
+    print("")
     print(render_pipeline_comparison_summary(output_root))
     return 0
 
 
 def action_show_pipeline_comparison_summary(output_root: Path = AGGREGATE_ROOT) -> int:
+    print(render_pipeline_plain_summary(output_root))
+    print("")
+    print("=" * 78)
+    print("TECHNICAL DETAILS")
+    print("=" * 78)
+    print("")
     print(render_pipeline_comparison_summary(output_root))
+    print("")
+    print(render_glossary())
     return 0
 
 
@@ -11686,10 +12739,38 @@ def action_run_extensions(output_root: Path = AGGREGATE_ROOT) -> int:
     written = generate_figures(aggregate_root=output_root)
     announce(f"Wrote {len(written)} figure(s) to {project_relative(FIGURES_ROOT)}")
     print("")
+    print(render_ml_review_plain_summary(output_root))
+    print("")
+    print(render_pipeline_plain_summary(output_root))
+    print("")
+    print("=" * 78)
+    print("TECHNICAL DETAILS")
+    print("=" * 78)
+    print("")
     print(render_ml_review_summary(output_root))
     print("")
     print(render_pipeline_comparison_summary(output_root))
+    print("")
+    print(render_model_overview())
+    print("")
+    print(render_dataset_overview())
+    print("")
+    print(render_glossary())
+    print("")
+    print(render_overall_conclusion(output_root))
     return 0 if status else 1
+
+
+# Which preview belongs to which menu option. Options that only display saved
+# results need no preview, because nothing long-running is about to start.
+MENU_PREVIEW_KEYS = {
+    "3": "full",
+    "5": "review",
+    "8": "open-set",
+    "10": "ml-review",
+    "12": "pipeline-compare",
+    "13": "extensions",
+}
 
 
 def run_menu() -> int:
@@ -11708,6 +12789,9 @@ def run_menu() -> int:
         "12": action_run_pipeline_comparison,
         "13": action_run_extensions,
     }
+    # The scope of the artefact is stated before any option is offered.
+    print("")
+    print(PROGRAMME_INTRODUCTION)
     last_status = 0
     while True:
         print(MENU_TEXT)
@@ -11723,6 +12807,10 @@ def run_menu() -> int:
         if action is None:
             print(f"'{choice}' is not one of the options above.")
             continue
+        preview = render_experiment_preview(MENU_PREVIEW_KEYS.get(choice, ""))
+        if preview:
+            print("")
+            print(preview)
         print("")
         last_status = _run_action(action)
         print("")
