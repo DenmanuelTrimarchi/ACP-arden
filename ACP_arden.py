@@ -323,7 +323,6 @@ def parse_env_text(text: str) -> Dict[str, str]:
     values: Dict[str, str] = {}
     for raw_line in text.splitlines():
         line = raw_line.strip()
-        # Blank lines and comments carry no setting.
         if not line or line.startswith("#"):
             continue
         # Tolerate the shell "export" prefix, so the same file can be sourced
@@ -12485,8 +12484,7 @@ def experiment_evaluate_lfw(
             "threshold_artifact_sha256": threshold_artifact_sha256,
             "threshold_status": FROZEN_STATUS,
             # Add the stage-specific evidence to the shared result metadata.
-            # Order matters: later keys overwrite earlier ones, and
-            # ``extra_fields`` is empty unless this is the selection stage.
+            # Only the selection stage contributes extra fields.
             **extra_fields,
             **summary,
             "model_version": MODEL_VERSION,
