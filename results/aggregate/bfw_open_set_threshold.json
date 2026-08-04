@@ -1,6 +1,6 @@
 {
   "artifact_type": "bfw_open_set_threshold",
-  "created_at": "2026-08-03T01:53:25.396974+00:00",
+  "created_at": "2026-08-03T20:20:07.437632+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",

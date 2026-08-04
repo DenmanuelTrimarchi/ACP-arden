@@ -323,10 +323,15 @@ def parse_env_text(text: str) -> Dict[str, str]:
     values: Dict[str, str] = {}
     for raw_line in text.splitlines():
         line = raw_line.strip()
+        # Blank lines and comments carry no setting.
         if not line or line.startswith("#"):
             continue
+        # Tolerate the shell "export" prefix, so the same file can be sourced
+        # by a terminal as well as read here.
         if line.startswith("export "):
             line = line[len("export ") :].lstrip()
+        # Split at the first "=" only: a research storage path may itself
+        # contain one, and it belongs to the value rather than the key.
         key, separator, value = line.partition("=")
         if not separator:
             continue
@@ -334,6 +339,8 @@ def parse_env_text(text: str) -> Dict[str, str]:
         if not key:
             continue
         value = value.strip()
+        # Strip a matched surrounding quote, which is how a path containing
+        # spaces is written in this file.
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
             value = value[1:-1]
         values[key] = value
@@ -1095,6 +1102,10 @@ def _resolve_image_path(dataset_root: Path, identity: str, image_number: str) ->
 def _validate_header(
     header: Sequence[str], same_count: int, diff_count: int, protocol_path: Path
 ) -> None:
+    # The published LFW protocols use two header forms. A single number states
+    # one count for each class; two numbers state folds and pairs per fold.
+    # Both are checked against what was actually parsed, so a truncated or
+    # altered protocol file is refused rather than evaluated in part.
     if len(header) == 1:
         expected = int(header[0])
         if same_count != expected or diff_count != expected:
@@ -1402,11 +1413,19 @@ def roc_points(scores: ScoreInput, labels: LabelInput) -> List[Dict[str, float]]
     per distinct score plus high/low sentinels, ordered by descending
     threshold."""
     scores_arr, labels_arr = _validate_inputs(scores, labels)
+    # The curve only changes shape at an observed score, so one point per
+    # distinct score describes it exactly without interpolation.
     thresholds = np.unique(scores_arr)[::-1]
+    # Two sentinels beyond the observed range anchor the curve at its extremes:
+    # a threshold above every score matches nothing, one below every score
+    # matches everything, giving the (0,0) and (1,1) endpoints.
     sentinel_high = float(thresholds[0]) + 1.0 if thresholds.size else 1.0
     sentinel_low = float(thresholds[-1]) - 1.0 if thresholds.size else -1.0
     all_thresholds = np.concatenate(([sentinel_high], thresholds, [sentinel_low]))
 
+    # Each point is the error pair a deployment would actually experience at
+    # that threshold, recomputed from the confusion matrix rather than
+    # accumulated, so a rounding error cannot propagate along the curve.
     points: List[Dict[str, float]] = []
     for threshold in all_thresholds:
         matrix = confusion_matrix(scores_arr, labels_arr, float(threshold))
@@ -1519,6 +1538,8 @@ def select_threshold(
     target_false_match_rate: Optional[float] = None,
 ) -> ThresholdCandidate:
     scores_arr, labels_arr = _validate_inputs(scores, labels)
+    # Only an observed score can change a decision, so the search is exhaustive
+    # over the distinct scores rather than over an arbitrary grid.
     candidate_thresholds = np.unique(scores_arr)
 
     if strategy == "eer":
@@ -1533,6 +1554,10 @@ def select_threshold(
             raise MetricsError("target_fmr strategy requires target_false_match_rate")
         best_threshold: Optional[float] = None
         best_metrics: Optional[Dict[str, float]] = None
+        # Walk downwards from the strictest threshold. Lowering it admits more
+        # matches, so the last threshold still within the target bound is the
+        # most permissive one that satisfies it, and therefore the one that
+        # catches the most genuine matches at that error budget.
         for threshold in sorted(candidate_thresholds, reverse=True):
             metrics = rates_from_confusion(
                 confusion_matrix(scores_arr, labels_arr, float(threshold))
@@ -1541,6 +1566,8 @@ def select_threshold(
             if fmr == fmr and fmr <= target_false_match_rate:
                 best_threshold, best_metrics = float(threshold), metrics
             elif best_threshold is not None:
+                # The bound has been exceeded and cannot be regained by
+                # lowering the threshold further, so the search stops here.
                 break
         if best_threshold is None or best_metrics is None:
             raise MetricsError(
@@ -1563,6 +1590,9 @@ def select_threshold(
             score = (tmr + tnr) / 2.0 if tmr == tmr and tnr == tnr else float("-inf")
         else:
             score = metrics["f1"] if metrics["f1"] == metrics["f1"] else float("-inf")
+        # Ties are broken towards the stricter threshold, so two equally
+        # scoring candidates always resolve the same way and the selection
+        # stays reproducible.
         prefer_higher_on_tie = (
             score == best_score and best_threshold is not None and threshold > best_threshold
         )
@@ -1629,16 +1659,24 @@ def calibrate(
             f"selection, regardless of what the caller intended."
         )
 
+    # Three strategies optimise a different balance between the two error types:
+    # balanced accuracy weights both equally, F1 favours correct matches, and the
+    # equal-error rate is the point at which the two rates coincide.
     candidates: Dict[str, ThresholdCandidate] = {
         "balanced_accuracy": select_threshold(scores, labels, strategy="balanced_accuracy"),
         "f1": select_threshold(scores, labels, strategy="f1"),
         "eer": select_threshold(scores, labels, strategy="eer"),
     }
+    # One further candidate per target false match rate, for a deployment that
+    # must hold false matches below a stated bound whatever it costs in misses.
     for target in target_false_match_rates:
         candidates[f"target_fmr_{target}"] = select_threshold(
             scores, labels, strategy="target_fmr", target_false_match_rate=target
         )
 
+    # Returned with the "candidates" status, never a chosen threshold. Selection
+    # is a separate stage on a different split, so this result cannot be
+    # mistaken for a frozen operating point.
     return CalibrationResult(split=split, status=CANDIDATES_STATUS, candidates=candidates)
 
 
@@ -2932,9 +2970,14 @@ def assert_no_identifier_key_leak(root: Path) -> None:
     when no key is configured: there is then nothing to disclose."""
     if _ID_HMAC_KEY is None:
         return
+    # Both textual forms the key could plausibly take if it were ever written
+    # out: the base64 form used in the environment file and the hexadecimal
+    # form a debugging statement would produce.
     encoded = base64.urlsafe_b64encode(_ID_HMAC_KEY).decode("ascii").rstrip("=")
     needles = [encoded, _ID_HMAC_KEY.hex()]
     for path in sorted(Path(root).rglob("*")):
+        # Only text artefacts are searched; a figure cannot contain the key in
+        # a readable form, and reading one as text would waste the scan.
         if not path.is_file() or path.suffix.lower() not in _TEXT_ARTIFACT_SUFFIXES:
             continue
         try:
@@ -3036,12 +3079,17 @@ def check_public_outputs(paths: Sequence[Path]) -> bool:
     all_leaks: List[str] = []
     scanned: List[str] = []
 
+    # Every location is scanned before anything is reported, so one clean
+    # directory cannot mask a leak in a later one. A location that does not
+    # exist yet is skipped rather than treated as a failure.
     for path in paths:
         if not path.exists():
             continue
         all_leaks.extend(find_path_leaks(path, forbidden_substrings=forbidden))
         scanned.append(project_relative(path))
 
+    # Findings are themselves redacted before printing: naming the file is
+    # useful, reprinting the private path would repeat the leak on screen.
     if all_leaks:
         print("FAIL personal/absolute path(s) found in published outputs:", file=sys.stderr)
         for leak in all_leaks:
@@ -3110,12 +3158,16 @@ def _migrate_review_schema(connection: sqlite3.Connection) -> None:
 def assert_review_database_version(connection: sqlite3.Connection) -> None:
     """Refuse to mix identifier schemes in one database. The local review
     database is private and disposable, so the instruction is to delete it."""
+    # Every identifier scheme the stored cases were written under.
     versions = {
         row[0]
         for row in connection.execute(
             "SELECT DISTINCT opaque_id_version FROM review_cases WHERE opaque_id_version IS NOT NULL"
         )
     }
+    # Anything this build does not emit. Identifiers from a different scheme,
+    # or from the same scheme under a different secret key, do not refer to the
+    # same people, so rows from the two could never be compared or merged.
     foreign = versions - {OPAQUE_ID_VERSION}
     if foreign:
         raise ReviewDatabaseVersionError(
@@ -3210,16 +3262,23 @@ def list_review_cases(
     human attention come first. ``limit`` bounds how many are returned: a real
     queue can hold thousands, and rendering all of them at once would make the
     page unusable rather than more informative."""
+    # The status filter is checked against the permitted set before it reaches
+    # the query, so an unrecognised value fails here rather than silently
+    # returning an empty queue that a reviewer would read as "no cases".
     if status is not None and status not in ALLOWED_REVIEW_STATUSES:
         raise ValueError(f"Unknown status filter: {status}")
     if limit is not None and limit < 0:
         raise ValueError("limit must not be negative")
 
+    # The query is assembled from fixed fragments and every caller-supplied
+    # value is bound as a parameter, so no input is ever interpolated into SQL.
     clauses = "SELECT * FROM review_cases"
     parameters: List[Any] = []
     if status:
         clauses += " WHERE status = ?"
         parameters.append(status)
+    # Strongest candidates first: a reviewer works down the queue, so ordering
+    # by descending similarity puts the most demanding cases at the top.
     clauses += " ORDER BY similarity DESC"
     if limit is not None:
         clauses += " LIMIT ?"
@@ -3520,13 +3579,20 @@ def _bfw_identity_and_subgroup(relative: str) -> Tuple[str, str]:
 
     The published layout is ``<subgroup>/<identity>/<image>.jpg``; anything
     else is a schema violation rather than something to guess at."""
+    # Backslashes are normalised first, so a table written on Windows parses
+    # identically to one written on a POSIX system.
     parts = PurePosixPath(relative.strip().replace("\\", "/")).parts
+    # Exactly three components are required. A shorter or longer path means the
+    # dataset is not the official release, and guessing at the identity would
+    # silently change which photographs belong to which person.
     if len(parts) != 3:
         raise BfwDatasetError(
             f"BFW image path {relative!r} does not match the official "
             f"'<subgroup>/<identity>/<image>' layout (found {len(parts)} component(s))."
         )
     subgroup, identity_folder, _filename = parts
+    # The subgroup is pinned to the eight official categories, so an unexpected
+    # folder cannot quietly create a ninth subgroup in the reported results.
     if subgroup not in BFW_SUBGROUPS:
         raise BfwDatasetError(
             f"BFW image path {relative!r} names subgroup {subgroup!r}, which is not one of "
@@ -3775,16 +3841,25 @@ def _split_mated_and_non_mated(
 ) -> Tuple[List[str], List[str]]:
     """Divide a partition's identities into mated and non-mated, stratified by
     subgroup, with the extra identity of an odd subgroup going to mated."""
+    # Group the identities by subgroup first, so the split below is stratified
+    # and each subgroup contributes proportionally to both roles.
     by_subgroup: Dict[str, List[str]] = {}
     for identity in identities:
         by_subgroup.setdefault(subgroup_of[identity], []).append(identity)
 
     mated: List[str] = []
     non_mated: List[str] = []
+    # Subgroups are visited in sorted order, and their members sorted before
+    # shuffling, so the split depends only on the seed and never on the order
+    # the filesystem happened to return.
     for subgroup in sorted(by_subgroup):
         members = sorted(by_subgroup[subgroup])
+        # Seeded per subgroup, so adding or removing one subgroup cannot
+        # reshuffle the identities assigned within any other.
         rng = random.Random(f"{seed}:{partition}:{subgroup}")
         rng.shuffle(members)
+        # An odd count sends the extra identity to the mated side, a fixed rule
+        # that keeps the split reproducible rather than resolved by chance.
         midpoint = (len(members) + 1) // 2
         mated.extend(members[:midpoint])
         non_mated.extend(members[midpoint:])
@@ -3975,6 +4050,10 @@ def write_open_set_private_manifest(protocol: OpenSetProtocol, path: Path) -> No
     git-ignored, and never published."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # This is the one record that carries real image paths, so that a run can be
+    # traced back to the photographs it used. The published manifest alongside
+    # it carries the opaque identifiers only. The seed is stored with the
+    # entries, because the split cannot be reproduced without it.
     payload = {
         "schema_version": SCHEMA_VERSION,
         "seed": protocol.seed,
@@ -4832,17 +4911,30 @@ def cached_payload_integrity_reason(payload: Mapping[str, Any]) -> Optional[str]
     freshly computed digest, which is exactly the failure this prevents.
 
     Names only the category or field at fault, never a stored value."""
+    # Checked in four escalating stages, cheapest first, each of which is
+    # sufficient on its own to reject the cache.
+
+    # 1. Schema. A file written by a different version of this programme may
+    #    use fields that no longer mean the same thing.
     schema = payload.get("cache_schema_version")
     if schema != CANONICAL_CACHE_SCHEMA_VERSION:
         return "cache schema version differs"
+    # 2. Shape. A missing or retyped field means the file is not what this
+    #    programme wrote, so it is rebuilt rather than parsed defensively.
     for field_name, expected_type in _CACHE_REQUIRED_FIELDS.items():
         if field_name not in payload or payload[field_name] is None:
             return f"cached field absent: {field_name}"
         if not isinstance(payload[field_name], expected_type):
             return f"cached field has the wrong type: {field_name}"
+    # 3. Stored context against its own digest. This detects an edit to the
+    #    recorded configuration itself, which the caller's comparison against
+    #    the expected context could not see.
     stored_context = payload["canonical_context"]
     if context_digest(stored_context) != payload["canonical_context_sha256"]:
         return "stored context digest does not match the stored context"
+    # 4. Stored records against the stored outcome digest. The digest is
+    #    recomputed from the records themselves, so an edited similarity, rank
+    #    or enrolment count is caught rather than republished under a new hash.
     try:
         rebuilt = _run_from_cached_payload(payload)
     except (TypeError, KeyError, ValueError):
@@ -4868,12 +4960,20 @@ def cache_invalidation_reason(
         return "cached run could not be read"
     if not isinstance(payload, dict):
         return "cached run is not an object"
+    # Internal soundness first: there is no point comparing configurations if
+    # the file's own records no longer match its own digests.
     integrity = cached_payload_integrity_reason(payload)
     if integrity is not None:
         return integrity
+    # Then the configuration that produced the cache against the one now in
+    # force. Comparing digests rather than field by field means a newly added
+    # context field cannot be silently ignored.
     stored = payload["canonical_context"]
     if context_digest(stored) == context_digest(expected_context):
         return None
+    # Name the differing fields so a rebuild can be explained, taking the union
+    # of both sides so an added or removed field is reported as well as a
+    # changed one. Field names only: a value could carry private material.
     differing = sorted(
         key for key in set(stored) | set(expected_context)
         if stored.get(key) != expected_context.get(key)
@@ -4944,6 +5044,9 @@ def open_set_coverage(run: OpenSetRunResult) -> Dict[str, Any]:
     scored_mated = [r for r in mated if r.failure_code is None]
     scored_non_mated = [r for r in non_mated if r.failure_code is None]
 
+    # Failures are grouped by their category only. A code may carry detail after
+    # a colon, which is dropped here so the published breakdown counts kinds of
+    # failure without disclosing anything about the individual image.
     failure_breakdown: Dict[str, int] = {}
     for row in run.search_results:
         if row.failure_code is None:
@@ -5001,8 +5104,13 @@ def open_set_duplicate_detection(
 ) -> Dict[str, float]:
     """Conditional and end-to-end duplicate detection, defined exactly as in the
     corrected LFW gallery accounting so the two experiments stay comparable."""
+    # Every mated probe the protocol intended, and the subset that survived
+    # extraction. The two lists become the two denominators below.
     mated = [r for r in run.search_results if r.role == "mated_probe"]
     scored = [r for r in mated if r.failure_code is None]
+    # A detection requires both conditions: the correct profile ranked first
+    # *and* above threshold. Rank alone would count a case the reviewer never
+    # sees, and threshold alone would credit a match against the wrong profile.
     detected = sum(
         1
         for r in scored
@@ -5010,9 +5118,14 @@ def open_set_duplicate_detection(
         and r.correct_similarity >= threshold
     )
     return {
+        # Conditional: of the photographs the model could process. Answers how
+        # well the comparison performs when it runs at all.
         "conditional_duplicate_detection_rate": (
             detected / len(scored) if scored else float("nan")
         ),
+        # End-to-end: of every photograph intended. An extraction failure counts
+        # against this rate, because operationally a duplicate that was never
+        # scored is a duplicate that was never found.
         "end_to_end_duplicate_detection_rate": detected / len(mated) if mated else float("nan"),
     }
 
@@ -5315,6 +5428,8 @@ def subgroup_disparity_summary(per_subgroup: Mapping[str, Mapping[str, Any]]) ->
     """Spread across subgroups. The max/min ratio is reported only when the
     denominator is non-zero; an absolute range is always reported, because a
     ratio against a zero rate is undefined rather than infinitely bad."""
+    # Subgroups with no measurable rate are excluded. Comparing against a
+    # not-a-number entry would silently poison the maximum and the minimum.
     fpirs = [v["fpir"] for v in per_subgroup.values() if v["fpir"] == v["fpir"]]
     tpirs = [v["tpir_rank1"] for v in per_subgroup.values() if v["tpir_rank1"] == v["tpir_rank1"]]
     if not fpirs:
@@ -5326,6 +5441,9 @@ def subgroup_disparity_summary(per_subgroup: Mapping[str, Mapping[str, Any]]) ->
         "min_subgroup_fpir": min_fpir,
         "absolute_fpir_range": max_fpir - min_fpir,
     }
+    # A ratio is only meaningful when every subgroup recorded some false
+    # referrals. Where one recorded none, the absolute range is reported instead
+    # of a figure that would read as an unbounded disparity.
     if min_fpir > 0:
         summary["max_to_min_fpir_ratio"] = max_fpir / min_fpir
     else:
@@ -6331,6 +6449,9 @@ def report_optional_dataset_status() -> List[str]:
     config = EnvironmentConfig.load()
     lines: List[str] = []
     status = pipeline_comparison_status(config)
+    # Reported either way. An optional experiment that did not run must say so
+    # with its reason, so an absent comparison is never mistaken for one that
+    # ran and found nothing.
     if status["comparison_run"]:
         lines.append(
             "Higher-capacity pipeline comparison: configured and verified against pinned "
@@ -6829,6 +6950,10 @@ def pipeline_comparison_status(
 ) -> Dict[str, Any]:
     """Whether the comparison can run, and if not, precisely why."""
     preconditions = arcface_preconditions(config)
+    # Not-run is a recorded outcome with a stated reason, never a silent skip:
+    # a reader must be able to tell an unavailable comparison from one that ran
+    # and found no difference. The reason is redacted, because the usual cause
+    # is a missing file in private research storage.
     if not preconditions["ready"]:
         return {
             "comparison_run": False,
@@ -7494,6 +7619,9 @@ def select_review_probability_threshold(
 
 def require_frozen_review_policy(payload: Mapping[str, Any], *, context: str = "") -> float:
     """Refuse held-out evaluation unless the classifier policy is frozen."""
+    # Two separate guards. First the policy must be frozen: fitting or
+    # recalibrating against held-out identities would invalidate the result,
+    # so the refusal lives in code rather than in procedure.
     status = payload.get("status")
     if status != ML_REVIEW_STATUS_FROZEN:
         raise MlReviewError(
@@ -7502,6 +7630,10 @@ def require_frozen_review_policy(payload: Mapping[str, Any], *, context: str = "
             f"accepted; fit on training identities and calibrate on calibration identities "
             f"first."
         )
+    # Second, the frozen policy must actually carry a probability for the
+    # primary FPIR target. A policy marked frozen but missing its operating
+    # point would otherwise let the held-out evaluation proceed with no
+    # threshold at all.
     operating = payload.get("operating_points") or {}
     primary = operating.get(str(PRIMARY_FPIR_TARGET))
     if not primary or "probability_threshold" not in primary:
@@ -11180,8 +11312,12 @@ def format_count_and_percentage(
     A percentage on its own cannot be checked and hides whether it was measured
     over every intended item or only over those successfully processed, so the
     denominator is always shown beside it."""
+    # A missing or not-a-number count is stated as unavailable rather than
+    # printed as zero, which a reader would take for a measured result.
     if not isinstance(count, (int, float)) or count != count:
         return "not available"
+    # Without a usable denominator only the count is shown. A percentage whose
+    # base is unknown is exactly what this helper exists to prevent.
     if not isinstance(denominator, (int, float)) or denominator != denominator or not denominator:
         return f"{int(round(count)):,}" + (f" {noun}" if noun else "")
     share = 100.0 * float(count) / float(denominator)
@@ -12741,11 +12877,18 @@ def action_show_pipeline_comparison_summary(output_root: Path = AGGREGATE_ROOT) 
 def action_run_extensions(output_root: Path = AGGREGATE_ROOT) -> int:
     """Both extension experiments. An unavailable optional pipeline must not
     prevent the classifier experiment from being reported."""
+    # Experiment 7 first: it reuses the frozen threshold of Experiment 6 and
+    # does not depend on the optional comparison models.
     status = run_ml_review_experiment(output_root=output_root)
+    # Experiment 8 is optional. Its models are not redistributed, so an absent
+    # weight file must leave Experiment 7 reported rather than abandoning the
+    # whole run. The blocker is announced, not swallowed.
     try:
         run_pipeline_comparison(output_root=output_root)
     except (PipelineUnavailableError, ModelUnavailableError) as exc:
         announce(f"Pipeline comparison: NOT RUN — {redact_private_paths(str(exc))}")
+    # Figures are rebuilt from whichever artefacts now exist, so a chart never
+    # illustrates a result that was not produced in this run.
     written = generate_figures(aggregate_root=output_root)
     announce(f"Wrote {len(written)} figure(s) to {project_relative(FIGURES_ROOT)}")
     print("")

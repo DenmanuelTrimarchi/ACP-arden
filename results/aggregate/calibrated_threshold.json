@@ -75,7 +75,7 @@
       "threshold": 0.2343152375423717
     }
   },
-  "created_at": "2026-07-31T14:35:15.081303+00:00",
+  "created_at": "2026-08-03T19:32:49.989321+00:00",
   "dataset": "LFW",
   "dataset_archive_md5": "1b42dfed7d15c9b2dd63d5e5840c86ad",
   "evaluated_image_set_sha256": "094554d088c661087c7d886e79b3e0376daaeb42c17b228db3f2a0130c4f0d8f",
@@ -180,6 +180,10 @@
       "opencv-python-headless": {
         "expected": "4.13.0.92",
         "installed": "4.13.0.92"
+      },
+      "scikit-learn": {
+        "expected": "1.9.0",
+        "installed": "1.9.0"
       }
     },
     "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",

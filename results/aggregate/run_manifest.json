@@ -1,7 +1,7 @@
 {
   "artifact_type": "run_manifest",
   "cplfw_image_variant": "raw",
-  "created_at": "2026-07-31T14:40:10.284955+00:00",
+  "created_at": "2026-08-03T19:40:21.337792+00:00",
   "dataset_root_variable": "FACE_DATA_ROOT",
   "dataset_storage": "private, gitignored local research storage; path omitted from public artifacts",
   "frozen_threshold": 0.3630116835391414,
@@ -10,11 +10,11 @@
   "model_root_variable": "FACE_MODEL_ROOT",
   "opaque_id_version": "hmac-sha256-v1",
   "output_file_sha256": {
-    "calibrated_threshold.json": "9ad1c1beb3f947efa08843bf4f5bfa637caca9fc233e6839fab492a9253f042e",
-    "cplfw_metrics.json": "f116e5095f51f0fe512c1d82d1551bf70902fe6a5c3dbc76798a3faaab307fce",
-    "duplicate_gallery_metrics_v2.json": "3fb6cfa7d9a6a7f2764e5ba69ab74f8971faae7303f79e3776c0fd92d2bfeaa5",
-    "lfw_development_metrics.json": "1ff5345d432f09c94742b40a4100b2832b059cd17f9e792cccc7650b3170d5d2",
-    "lfw_final_metrics.json": "62d5619cd88bd23b8f8c5abfa6e40e1d938717200920479f21a8b0e6fcfc3623"
+    "calibrated_threshold.json": "8731085f658ff722024535df7c233f18191815176a48f76a7eabc8117eade392",
+    "cplfw_metrics.json": "99f2d330c65170b22ef9d35c0f905bb973018c5a08145695e7f17357d97e0890",
+    "duplicate_gallery_metrics_v2.json": "4374f763110bc5eb6dda1f2dc4ddef5ca2e3882a533cba855bf6a0de103bedff",
+    "lfw_development_metrics.json": "7f3326f9405030c82116c9b67e82e5d5835b88db5b7913c156a211a0445d791f",
+    "lfw_final_metrics.json": "baf810986a3fd85f87abbac4aa5f6de86c37f6e453199f4da723faa7a7ec801c"
   },
   "output_root": "results/aggregate",
   "produced_by": "ACP_arden.py --mode full",
@@ -33,6 +33,10 @@
       "opencv-python-headless": {
         "expected": "4.13.0.92",
         "installed": "4.13.0.92"
+      },
+      "scikit-learn": {
+        "expected": "1.9.0",
+        "installed": "1.9.0"
       }
     },
     "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",

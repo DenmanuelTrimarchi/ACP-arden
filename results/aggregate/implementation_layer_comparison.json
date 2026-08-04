@@ -1,9 +1,9 @@
 {
   "artifact_type": "implementation_layer_comparison",
-  "created_at": "2026-08-03T02:12:40.763049+00:00",
+  "created_at": "2026-08-04T00:24:15.734994+00:00",
   "layers": [
     {
-      "complete_pipeline_latency_mean_ms": 21.57428372244002,
+      "complete_pipeline_latency_mean_ms": 22.05095205483984,
       "end_to_end_duplicate_detection_rate": 0.872,
       "false_reviews_per_1000_non_mated": 89.54179783140958,
       "fpir": 0.08954179783140959,
@@ -12,7 +12,7 @@
       "mated_probe_coverage": 0.933,
       "method": "Layer 1 single image transferred threshold",
       "non_mated_probe_coverage": 0.953,
-      "search_latency_mean_ms": 0.8896738414892476,
+      "search_latency_mean_ms": 0.9711095834078949,
       "threshold_source": "LFW 1:1 frozen threshold (transferred)",
       "tpir_rank1": 0.9346195069667739,
       "tpir_rank5": 0.9356913183279743
@@ -63,7 +63,7 @@
       "tpir_rank5": 0.9437367303609342
     },
     {
-      "complete_pipeline_latency_mean_ms": 94.28336271336393,
+      "complete_pipeline_latency_mean_ms": 95.3280492649165,
       "end_to_end_duplicate_detection_rate": 0.967,
       "false_reviews_per_1000_non_mated": 1.3391362571141614,
       "fpir": 0.0013391362571141614,
@@ -72,7 +72,7 @@
       "mated_probe_coverage": 0.999,
       "method": "Layer 5 SCRFD + ArcFace own calibration",
       "non_mated_probe_coverage": 0.9956666666666667,
-      "search_latency_mean_ms": 1.1523945121960486,
+      "search_latency_mean_ms": 1.1676942605555163,
       "threshold_source": "BFW development calibration for SCRFD + ArcFace, frozen",
       "tpir_rank1": 0.9679679679679679,
       "tpir_rank5": 0.9679679679679679

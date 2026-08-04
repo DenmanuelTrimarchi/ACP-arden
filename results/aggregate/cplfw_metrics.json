@@ -7,15 +7,15 @@
     "true_negative": 1711,
     "true_positive": 1461
   },
-  "created_at": "2026-07-31T14:38:40.588533+00:00",
+  "created_at": "2026-08-03T19:38:07.712607+00:00",
   "dataset_archive_filename": "images.rar",
   "dataset_archive_sha256": "7baca61dda21341eaa642f229eedfbba1d0aaa2d22447d79e158920106831165",
   "dataset_image_source": "authors-distributed images.rar",
   "dataset_image_variant": "raw",
   "dataset_root_description": "private, gitignored local research storage; path omitted",
-  "embedding_time_mean_ms": 14.492062119705515,
-  "embedding_time_median_ms": 14.484125000308268,
-  "embedding_time_p95_ms": 15.813833099673502,
+  "embedding_time_mean_ms": 23.198616634117254,
+  "embedding_time_median_ms": 23.410333029460162,
+  "embedding_time_p95_ms": 25.879725208505988,
   "equal_error_rate": 0.09774011299435026,
   "evaluated_image_set_sha256": "2b700113881ac921e55e419d6b54d76a6d72a768b6617f23bcbf54a799ed3886",
   "f1": 0.8949464012251148,
@@ -17643,6 +17643,10 @@
       "opencv-python-headless": {
         "expected": "4.13.0.92",
         "installed": "4.13.0.92"
+      },
+      "scikit-learn": {
+        "expected": "1.9.0",
+        "installed": "1.9.0"
       }
     },
     "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",
@@ -17650,7 +17654,7 @@
     "python_version": "3.13.0"
   },
   "threshold": 0.3630116835391414,
-  "threshold_artifact_sha256": "9ad1c1beb3f947efa08843bf4f5bfa637caca9fc233e6839fab492a9253f042e",
+  "threshold_artifact_sha256": "8731085f658ff722024535df7c233f18191815176a48f76a7eabc8117eade392",
   "threshold_source": "results/aggregate/calibrated_threshold.json",
   "threshold_status": "frozen",
   "total_pairs": 6000,
