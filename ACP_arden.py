@@ -1255,6 +1255,8 @@ def parse_cplfw_pairs(protocol_path: Path, dataset_root: Path) -> List[Pair]:
     same_count = 0
     diff_count = 0
 
+    # CPLFW writes one photograph per line, so a pair occupies two consecutive
+    # lines and the loop advances two at a time.
     for index in range(0, len(lines), 2):
         line_number = index + 1
         first_columns = lines[index].split()
@@ -1268,6 +1270,9 @@ def parse_cplfw_pairs(protocol_path: Path, dataset_root: Path) -> List[Pair]:
         first_filename, first_label = first_columns
         second_filename, second_label = second_columns
 
+        # The label states whether the two photographs show the same person.
+        # Both lines of one pair must agree; disagreement means the file has
+        # been misaligned and the pairs no longer describe what they claim.
         if first_label not in {"0", "1"} or second_label not in {"0", "1"}:
             raise ProtocolError(f"{protocol_path}:{line_number}: label must be 0 or 1")
         if first_label != second_label:
@@ -1284,6 +1289,7 @@ def parse_cplfw_pairs(protocol_path: Path, dataset_root: Path) -> List[Pair]:
             raise ProtocolError(f"{protocol_path}: duplicate pair detected: {key}")
         seen.add(key)
 
+        # Label 1 marks a genuine pair, 0 an impostor pair.
         same_identity = first_label == "1"
         pairs.append(
             Pair(
@@ -1378,11 +1384,16 @@ def _validate_inputs(scores: ScoreInput, labels: LabelInput) -> Tuple[np.ndarray
         raise MetricsError("scores and labels must have the same length")
     if scores_arr.shape[0] == 0:
         raise MetricsError("scores/labels must not be empty")
+    # A missing or infinite score would silently distort every rate computed
+    # from it, so the evaluation stops rather than reporting a corrupted figure.
     if not np.all(np.isfinite(scores_arr)):
         raise MetricsError("scores must contain only finite numbers")
     unique_labels = set(np.unique(labels_arr).tolist())
     if not unique_labels.issubset({0, 1}):
         raise MetricsError(f"labels must be 0 or 1, found {sorted(unique_labels)}")
+    # Both classes must be present. With genuine pairs only there is nothing to
+    # falsely match, and with impostor pairs only nothing to correctly match,
+    # so the resulting rates would be meaningless rather than merely extreme.
     if unique_labels != {0, 1}:
         raise MetricsError(
             f"labels must contain both classes (0 and 1); found only {sorted(unique_labels)}"
@@ -2718,12 +2729,17 @@ def write_aggregate_reports(
     """Cross-reference the five per-experiment metrics files into a manifest,
     three CSVs and a written report, then refuse to finish if any of them
     contains a personal or absolute filesystem path."""
+    # Reports are assembled by reading the artefacts back off disk, never from
+    # values held in memory. A table therefore cannot disagree with the JSON
+    # file it claims to summarise.
     threshold_path = output_root / "calibrated_threshold.json"
     payloads: Dict[str, Dict[str, Any]] = {
         "lfw_development": read_json_artifact(output_root / "lfw_development_metrics.json"),
         "lfw_final": read_json_artifact(output_root / "lfw_final_metrics.json"),
         "cplfw": read_json_artifact(output_root / "cplfw_metrics.json"),
     }
+    # The corrected gallery accounting is preferred where present; the earlier
+    # file is read only so an older run can still be summarised.
     gallery_v2_path = output_root / "duplicate_gallery_metrics_v2.json"
     gallery_path = (
         gallery_v2_path if gallery_v2_path.is_file() else output_root / "duplicate_gallery_metrics.json"
@@ -3038,8 +3054,13 @@ def default_forbidden_path_substrings(*, env: Optional[Mapping[str, str]] = None
     names, and the expanded value of every storage environment variable."""
     source = os.environ if env is None else env
     from_file = load_env_file()
+    # General prefixes that would reveal a home directory on any platform.
     substrings = {"/Users/", "\\Users\\", "/home/", str(Path.home())}
+    # Cloud-sync folder names, which disclose a private storage arrangement
+    # even when the path itself looks unremarkable.
     substrings.update(_PRIVATE_LOCATION_MARKERS)
+    # The researcher's own configured locations, taken from both the process
+    # environment and the local file, since either may be in force.
     for variable in (*REQUIRED_ENVIRONMENT_VARIABLES, *OPTIONAL_ENVIRONMENT_VARIABLES):
         for value in (source.get(variable), from_file.get(variable)):
             if value:
@@ -4065,9 +4086,13 @@ def open_set_protocol_summary(
         by_subgroup: Dict[str, Dict[str, int]] = {
             subgroup: {role: 0 for role in OPEN_SET_ROLES} for subgroup in BFW_SUBGROUPS
         }
+        # Tally how many photographs each subgroup contributes to each role,
+        # which is what shows the protocol is balanced across subgroups.
         for entry in rows:
             by_subgroup[entry.subgroup][entry.role] += 1
         return {
+            # Counted over unique identity hashes, because one person supplies
+            # several photographs and would otherwise be counted repeatedly.
             "identities": len({e.identity_hash for e in rows}),
             "images": len(rows),
             "roles": {role: sum(1 for e in rows if e.role == role) for role in OPEN_SET_ROLES},
@@ -4805,12 +4830,16 @@ def _stable_float(value: float) -> str:
     in the digest, so the outcome hash uses float.hex(), which is exact and
     distinguishes negative zero from zero. The non-finite values have no hex
     form and are named explicitly."""
+    # A not-a-number value is the only one that does not equal itself, which is
+    # how it is recognised here. It has no hexadecimal form, so it is named.
     if value != value:
         return "float:nan"
     if value == math.inf:
         return "float:+inf"
     if value == -math.inf:
         return "float:-inf"
+    # The hexadecimal form reproduces the stored number exactly, so two
+    # similarities that differ in their final digits never share a digest.
     return f"float:{value.hex()}"
 
 
@@ -7185,6 +7214,9 @@ def write_pipeline_subgroup_csv(path: Path, *, payload: Mapping[str, Any]) -> No
         writer = csv.writer(handle)
         writer.writerow(columns)
         if not held_out:
+            # The comparison pipeline still gets its rows, left blank and
+            # carrying the status. A reader sees that it was not evaluated
+            # rather than finding it silently absent from the table.
             for subgroup in BFW_SUBGROUPS:
                 writer.writerow(
                     [f"insightface-scrfd-arcface-{ARCFACE_MODEL_PACK}", subgroup]
@@ -7861,11 +7893,19 @@ def review_subgroup_metrics(
 
     Subgroup is used for evaluation, never prediction."""
     per_subgroup: Dict[str, Dict[str, Any]] = {}
+    # Every subgroup is scored at the same frozen probability. The breakdown
+    # reports how the one policy performs across groups; it never gives a group
+    # its own threshold.
     for subgroup in BFW_SUBGROUPS:
+        # Positions are collected rather than the rows themselves, because the
+        # matching classifier probabilities must be selected by the same index.
         indices = [i for i, r in enumerate(rows) if r.subgroup == subgroup]
         subset_outcomes = (
             {k: v for k, v in outcomes.items() if v.subgroup == subgroup} if outcomes else None
         )
+        # A subgroup with no scored rows may still have intended outcomes, if
+        # every one of its photographs failed extraction. That case is still
+        # reported, because the end-to-end rate must account for it.
         if not indices and not subset_outcomes:
             continue
         subset = [rows[i] for i in indices]
@@ -9766,6 +9806,9 @@ def write_implementation_layer_artefacts(
         "BFW classifier-calibration identities, frozen probability",
         "BFW development calibration for SCRFD + ArcFace, frozen",
     ]
+    # One row per implementation layer, in the order the project developed
+    # them, so the table reads as the progression from the transferred 1:1
+    # threshold through to the higher-capacity pipeline.
     rows: List[Dict[str, Any]] = []
     for index, layer in enumerate(layers):
         rates, coverage = layer["rates"], layer["coverage"]
@@ -9778,6 +9821,8 @@ def write_implementation_layer_artefacts(
             "tpir_rank5": rates.get("tpir_rank5"),
             "end_to_end_duplicate_detection_rate": layer["end_to_end"],
             "gallery_enrolment_coverage": coverage.get("gallery_enrolment_coverage"),
+            # Coverage is stored as a failure rate, so it is inverted here to
+            # report the share of photographs that were processed successfully.
             "mated_probe_coverage": (
                 1.0 - coverage["mated_extraction_failure_rate"]
                 if isinstance(coverage.get("mated_extraction_failure_rate"), (int, float))
@@ -9885,8 +9930,12 @@ def write_profile_consistency_artefacts(
     with open(aggregate_root / "profile_photo_consistency_metrics.csv", "w", newline="",
               encoding="utf-8") as handle:
         writer = csv.writer(handle)
+        # One row per outcome rather than one column per outcome, so a new
+        # measure can be added later without changing the file's shape.
         writer.writerow(["pipeline", "outcome", "count"])
         for name, entry in per_pipeline.items():
+            # Counts and rates are both written, so a reader can check any
+            # published rate against the counts it was derived from.
             for field_name in CONSISTENCY_OUTCOME_FIELDS + CONSISTENCY_RATE_FIELDS:
                 writer.writerow([name, field_name, entry.get(field_name, "")])
 
@@ -9899,6 +9948,9 @@ def write_pipeline_sex_aggregates(
     Pooled from identity outcomes, never by averaging subgroup percentages,
     which would weight a small subgroup as heavily as a large one."""
     held_out = payload.get("held_out_metrics") or {}
+    # One entry per pipeline and sex, giving four rows once both pipelines have
+    # been evaluated. Sex is an evaluation dimension only; it is never used to
+    # decide anything about an individual case.
     groups: Dict[str, Dict[str, Any]] = {}
     for name, metrics in held_out.items():
         for sex, entry in (metrics.get("sex_aggregated") or {}).items():
@@ -11199,9 +11251,14 @@ def _self_test_failure_accounting() -> None:
         empty, empty_key = _write_synthetic_image(root, "empty.png", 30)
         crowd, crowd_key = _write_synthetic_image(root, "crowd.png", 40)
 
+        # A stand-in detector told to find no face in one image and two in
+        # another. Both are extraction failures, and the point of this test is
+        # that neither is quietly dropped from the protocol total.
         detector = SyntheticDetector({empty_key: 0, crowd_key: 2})
         embedder = SyntheticEmbedder()
 
+        # Five pairs: one that scores normally, and four that must fail because
+        # one side of each cannot yield exactly one face.
         pairs = [
             Pair(good_a, good_b, True, "a", "b"),
             Pair(empty, good_b, True, "a", "b"),
@@ -11302,12 +11359,18 @@ def _self_test_path_leak_detection() -> None:
 
 
 def _self_test_deterministic_gallery_sampling() -> None:
+    # Twenty people with one photograph each, who therefore stand in for new
+    # registrations, plus one with two photographs who can be enrolled and then
+    # searched for. No real image is touched; only the sampling rule is tested.
     images = {
         f"identity_{index:02d}": [Path(f"/tmp/i{index}/identity_{index:02d}_0001.jpg")]
         for index in range(20)
     }
     images["anchor"] = [Path("/tmp/anchor/anchor_0001.jpg"), Path("/tmp/anchor/anchor_0002.jpg")]
 
+    # Building twice with one seed must give the same manifest, and building
+    # with another seed must give a different one. Together these show the
+    # sampling is driven by the seed alone and is genuinely reproducible.
     first = build_manifest(images, seed=DEFAULT_RANDOM_SEED, max_unknown_identities=5)
     second = build_manifest(images, seed=DEFAULT_RANDOM_SEED, max_unknown_identities=5)
     _assert(
@@ -11506,11 +11569,16 @@ def render_plain_pipeline_table(
 ) -> str:
     """A fixed-width text table. Column widths follow the widest cell, so a
     long pipeline name cannot push a column out of alignment."""
+    # Each column is made as wide as its widest cell, counting the header,
+    # so a long pipeline name widens its own column instead of shifting the
+    # ones beside it.
     columns = [list(headers)] + [list(row) for row in rows]
     widths = [
         max(len(str(column[index])) for column in columns)
         for index in range(len(headers))
     ]
+    # Pad each cell to its column width. Trailing spaces are trimmed, so the
+    # terminal output carries no invisible whitespace at the line ends.
     def line(cells: Sequence[str]) -> str:
         return indent + "  ".join(
             str(cell).ljust(widths[index]) for index, cell in enumerate(cells)
@@ -12645,6 +12713,9 @@ def experiment_evaluate_cplfw(
 
     cplfw_root = config.require_cplfw_raw_root()
     protocol_path = config.require_protocol_root() / CPLFW_PROTOCOL
+    # The threshold is read back from the artefact LFW froze, and its digest is
+    # recorded. Reusing that exact value unchanged is what makes this a test of
+    # generalisation to a harder pose rather than a second calibration.
     threshold_artifact_sha256 = sha256_of_file(threshold_artifact)
     threshold_payload = read_json_artifact(threshold_artifact)
     threshold = require_frozen_threshold(
@@ -12652,6 +12723,8 @@ def experiment_evaluate_cplfw(
     )
 
     pairs = parse_cplfw_pairs(protocol_path, cplfw_root)
+    # The set of distinct photographs actually compared. Its digest is
+    # published, so a later reader can confirm which images produced the result.
     evaluated_images = {p.left_path for p in pairs} | {p.right_path for p in pairs}
 
     result = evaluate_pairs(pairs, detector=detector, embedder=embedder)
