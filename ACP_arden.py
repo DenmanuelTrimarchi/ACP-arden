@@ -591,6 +591,9 @@ def verify_model_file(path: Path, expected_sha256: str) -> str:
     path = Path(path)
     if not path.is_file():
         raise ModelUnavailableError(f"Model file not found: {path}")
+    # The digest fingerprints the exact weight file. Comparing it against the
+    # value pinned in source proves the evaluation used the intended model and
+    # not a different release that happened to carry the same filename.
     actual = sha256_of_file(path)
     if actual != expected_sha256:
         raise ModelUnavailableError(
@@ -746,6 +749,9 @@ def opaque_id(value: str) -> str:
             f"{ID_HMAC_KEY_VARIABLE} has not been configured; refusing to emit an "
             f"identifier that would be reversible by dictionary attack."
         )
+    # Keyed hashing, not plain hashing. Without the secret key an attacker
+    # could hash a list of candidate dataset names and recover which person
+    # each published identifier refers to.
     digest = hmac.new(_ID_HMAC_KEY, value.encode("utf-8"), hashlib.sha256).hexdigest()
     return digest[:OPAQUE_ID_HEX_LENGTH]
 
@@ -1014,15 +1020,21 @@ class SimilarityError(ValueError):
 
 
 def l2_normalize(vector: np.ndarray, *, tolerance: float = 1e-7) -> np.ndarray:
+    # Flatten to a single row of numbers, whatever shape the model returned.
     vector = np.asarray(vector, dtype=np.float64).reshape(-1)
     if vector.shape[0] == 0:
         raise SimilarityError("Vector must have at least one dimension.")
     if not np.all(np.isfinite(vector)):
         raise SimilarityError("Vector must contain only finite numbers before normalisation.")
+    # The norm is the vector's length. Dividing by it rescales the face
+    # representation to unit length, so later comparisons measure direction
+    # only and are unaffected by how strong the raw signal happened to be.
     norm = math.sqrt(float(np.dot(vector, vector)))
     if norm <= 1e-12:
         raise SimilarityError("Vector norm is too close to zero to normalise safely.")
     normalized = vector / norm
+    # Confirm the result really is unit length. A silent failure here would
+    # distort every similarity computed from this face.
     result_norm = math.sqrt(float(np.dot(normalized, normalized)))
     if abs(result_norm - 1.0) > tolerance:
         raise SimilarityError("Normalisation self-check failed.")
@@ -1032,6 +1044,8 @@ def l2_normalize(vector: np.ndarray, *, tolerance: float = 1e-7) -> np.ndarray:
 def cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
     left = np.asarray(left, dtype=np.float64).reshape(-1)
     right = np.asarray(right, dtype=np.float64).reshape(-1)
+    # Two faces can only be compared when described by the same number of
+    # measurements. A mismatch means embeddings from two different models.
     if left.shape[0] == 0 or left.shape[0] != right.shape[0]:
         raise SimilarityError("Embeddings must have the same non-zero number of dimensions.")
     if not np.all(np.isfinite(left)) or not np.all(np.isfinite(right)):
@@ -1040,6 +1054,8 @@ def cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
     right_norm = math.sqrt(float(np.dot(right, right)))
     if left_norm == 0.0 or right_norm == 0.0:
         raise SimilarityError("Embeddings must have a non-zero norm.")
+    # The similarity score used throughout the project: 1.0 means the two
+    # representations point the same way, 0.0 means they are unrelated.
     return float(np.dot(left, right) / (left_norm * right_norm))
 
 
@@ -1136,20 +1152,29 @@ def parse_lfw_pairs(protocol_path: Path, dataset_root: Path) -> List[Pair]:
     if not raw_lines or not raw_lines[0].strip():
         raise ProtocolError(f"Empty protocol file: {protocol_path}")
 
+    # The first line states how many pairs the file should contain; the rest
+    # are the pairs themselves.
     header = raw_lines[0].split()
     data_lines = raw_lines[1:]
 
     pairs: List[Pair] = []
+    # Tracks pairs already seen, so a repeated pair cannot be scored twice and
+    # quietly weight one comparison more heavily than the others.
     seen: Set[Tuple[str, str]] = set()
     same_count = 0
     diff_count = 0
 
+    # Numbering starts at 2 because line 1 was the header, so any error message
+    # points at the line a reader would actually find in the file.
     for line_number, raw_line in enumerate(data_lines, start=2):
         line = raw_line.strip()
         if not line:
             continue
         columns = line.split("\t") if "\t" in line else line.split()
 
+        # The official format encodes the answer in the column count. Three
+        # columns name one person twice, so the pair is a genuine match; four
+        # columns name two different people, so it is an impostor pair.
         if len(columns) == 3:
             identity, image_a, image_b = columns
             left = _resolve_image_path(dataset_root, identity, image_a)
@@ -1309,10 +1334,14 @@ def percentile(values: Sequence[float], pct: float) -> float:
         return float("nan")
     if len(ordered) == 1:
         return float(ordered[0])
+    # The position the requested percentile falls at. It is rarely a whole
+    # number, so it usually lies between two of the sorted values.
     index = (pct / 100.0) * (len(ordered) - 1)
     lower, upper = int(index), min(int(index) + 1, len(ordered) - 1)
     if lower == upper:
         return float(ordered[lower])
+    # Interpolate between the two neighbours rather than rounding, which is
+    # what makes a 95th-percentile latency comparable between runs.
     fraction = index - lower
     return float(ordered[lower] + fraction * (ordered[upper] - ordered[lower]))
 
@@ -1840,9 +1869,14 @@ def _embed_image(
     cache: Dict[Path, np.ndarray],
     embedding_times: List[float],
 ) -> np.ndarray:
+    # An image often appears in several protocol pairs. Reusing the stored
+    # result keeps the evaluation honest as well as faster: the same photograph
+    # must always yield the same numbers.
     if path in cache:
         return cache[path]
     start = time.perf_counter()
+    # The three stages every photograph passes through: read the file, locate
+    # exactly one face, then turn that face into a list of numbers.
     loaded = load_image_bgr(path)
     face_row = detector.detect_single_face(loaded.bgr)
     raw_embedding = embedder.embed(loaded.bgr, face_row)
@@ -1987,6 +2021,9 @@ def build_manifest(
     excluded = {Path(p) for p in excluded_images}
     rng = random.Random(seed)
 
+    # Drop any photograph already used elsewhere in the evaluation, and order
+    # what remains by filename so the selection never depends on the order the
+    # filesystem happened to list the directory.
     eligible = {
         identity: sorted(
             (Path(p) for p in images if Path(p) not in excluded), key=lambda p: p.name
@@ -1995,6 +2032,10 @@ def build_manifest(
     }
     eligible = {identity: images for identity, images in eligible.items() if images}
 
+    # The number of photographs decides the role. Two or more allows one to
+    # enrol the profile and another to search with, which is a known duplicate
+    # case. A single photograph cannot do both, so that person stands in for a
+    # new registration who is not in the gallery at all.
     gallery_identities = sorted(
         identity for identity, images in eligible.items() if len(images) >= 2
     )
@@ -3050,6 +3091,9 @@ def find_path_leaks(root: Path, *, forbidden_substrings: Sequence[str]) -> List[
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
+        # Two kinds of published file can carry a private path. A text artefact
+        # can contain one directly; an image can hide one in the metadata a
+        # plotting library writes when it saves the file.
         suffix = path.suffix.lower()
         if suffix in _TEXT_ARTIFACT_SUFFIXES:
             try:
@@ -3217,6 +3261,9 @@ def upsert_review_case(
     similarity: float,
     threshold: float,
 ) -> None:
+    # Insert the case, or refresh it if a previous run already raised it. The
+    # stored status and decision are deliberately not overwritten, so re-running
+    # the evaluation never discards a decision a reviewer has already recorded.
     connection.execute(
         """
         INSERT INTO review_cases
@@ -3705,6 +3752,9 @@ def load_bfw_dataset(
 def bfw_dataset_provenance(dataset: BfwDataset) -> Dict[str, Any]:
     """Public provenance for BFW. Contains no path, no filename that embeds an
     identity and no demographic record joined to a name."""
+    # Aggregate shape only: how many photographs each person has, and how many
+    # people fall in each subgroup. No name, path or per-person record is
+    # included, because this block is published.
     grouped = dataset.by_identity()
     per_identity_counts = sorted(len(v) for v in grouped.values())
     subgroup_of = dataset.subgroup_of_identity()
@@ -3959,6 +4009,8 @@ def _assert_protocol_invariants(entries: Sequence[OpenSetEntry]) -> None:
     """The three properties that make the experiment meaningful, checked rather
     than assumed: no image holds two roles, no identity crosses the
     development/test boundary, and no identity is both enrolled and non-mated."""
+    # First property: one photograph, one role. A photograph used both to
+    # enrol a profile and to search against it would be compared with itself.
     seen_paths: Set[Path] = set()
     for entry in entries:
         if entry.image_path in seen_paths:
@@ -3967,12 +4019,15 @@ def _assert_protocol_invariants(entries: Sequence[OpenSetEntry]) -> None:
             )
         seen_paths.add(entry.image_path)
 
+    # Collect which partitions and which roles each person appears under.
     partitions_of: Dict[str, Set[str]] = {}
     roles_of: Dict[str, Set[str]] = {}
     for entry in entries:
         partitions_of.setdefault(entry.identity, set()).add(entry.partition)
         roles_of.setdefault(entry.identity, set()).add(entry.role)
 
+    # Second property: nobody appears in both partitions. A person seen while
+    # the threshold was chosen would make the held-out test no longer unseen.
     crossing = sorted(i for i, p in partitions_of.items() if len(p) > 1)
     if crossing:
         raise OpenSetProtocolError(
@@ -3980,6 +4035,9 @@ def _assert_protocol_invariants(entries: Sequence[OpenSetEntry]) -> None:
             f"partitions; the open-set protocol requires them to be disjoint."
         )
 
+    # Third property: a person is either enrolled or a stranger, never both.
+    # Otherwise a "new profile" would be counted as falsely referred to a
+    # gallery that legitimately contains them.
     for identity, roles in roles_of.items():
         if "non_mated_probe" in roles and roles & {"gallery_enrolment", "mated_probe"}:
             raise OpenSetProtocolError(
@@ -4000,6 +4058,8 @@ def open_set_protocol_summary(
     Software, model and dataset provenance are embedded alongside them so that
     this artefact carries the same record as every other published JSON."""
 
+    # Counts only, never identities or paths. This summary is published, so it
+    # describes the shape of the protocol without disclosing who is in it.
     def counts(partition: str) -> Dict[str, Any]:
         rows = protocol.partition(partition)
         by_subgroup: Dict[str, Dict[str, int]] = {
@@ -4175,6 +4235,8 @@ def build_identity_template(
     silently rescale every score for that identity."""
     if not embeddings:
         raise SimilarityError("Cannot build a template from zero embeddings.")
+    # Stack the profile's photographs into rows, average them into a single
+    # representation of that person, then rescale the average to unit length.
     stacked = np.vstack([l2_normalize(np.asarray(e, dtype=np.float64)) for e in embeddings])
     return l2_normalize(stacked.mean(axis=0))
 
@@ -4242,7 +4304,11 @@ def assigned_wrong_template(
     opaque identity hashes, never by a private name."""
     if not enrolled:
         return None
+    # Order by opaque hash so the choice never depends on enrolment order.
     ordered = sorted(enrolled, key=lambda identity: identity.identity_hash)
+    # Turn the seed and the sample identifier into one large number, then use
+    # the remainder to pick a position in the list. The same photograph always
+    # lands on the same profile, so the control repeats exactly.
     offset = int(sha256_of_text(f"{seed}:wrong-template:{sample_id}"), 16)
     return ordered[offset % len(ordered)]
 
@@ -4489,14 +4555,22 @@ def open_set_rates_at_threshold(
     results: Sequence[OpenSetSearchResult], threshold: float
 ) -> Dict[str, float]:
     """FPIR, FNIR and TPIR at one operating threshold."""
+    # Two groups of test photographs. Non-mated probes belong to people who are
+    # not enrolled, so any match is a false referral. Mated probes belong to
+    # people who are enrolled, so the correct profile ought to be found.
     non_mated = _scored(results, "non_mated_probe")
     mated = _scored(results, "mated_probe")
 
+    # FPIR: a person absent from the gallery whose best match still passed the
+    # threshold. Each one is a new profile sent for review unnecessarily.
     false_positives = sum(
         1 for r in non_mated if r.top_similarity is not None and r.top_similarity >= threshold
     )
     fpir = false_positives / len(non_mated) if non_mated else float("nan")
 
+    # TPIR: the correct profile must appear within the first "rank" candidates
+    # *and* score above the threshold. Rank alone would count a case the
+    # reviewer never sees; the threshold alone would ignore who was matched.
     def found_within(rank: int) -> int:
         return sum(
             1
@@ -4509,6 +4583,9 @@ def open_set_rates_at_threshold(
 
     tpir1 = found_within(1) / len(mated) if mated else float("nan")
     tpir5 = found_within(5) / len(mated) if mated else float("nan")
+    # CMC ignores the threshold and asks only about ranking. Comparing it with
+    # TPIR shows how much detection is lost to the threshold rather than to the
+    # model failing to rank the right person highly.
     cmc1 = (
         sum(1 for r in mated if r.correct_rank == 1) / len(mated) if mated else float("nan")
     )
@@ -4520,12 +4597,15 @@ def open_set_rates_at_threshold(
     return {
         "threshold": threshold,
         "fpir": fpir,
+        # FNIR is simply the share not found, so it always complements TPIR.
         "fnir_rank1": 1.0 - tpir1 if tpir1 == tpir1 else float("nan"),
         "fnir_rank5": 1.0 - tpir5 if tpir5 == tpir5 else float("nan"),
         "tpir_rank1": tpir1,
         "tpir_rank5": tpir5,
         "cmc_rank1": cmc1,
         "cmc_rank5": cmc5,
+        # The same FPIR expressed as a workload: how many unnecessary reviews a
+        # moderator would face per thousand new profiles.
         "false_reviews_per_1000_non_mated": fpir * 1000.0 if fpir == fpir else float("nan"),
         "scored_non_mated_probes": len(non_mated),
         "scored_mated_probes": len(mated),
@@ -4736,11 +4816,17 @@ def _stable_float(value: float) -> str:
 
 def _canonical_json(payload: Any) -> str:
     """Stable serialisation: UTF-8, sorted keys, exact float representation."""
+    # Walk the whole structure and rewrite it into one fixed form. Two runs
+    # that produced the same results must serialise to the same text, or the
+    # digest built from it would differ for no scientific reason.
     def normalise(value: Any) -> Any:
         if isinstance(value, bool):
             return value
+        # Floats go through the exact form; decimal rounding here would let two
+        # different similarities collide in the digest.
         if isinstance(value, float):
             return _stable_float(value)
+        # Sorting the keys removes any dependence on insertion order.
         if isinstance(value, dict):
             return {k: normalise(v) for k, v in sorted(value.items())}
         if isinstance(value, (list, tuple)):
@@ -4801,6 +4887,8 @@ def save_canonical_run(
     context: Optional[Mapping[str, Any]] = None,
 ) -> str:
     """Persist a run with the context that produced it."""
+    # The digest fingerprints the run's outcomes. Storing it beside the records
+    # lets a later load prove the file has not been edited since it was written.
     digest = canonical_run_digest(run)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -5002,14 +5090,21 @@ def canonical_primary_run(
     context = canonical_run_context(
         protocol, partition=partition, dataset=dataset, detector=detector, embedder=embedder
     )
+    # No reason to reject means the cached run was produced under exactly this
+    # configuration and its records still match their stored digests, so it can
+    # be reused. Reuse is what keeps Experiments 6, 7 and 8 reporting the same
+    # figures for the same method.
     reason = cache_invalidation_reason(cache_path, context)
     if not refresh and reason is None:
         cached = load_canonical_run(cache_path)
         if cached is not None:
             return cached, canonical_run_digest(cached), context
+    # Otherwise the reason is announced, so a rebuild is never silent.
     if reason is not None and not refresh:
         announce(f"Rebuilding the {partition} canonical run: {reason}")
 
+    # Score the partition afresh and store it with the configuration that
+    # produced it, ready for the next experiment to reuse.
     run = run_open_set_method(
         protocol, partition=partition, method=METHOD_B, detector=detector, embedder=embedder
     )
@@ -5390,6 +5485,9 @@ def subgroup_open_set_metrics(
     seed: int = DEFAULT_RANDOM_SEED,
 ) -> Dict[str, Dict[str, Any]]:
     per_subgroup: Dict[str, Dict[str, Any]] = {}
+    # One breakdown per official subgroup. Every subgroup is measured at the
+    # same frozen threshold: applying a different threshold to each would be
+    # tuning the system per demographic group, which this project does not do.
     for subgroup in BFW_SUBGROUPS:
         rows = [r for r in results if r.subgroup == subgroup]
         if not rows:
@@ -5400,6 +5498,9 @@ def subgroup_open_set_metrics(
         intervals = cluster_bootstrap_intervals(
             rows, threshold=threshold, replicates=replicates, seed=seed
         )
+        # Each rate is published with an interval beside it. A subgroup holds
+        # only an eighth of the partition, so a point estimate on its own would
+        # suggest more precision than the sample size supports.
         entry: Dict[str, Any] = {}
         for metric in ("fpir", "fnir_rank1", "fnir_rank5", "tpir_rank1", "tpir_rank5"):
             entry[metric] = rates[metric]
@@ -5507,6 +5608,9 @@ def evaluate_open_set_success_criteria(
     """Compare held-out results against the pre-declared targets. A metric that
     is undefined is reported as not measurable rather than as a pass."""
 
+    # One comparison used for every criterion. Some targets are floors the
+    # result must reach, others are ceilings it must stay under, so the caller
+    # states which. A metric that could not be measured is never a pass.
     def verdict(actual: Any, threshold: float, *, minimum: bool) -> Dict[str, Any]:
         if not isinstance(actual, (int, float)) or actual != actual:
             return {"outcome": "not_measurable", "actual": None, "target": threshold}
@@ -5517,6 +5621,8 @@ def evaluate_open_set_success_criteria(
             "target": threshold,
         }
 
+    # The weaker of the two probe groups is taken, so a good result on one
+    # group cannot disguise poor image processing on the other.
     probe_coverage = min(
         (
             1.0 - coverage.get("mated_extraction_failure_rate", float("nan")),
@@ -6706,6 +6812,11 @@ def arcface_preconditions(config: Optional[EnvironmentConfig] = None) -> Dict[st
     config = config or EnvironmentConfig.load()
     checks: Dict[str, bool] = {}
 
+    # Four separate conditions must all hold before the optional comparison can
+    # run: the libraries are installed, a model directory is configured, both
+    # weight files are present, and their digests are pinned in source.
+    # Recording each one individually lets the report state exactly which is
+    # missing rather than only that the comparison did not run.
     missing_dependencies = [
         name for name in ("onnxruntime", "insightface")
         if importlib.util.find_spec(name) is None
@@ -7449,6 +7560,9 @@ def build_review_identity_outcomes(
 
     Retain failed probes in the end-to-end denominator; excluding them would
     turn an end-to-end rate into a conditional one."""
+    # Group every probe outcome under the person it belongs to. The bootstrap
+    # resamples whole identities, so each identity must carry its complete set
+    # of outcomes rather than a set of loose photographs.
     scratch: Dict[str, Dict[str, Any]] = {}
     for result in results:
         row = scratch.setdefault(
@@ -7457,12 +7571,18 @@ def build_review_identity_outcomes(
              "intended_non_mated": 0, "scored_non_mated": 0, "mated_fail": 0,
              "non_mated_fail": 0, "unavailable": 0},
         )
+        # "Scored" means the photograph reached a comparison at all. Both the
+        # intended and the scored counts are kept, because the two support the
+        # end-to-end and conditional denominators respectively.
         scored = result.failure_code is None and result.top_similarity is not None
         if result.role == "mated_probe":
             row["intended_mated"] += 1
             row["scored_mated"] += scored
             if not scored:
                 row["mated_fail"] += 1
+                # A missing gallery reference is recorded separately: the
+                # person's own profile could not be enrolled, so the search
+                # never had anything to find.
                 if result.failure_code == GALLERY_REFERENCE_UNAVAILABLE:
                     row["unavailable"] += 1
         elif result.role == "non_mated_probe":
@@ -7586,13 +7706,20 @@ def select_review_probability_threshold(
 
     Same deterministic rule as the similarity threshold: admissible by FPIR,
     then highest TPIR@1, then lower FPIR, then the higher threshold."""
+    # Every probability the classifier actually produced is a candidate, plus
+    # one above 1.0 representing "refer nothing at all".
     candidates = sorted({round(float(p), 12) for p in probabilities}) + [1.0000000001]
     evaluated = [review_rates_at_probability(rows, probabilities, c) for c in candidates]
+    # Only thresholds meeting the false-referral budget may be considered. The
+    # budget is fixed in advance, so detection cannot be bought by allowing
+    # more unnecessary reviews than the experiment declared.
     admissible = [e for e in evaluated if e["fpir"] == e["fpir"] and e["fpir"] <= target_fpir]
     if not admissible:
         raise MlReviewError(
             f"No probability threshold reached a calibration FPIR at or below {target_fpir}."
         )
+    # Among those, the best detection wins; ties go to the lower false-referral
+    # rate and then to the stricter threshold, so the choice is reproducible.
     chosen = sorted(
         admissible,
         key=lambda e: (
@@ -12776,6 +12903,10 @@ def _run_action(action: Callable[[], int]) -> int:
     rather than a traceback that could disclose a storage location."""
     try:
         return action()
+    # Every failure listed here is one the programme anticipates: a missing
+    # dataset, an unverified model, an unfrozen threshold. Each is reported as
+    # a short redacted sentence, because a traceback would print the local
+    # research storage path it failed on.
     except (
         ArtifactError,
         BfwDatasetError,
@@ -12968,6 +13099,8 @@ def run_menu() -> int:
             return last_status
 
 
+# Every menu option also has a command-line mode, so the whole project can be
+# run without the interactive launcher.
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ACP_arden.py",
