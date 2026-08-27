@@ -8,11 +8,25 @@ unconstrained facial images show the same person, and whether the same
 similarity signal can surface possible duplicate profiles when one photograph
 is searched against a gallery of many.
 
-Neither face network is trained or fine-tuned here; both are pretrained and
-used as supplied. Experiment 7 fits a small logistic-regression classifier on
-identity-disjoint BFW development data, and that classifier is the only model
-this project trains. Every result is a signal for a human reviewer, never an
-automatic decision about a person.
+The research objective is to establish whether a framework that combines
+several existing models can achieve better results than any one of those
+models used on its own. No face-detection or face-recognition network is
+trained or fine-tuned here; the contribution lies in how detection, embedding,
+threshold calibration and a review classifier are composed into one pipeline,
+and in measuring what that composition gains over its individual parts.
+
+Four combinations are compared: a single-image gallery under a threshold
+transferred from 1:1 verification, a three-image template under that same
+transferred threshold, the same template under a threshold calibrated for
+gallery search, and a logistic-regression classifier layered on top of the
+search. Experiment 8 then substitutes a higher-capacity detector and embedding
+model to separate what the framework contributes from what the underlying
+models contribute.
+
+Experiment 7 fits a small logistic-regression classifier on identity-disjoint
+BFW development data, and that classifier is the only model this project
+trains. Every result is a signal for a human reviewer, never an automatic
+decision about a person.
 
 The direction of a referral depends on the question being asked, and the two
 must not be conflated:
@@ -9440,7 +9454,9 @@ def _write_figure_captions(
         "## Implementation layers (results 3-6)",
         "",
         "The five layers share the BFW open-set protocol and are directly comparable, in "
-        "the order the project developed them:",
+        "the order the project developed them. Each adds one component to the previous "
+        "combination, so the difference between consecutive layers is what that "
+        "component contributes:",
         "",
         "3. Single-image gallery, transferred 1:1 threshold",
         "4. Three-image gallery, transferred 1:1 threshold — higher TPIR but **higher "
@@ -9641,10 +9657,13 @@ def _write_figure_captions(
 
 
 
-# The five implementation layers, in the order the project developed them. All
-# five are measured on the same BFW open-set protocol so they are directly
-# comparable. LFW and CPLFW are 1:1 verification and are never mixed into this
-# series: an FMR and an FPIR are not the same quantity.
+# The five implementation layers, in the order the project developed them.
+# Together they are the experiment behind the research objective: each layer
+# adds one component to the previous combination, so comparing consecutive
+# layers isolates what that component contributes. All five are measured on the
+# same BFW open-set protocol and are therefore directly comparable. LFW and
+# CPLFW are 1:1 verification and are never mixed into this series: an FMR and
+# an FPIR are not the same quantity.
 IMPLEMENTATION_LAYERS = (
     "Layer 1\nsingle image\ntransferred threshold",
     "Layer 2\nthree images\ntransferred threshold",
@@ -10032,6 +10051,13 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "",
         "Auto-generated from the published artefacts. Ordered to show what each layer was "
         "intended to improve, and where it did not.",
+        "",
+        "**Research objective.** To establish whether a framework combining several "
+        "existing models achieves better results than any one of them used alone. Each "
+        "layer below adds one component to the previous combination, so the difference "
+        "between consecutive layers measures what that component contributes. No "
+        "face-detection or face-recognition network is trained or fine-tuned; the "
+        "contribution under test is the composition, not the models themselves.",
         "",
         "## 1. LFW 1:1 verification",
         "",
@@ -11459,6 +11485,11 @@ Purpose:
 This programme evaluates whether pretrained face-comparison models can help
 a human moderator review possible duplicate profiles and inconsistent profile
 photographs.
+
+Research objective:
+To establish whether a framework combining several existing models achieves
+better results than any one of those models used on its own. Each experiment
+adds one component to the previous combination and measures what it gains.
 
 The programme does not automatically identify fraud, ban users or prove that
 two profiles belong to the same person.
