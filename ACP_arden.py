@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""ACP-arden — a single-file face-verification research artefact.
+"""COM7014 Advanced Computing Project — face-verification coursework code.
 
-A standalone, local proof of concept that measures how well a fixed,
-pretrained face-verification pipeline (OpenCV YuNet detection followed by
-OpenCV SFace embedding) can decide whether two unconstrained facial images
-belong to the same person, and whether the same similarity signal can
-surface duplicate profiles in a 1:N gallery under a human-review policy.
+A single-file programme that evaluates a fixed, pretrained face-verification
+pipeline: OpenCV YuNet for face detection followed by OpenCV SFace for
+embedding. It measures how well that pipeline decides whether two
+unconstrained facial images show the same person, and whether the same
+similarity signal can surface possible duplicate profiles when one photograph
+is searched against a gallery of many.
 
-This is a research artefact, not a dating application and not a fraud
-detector. No face-detection or face-recognition network is trained or
-fine-tuned. Experiment 7 trains a small logistic-regression review classifier
-using identity-disjoint BFW development data. No website is scraped, and no
-account is ever banned, rejected, accused or classified as a scam. Every
-outcome opens a case for a human reviewer and nothing more.
+Neither face network is trained or fine-tuned here; both are pretrained and
+used as supplied. Experiment 7 fits a small logistic-regression classifier on
+identity-disjoint BFW development data, and that classifier is the only model
+this project trains. Every result is a signal for a human reviewer, never an
+automatic decision about a person.
 
-The referral direction depends on the question, and the two must not be
-conflated:
+The direction of a referral depends on the question being asked, and the two
+must not be conflated:
 
     duplicate-profile screening   a *high* similarity to another enrolled
                                   gallery identity opens a duplicate-profile
@@ -25,20 +25,21 @@ conflated:
                                   review
     extraction failure            no match or mismatch decision is made
 
-Methodological boundary, enforced in code rather than only in prose:
+The separation between development and evaluation data is enforced in code
+rather than left to prose:
 
     pairsDevTrain.txt -> candidate thresholds only
     pairsDevTest.txt  -> deterministic selection, then freezing
     pairs.txt         -> final LFW evaluation with the frozen threshold
-    pairs_CPLFW.txt   -> raw CPLFW with that same frozen threshold
+    pairs_CPLFW.txt   -> raw CPLFW under that same frozen threshold
 
 Run it with the VS Code play button, or:
 
     python ACP_arden.py                    # interactive menu
     python ACP_arden.py --mode self-test   # deterministic synthetic tests
 
-Datasets and every ONNX model file are never stored in this
-project. Their locations are read from a local, git-ignored ``.env``.
+No dataset or ONNX model file is stored in this project. Their locations are
+read from a local, git-ignored ``.env``.
 """
 
 # =============================================================================
@@ -97,8 +98,8 @@ from typing import (
 
 import numpy as np
 
-PROGRAMME_NAME = "ACP-arden"
-PROGRAMME_TITLE = "ACP-arden — Face Verification Research Artefact"
+PROGRAMME_NAME = "COM7014 Advanced Computing Project"
+PROGRAMME_TITLE = "COM7014 Advanced Computing Project — Face Verification"
 PROGRAMME_VERSION = "1.0.0"
 
 # Every path in this programme is derived from the file's own location, so the
@@ -3221,7 +3222,7 @@ def _migrate_review_schema(connection: sqlite3.Connection) -> None:
 
 def assert_review_database_version(connection: sqlite3.Connection) -> None:
     """Refuse to mix identifier schemes in one database. The local review
-    database is private and disposable, so the instruction is to delete it."""
+    database is private and disposable, so the remedy is to delete it."""
     # Every identifier scheme the stored cases were written under.
     versions = {
         row[0]
@@ -5024,7 +5025,7 @@ def cached_payload_integrity_reason(payload: Mapping[str, Any]) -> Optional[str]
     proves the cache was built for this configuration, not that its contents
     are still the ones that were built. A cache whose records were edited
     afterwards would otherwise be loaded silently and republished under a
-    freshly computed digest, which is exactly the failure this prevents.
+    freshly computed digest; these checks prevent that.
 
     Names only the category or field at fault, never a stored value."""
     # Checked in four escalating stages, cheapest first, each of which is
@@ -5379,8 +5380,8 @@ def require_frozen_open_set_policy(payload: Mapping[str, Any], *, context: str =
 # Availability: https://doi.org/10.1214/aos/1176344552
 ##############
 # The resampling principle is Efron's. The clustering by identity, the subgroup
-# stratification and the percentile interval below are written for ACP-arden;
-# no external implementation is copied or adapted.
+# stratification and the percentile interval below are written for this
+# project; no external implementation is copied or adapted.
 
 # Replicate count is fixed rather than tuned. A larger count narrows the Monte
 # Carlo error of the interval endpoints, not the interval itself.
@@ -5626,8 +5627,8 @@ OPEN_SET_LIMITATIONS = (
     "decisions.",
     "Confidence intervals describe sampling uncertainty over these benchmark identities "
     "only. They do not extend to any other population.",
-    "Benchmark demographics do not represent a real dating-application user population, "
-    "so subgroup figures must not be read as deployment estimates.",
+    "Benchmark demographics do not represent any real deployed user population, so "
+    "subgroup figures must not be read as deployment estimates.",
 )
 
 
@@ -6297,7 +6298,7 @@ def sex_aggregated_metrics(
         )
         entry["population_note"] = (
             "These benchmark categories do not represent every identity or any real "
-            "dating-application population."
+            "deployed population."
         )
         summary[label] = entry
     return summary
@@ -9532,7 +9533,7 @@ def _write_figure_captions(
         "establish that the population error probability is exactly zero.",
         "",
         "These are binary dataset categories. They do not represent the full range of "
-        "gender identities, every identity, or any real dating-application population.",
+        "gender identities, every identity, or any real deployed population.",
         "",
         "## 9. Profile-photo consistency analysis",
         "",
@@ -9974,7 +9975,7 @@ def write_pipeline_sex_aggregates(
             "groups": groups,
             "limitations": (
                 "These are binary dataset categories. They do not represent the full range "
-                "of gender identities or any real dating-application population."
+                "of gender identities or any real deployed population."
             ),
             "policy_note": POLICY_NOTE,
         },
@@ -10027,7 +10028,7 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     pct = format_percentage
 
     lines = [
-        "# ACP-arden research report",
+        "# COM7014 Advanced Computing Project — research report",
         "",
         "Auto-generated from the published artefacts. Ordered to show what each layer was "
         "intended to improve, and where it did not.",
@@ -10234,8 +10235,8 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 
     lines += [
         "", "## 12. Limitations and policy", "",
-        "ACP-arden is a benchmark-validated, human-review-only academic face-comparison "
-        "proof of concept. It evaluates duplicate-profile screening and profile-photo "
+        "This is a benchmark-validated, human-review-only academic face-comparison "
+        "study. It evaluates duplicate-profile screening and profile-photo "
         "facial consistency using frozen pretrained face-recognition pipelines and an "
         "identity-disjoint logistic-regression review classifier.",
         "",
@@ -11636,7 +11637,7 @@ Used for open-set duplicate-profile evaluation, subgroup reporting, classifier
 evaluation and the pretrained pipeline comparison.
 
 These are public academic benchmark datasets. The people photographed in them
-are research subjects, not users of a dating application."""
+are research subjects, not users of any deployed system."""
 
 
 def render_glossary() -> str:

@@ -218,7 +218,7 @@ def test_the_dataset_overview_does_not_call_benchmark_people_users() -> None:
     text = acp.render_dataset_overview()
     for dataset in ("LFW", "CPLFW", "BFW"):
         assert dataset in text, dataset
-    assert "not users of a dating application" in text
+    assert "not users of any deployed system" in text
 
 
 # --- Glossary ------------------------------------------------------------------
