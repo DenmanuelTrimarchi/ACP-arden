@@ -1,4 +1,4 @@
-# ACP-arden
+# COM7014 Advanced Computing Project
 
 A single-file, locally runnable research artefact that measures how well a
 fixed, pretrained face-verification pipeline can decide whether two
@@ -78,7 +78,7 @@ preview of what it will do before it starts, and every result summary opens
 with a plain-language section before the technical figures.
 
 ```text
-ACP-arden — Face Verification Research Artefact
+COM7014 Advanced Computing Project — Face Verification
 
 SETUP AND VALIDATION
 
@@ -749,7 +749,7 @@ For the supplementary open-set experiment specifically:
 
 ## What this artefact is
 
-> ACP-arden is a benchmark-validated, human-review-only academic research proof
+> This is a benchmark-validated, human-review-only academic research proof
 > of concept. No face-recognition network is trained or fine-tuned. A small
 > logistic-regression review classifier is trained on identity-disjoint BFW
 > development data and evaluated on untouched held-out identities.

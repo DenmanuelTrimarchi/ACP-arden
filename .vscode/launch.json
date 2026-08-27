@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run ACP-arden",
+      "name": "Run COM7014 Advanced Computing Project",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/ACP_arden.py",
