@@ -381,8 +381,14 @@ def test_subgroup_is_never_used_as_a_predictor() -> None:
 
 
 def test_the_configured_local_model_root_is_accepted() -> None:
-    """The supplied local pack must satisfy every precondition."""
-    diagnosis = acp.arcface_preconditions(acp.EnvironmentConfig.load())
+    """Where the optional pack is configured locally, it must satisfy every
+    precondition. The pack is not redistributable, so a checkout without it
+    skips rather than fails: its absence is a property of the machine, not a
+    defect in the code under test."""
+    config = acp.EnvironmentConfig.load()
+    if config.arcface_model_root is None:
+        pytest.skip("the optional comparison model pack is not configured here")
+    diagnosis = acp.arcface_preconditions(config)
     assert diagnosis["status"] == acp.PIPELINE_STATUS_EVALUATED, diagnosis["reason"]
     assert all(diagnosis["checks"].values())
 
