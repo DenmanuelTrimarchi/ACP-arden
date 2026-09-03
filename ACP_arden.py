@@ -1,35 +1,46 @@
 #!/usr/bin/env python3
-"""COM7014 Advanced Computing Project — face-verification coursework code.
+"""COM7014 Advanced Computing Project — face verification coursework.
 
-A single-file programme that evaluates a fixed, pretrained face-verification
-pipeline: OpenCV YuNet for face detection followed by OpenCV SFace for
-embedding. It measures how well that pipeline decides whether two
-unconstrained facial images show the same person, and whether the same
-similarity signal can surface possible duplicate profiles when one photograph
-is searched against a gallery of many.
+The whole project lives in this one file. It measures a face-verification
+pipeline assembled from two pretrained OpenCV models: YuNet, which finds the
+face in a photograph, and SFace, which turns that face into a vector of
+numbers that can be compared. Neither model is modified.
 
-The research objective is to establish whether a framework that combines
-several existing models can achieve better results than any one of those
-models used on its own. No face-detection or face-recognition network is
-trained or fine-tuned here; the contribution lies in how detection, embedding,
-threshold calibration and a review classifier are composed into one pipeline,
-and in measuring what that composition gains over its individual parts.
+Two questions are put to it. The first is the standard one-to-one problem:
+shown two unconstrained photographs, does the pipeline judge correctly whether
+they depict the same person? The second is harder, and is what the project is
+really about. When a single photograph is searched against a gallery of many
+enrolled profiles, can the same similarity score be trusted to flag a profile
+that may already be registered?
 
-Four combinations are compared: a single-image gallery under a threshold
-transferred from 1:1 verification, a three-image template under that same
-transferred threshold, the same template under a threshold calibrated for
-gallery search, and a logistic-regression classifier layered on top of the
-search. Experiment 8 then substitutes a higher-capacity detector and embedding
-model to separate what the framework contributes from what the underlying
-models contribute.
+The research question is whether a framework built by combining several
+existing models performs better than any of those models used on its own. No
+face detector or face-recognition network is trained or fine-tuned; each is
+used exactly as published. What this project supplies is the arrangement
+around them — enrolment, threshold calibration and a small review classifier —
+together with the measurements that show what each addition is actually worth.
 
-Experiment 7 fits a small logistic-regression classifier on identity-disjoint
-BFW development data, and that classifier is the only model this project
-trains. Every result is a signal for a human reviewer, never an automatic
-decision about a person.
+Five arrangements are compared on the same BFW protocol. Each adds one
+component to the one before it, so the difference between neighbouring layers
+can be attributed to that component:
 
-The direction of a referral depends on the question being asked, and the two
-must not be conflated:
+    1  one enrolled photograph, threshold borrowed from 1:1 verification
+    2  three photographs averaged into a template, same borrowed threshold
+    3  the same template, but a threshold calibrated for gallery search
+    4  a logistic-regression classifier placed on top of the search
+    5  SCRFD and ArcFace substituted for YuNet and SFace, calibrated afresh
+
+Layer 5 earns its place for a particular reason. Swapping in stronger models
+shows how much of any gain belongs to the framework and how much simply
+belongs to better components. The classifier in layer 4 is the only model
+trained here, and it is fitted on BFW development identities that appear
+nowhere in the held-out test set.
+
+Nothing in this project decides anything about a person. Every result is a
+signal that opens a case for a human reviewer.
+
+Which direction counts as suspicious depends on the question being asked, and
+the two are easily confused:
 
     duplicate-profile screening   a *high* similarity to another enrolled
                                   gallery identity opens a duplicate-profile
@@ -39,8 +50,8 @@ must not be conflated:
                                   review
     extraction failure            no match or mismatch decision is made
 
-The separation between development and evaluation data is enforced in code
-rather than left to prose:
+Keeping development data apart from evaluation data is enforced in code rather
+than merely promised in prose:
 
     pairsDevTrain.txt -> candidate thresholds only
     pairsDevTest.txt  -> deterministic selection, then freezing
@@ -52,8 +63,8 @@ Run it with the VS Code play button, or:
     python ACP_arden.py                    # interactive menu
     python ACP_arden.py --mode self-test   # deterministic synthetic tests
 
-No dataset or ONNX model file is stored in this project. Their locations are
-read from a local, git-ignored ``.env``.
+No image dataset and no ONNX weight file is kept in the repository. Their
+locations are read from a local ``.env`` that Git ignores.
 """
 
 # =============================================================================
