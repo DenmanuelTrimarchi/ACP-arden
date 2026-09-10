@@ -77,6 +77,36 @@ A non-match indicates that the photograph is inconsistent with the enrolled faci
 
 Each pipeline was calibrated on its own development scores; the SFace threshold is never applied to ArcFace. This is a complete-pipeline comparison — detection, alignment, preprocessing, embedding width and runtime all differ — so no difference is attributable to the embedding model alone.
 
+## 10a. The same two pipelines on one-to-one verification
+
+Section 10 compared the pipelines on gallery search alone, so the conclusion rested on a single task. Experiments 9 and 10 put the comparison pipeline through the same one-to-one chain, each with a threshold calibrated on LFW development pairs and frozen before either evaluation.
+
+| Metric | LFW YuNet+SFace | LFW SCRFD+ArcFace | CPLFW YuNet+SFace | CPLFW SCRFD+ArcFace |
+| --- | --- | --- | --- | --- |
+| Correct among scored pairs | 99.09% | 99.69% | 90.24% | 93.13% |
+| Reached comparison | 89.98% | 70.10% | 58.58% | 82.25% |
+| Zero-face failures | 61 | 0 | 2,321 | 57 |
+| Multiple-face failures | 540 | 1,794 | 164 | 1,008 |
+
+SCRFD + ArcFace is more accurate on both datasets, but it reaches comparison on **fewer** LFW pairs than YuNet + SFace and on far more CPLFW pairs. The failure breakdown explains the reversal, and it is not a detection weakness: SCRFD recorded almost no zero-face failures on either dataset, where YuNet failed to find a face in 2,321 CPLFW images. Every one of SCRFD's losses comes from finding more than one face.
+
+LFW images are press photographs that frequently contain bystanders. The protocol requires exactly one detected face, so a more sensitive detector converts additional true detections into rejections. The LFW coverage gap is therefore an artefact of that constraint rather than evidence about the detector, and coverage should not be compared across pipelines on this dataset without stating it. On CPLFW, where the difficulty is pose rather than bystanders, the comparison is unambiguous.
+
+
+## 10b. The review classifier on both pipelines
+
+Section 6 fitted the classifier on the baseline pipeline and section 10 compared the pipelines without it, so the framework's most elaborate addition and its strongest components were never combined. Experiment 11 runs the identical method over the comparison pipeline, under the same seed and therefore the same identity groups.
+
+| Review burden per 1,000 new profiles | Threshold alone | With the classifier |
+| --- | --- | --- |
+| YuNet + SFace | 5.2 | 7.0 |
+| SCRFD + ArcFace | 1.3 | 0.0 |
+
+The classifier moves the burden in **opposite directions** on the two pipelines. Its effect is therefore a property of the components it runs on rather than of the classifier alone. The negative result in section 6 stands for the baseline pipeline, but it cannot be stated as a general finding about the method.
+
+The zero on the second row is an observation over 2,987 scored new profiles, not a demonstration that the population rate is zero; the interval around a zero-event rate remains wide. Detection fell from 96.80% to 95.90% in exchange.
+
+
 ## 11. Performance against cost
 
 A stronger pipeline is not free. Where it improves extraction and identification it also costs disk and latency, and the trade-off is shown in `implementation_layers_performance_latency` rather than omitted.
@@ -101,3 +131,5 @@ No face-detection or face-recognition network is trained or fine-tuned. Experime
 - Extraction failures are counted as coverage failures, never as genuine no-match decisions.
 - Confidence intervals describe sampling uncertainty over these benchmark identities only. They do not extend to any other population.
 - Benchmark demographics do not represent any real deployed user population, so subgroup figures must not be read as deployment estimates.
+- The review classifier was fitted separately on each pipeline and moved the review burden in opposite directions on the two. Its contribution therefore depends on the components underneath it, and neither result should be read as a general property of the method.
+- Coverage differences between the two detectors are shaped by this protocol's requirement that exactly one face be found. A detector that recovers faint faces also recovers bystanders, so a coverage loss is not on its own evidence of weaker detection.

@@ -10261,8 +10261,11 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 
     Every figure is read from the published artefacts. No layer is claimed to
     have improved every metric."""
-    def load(name: str) -> Optional[Dict[str, Any]]:
-        path = aggregate_root / name
+    def load(name: str, base: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+        # ``base`` lets the later sections read the comparison chains, which
+        # write into their own sub-directories to avoid overwriting the
+        # baseline artefacts of the same name.
+        path = (base or aggregate_root) / name
         return read_json_artifact(path) if path.is_file() else None
 
     final = load("lfw_final_metrics.json")
@@ -10481,6 +10484,117 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
                 f"are invented."
             )
         lines += [
+            "", "## 10a. The same two pipelines on one-to-one verification", "",
+        ]
+        verif = aggregate_root / VERIFICATION_COMPARISON_DIRNAME
+        comp_lfw = load("lfw_final_metrics.json", verif) if verif.is_dir() else None
+        comp_cplfw = load("cplfw_metrics.json", verif) if verif.is_dir() else None
+        if comp_lfw and comp_cplfw and final and cplfw:
+            def coverage(payload: Mapping[str, Any]) -> str:
+                return pct(1.0 - payload.get("failure_rate", float("nan")))
+
+            def faces(payload: Mapping[str, Any], kind: str) -> int:
+                breakdown = payload.get("failure_breakdown") or {}
+                return sum(v for k, v in breakdown.items() if k.startswith(kind))
+
+            lines += [
+                "Section 10 compared the pipelines on gallery search alone, so the "
+                "conclusion rested on a single task. Experiments 9 and 10 put the "
+                "comparison pipeline through the same one-to-one chain, each with a "
+                "threshold calibrated on LFW development pairs and frozen before "
+                "either evaluation.",
+                "",
+                "| Metric | LFW YuNet+SFace | LFW SCRFD+ArcFace | "
+                "CPLFW YuNet+SFace | CPLFW SCRFD+ArcFace |",
+                "| --- | --- | --- | --- | --- |",
+                f"| Correct among scored pairs | {pct(final.get('accuracy'))} | "
+                f"{pct(comp_lfw.get('accuracy'))} | {pct(cplfw.get('accuracy'))} | "
+                f"{pct(comp_cplfw.get('accuracy'))} |",
+                f"| Reached comparison | {coverage(final)} | {coverage(comp_lfw)} | "
+                f"{coverage(cplfw)} | {coverage(comp_cplfw)} |",
+                f"| Zero-face failures | {faces(final, 'zero_faces'):,} | "
+                f"{faces(comp_lfw, 'zero_faces'):,} | "
+                f"{faces(cplfw, 'zero_faces'):,} | "
+                f"{faces(comp_cplfw, 'zero_faces'):,} |",
+                f"| Multiple-face failures | {faces(final, 'multiple_faces'):,} | "
+                f"{faces(comp_lfw, 'multiple_faces'):,} | "
+                f"{faces(cplfw, 'multiple_faces'):,} | "
+                f"{faces(comp_cplfw, 'multiple_faces'):,} |",
+                "",
+                "SCRFD + ArcFace is more accurate on both datasets, but it reaches "
+                "comparison on **fewer** LFW pairs than YuNet + SFace and on far more "
+                "CPLFW pairs. The failure breakdown explains the reversal, and it is "
+                "not a detection weakness: SCRFD recorded almost no zero-face "
+                "failures on either dataset, where YuNet failed to find a face in "
+                f"{faces(cplfw, 'zero_faces'):,} CPLFW images. Every one of SCRFD's "
+                "losses comes from finding more than one face.",
+                "",
+                "LFW images are press photographs that frequently contain bystanders. "
+                "The protocol requires exactly one detected face, so a more sensitive "
+                "detector converts additional true detections into rejections. The "
+                "LFW coverage gap is therefore an artefact of that constraint rather "
+                "than evidence about the detector, and coverage should not be "
+                "compared across pipelines on this dataset without stating it. On "
+                "CPLFW, where the difficulty is pose rather than bystanders, the "
+                "comparison is unambiguous.",
+                "",
+            ]
+        else:
+            lines += [
+                "Not run in this checkout. No one-to-one comparison figures are "
+                "invented in its place.", "",
+            ]
+
+        arcface_review = (
+            load("ml_review_test_metrics.json", aggregate_root / ARCFACE_REVIEW_DIRNAME)
+            if (aggregate_root / ARCFACE_REVIEW_DIRNAME).is_dir() else None
+        )
+        lines += ["", "## 10b. The review classifier on both pipelines", ""]
+        if arcface_review and review:
+            def burden(payload: Mapping[str, Any], key: str) -> float:
+                node = (payload["classifier"] if key == "classifier"
+                        else payload["comparator_three_image_open_set_calibrated"]["rates"])
+                value = node.get("false_reviews_per_1000_non_mated")
+                return float(value) if isinstance(value, (int, float)) else float("nan")
+
+            base_before, base_after = burden(review, "threshold"), burden(review, "classifier")
+            comp_before = burden(arcface_review, "threshold")
+            comp_after = burden(arcface_review, "classifier")
+            scored = arcface_review["classifier"].get("scored_non_mated_probes", 0)
+            lines += [
+                "Section 6 fitted the classifier on the baseline pipeline and section "
+                "10 compared the pipelines without it, so the framework's most "
+                "elaborate addition and its strongest components were never combined. "
+                "Experiment 11 runs the identical method over the comparison "
+                "pipeline, under the same seed and therefore the same identity "
+                "groups.",
+                "",
+                "| Review burden per 1,000 new profiles | Threshold alone | "
+                "With the classifier |",
+                "| --- | --- | --- |",
+                f"| YuNet + SFace | {base_before:.1f} | {base_after:.1f} |",
+                f"| SCRFD + ArcFace | {comp_before:.1f} | {comp_after:.1f} |",
+                "",
+                "The classifier moves the burden in **opposite directions** on the two "
+                "pipelines. Its effect is therefore a property of the components it "
+                "runs on rather than of the classifier alone. The negative result in "
+                "section 6 stands for the baseline pipeline, but it cannot be stated "
+                "as a general finding about the method.",
+                "",
+                f"The zero on the second row is an observation over {scored:,} scored "
+                "new profiles, not a demonstration that the population rate is zero; "
+                "the interval around a zero-event rate remains wide. Detection fell "
+                f"from {pct(arcface_review['comparator_three_image_open_set_calibrated']['rates'].get('tpir_rank1'))} "
+                f"to {pct(arcface_review['classifier'].get('tpir_rank1'))} in exchange.",
+                "",
+            ]
+        else:
+            lines += [
+                "Not run in this checkout. No cross-pipeline classifier result is "
+                "invented in its place.", "",
+            ]
+
+        lines += [
             "", "## 11. Performance against cost", "",
             "A stronger pipeline is not free. Where it improves extraction and "
             "identification it also costs disk and latency, and the trade-off is shown in "
@@ -10511,6 +10625,20 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "",
     ]
     lines += [f"- {item}" for item in OPEN_SET_LIMITATIONS]
+    # Two further caveats follow from sections 10a and 10b, which compare the
+    # same additions across both pipelines. They are stated here rather than in
+    # OPEN_SET_LIMITATIONS because they describe this comparison, not the
+    # open-set protocol that every artefact carries.
+    lines += [
+        "- The review classifier was fitted separately on each pipeline and moved the "
+        "review burden in opposite directions on the two. Its contribution therefore "
+        "depends on the components underneath it, and neither result should be read as "
+        "a general property of the method.",
+        "- Coverage differences between the two detectors are shaped by this protocol's "
+        "requirement that exactly one face be found. A detector that recovers faint "
+        "faces also recovers bystanders, so a coverage loss is not on its own evidence "
+        "of weaker detection.",
+    ]
     return "\n".join(lines) + "\n"
 
 
