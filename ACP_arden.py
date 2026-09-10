@@ -8075,8 +8075,15 @@ def _identity_of_sample(protocol: OpenSetProtocol) -> Dict[str, str]:
 def _provenance_block(
     dataset: BfwDataset, protocol: OpenSetProtocol, summary: Mapping[str, Any],
     detector: Any, embedder: Any, *, artifact_type: str,
+    description: Optional[PipelineDescription] = None,
 ) -> Dict[str, Any]:
-    """Provenance carried by every artefact this section writes."""
+    """Provenance carried by every artefact this section writes.
+
+    ``description`` names the pipeline that produced the result. It must be
+    supplied whenever the models are not the baseline pair, because
+    ``primary_pipeline_description`` reports the OpenCV names unconditionally
+    and would otherwise label a comparison run as YuNet + SFace."""
+    pipeline = description or primary_pipeline_description(detector, embedder)
     return {
         "artifact_type": artifact_type,
         "schema_version": SCHEMA_VERSION,
@@ -8090,7 +8097,7 @@ def _provenance_block(
         "evaluated_image_set_sha256": summary.get("evaluated_image_set_sha256")
         or bfw_dataset_provenance(dataset)["evaluated_image_set_sha256"],
         "dataset_provenance": bfw_dataset_provenance(dataset),
-        "pipeline": primary_pipeline_description(detector, embedder).as_dict(),
+        "pipeline": pipeline.as_dict(),
         "preprocessing_revision": PREPROCESSING_REVISION,
         "software_environment": software_environment_report(),
         "dependency_versions": _reported_dependency_versions(),
@@ -8148,15 +8155,29 @@ def opencv_distribution_report() -> Dict[str, Any]:
 def run_ml_review_experiment(
     *, output_root: Path = AGGREGATE_ROOT, seed: int = DEFAULT_RANDOM_SEED,
     bootstrap_replicates: int = BOOTSTRAP_REPLICATES,
+    detector: Optional[FaceDetector] = None,
+    embedder: Optional[FaceEmbedder] = None,
+    description: Optional[PipelineDescription] = None,
+    base_cache: Path = CANONICAL_RUN_CACHE,
 ) -> Dict[str, Any]:
-    """Experiment 7 end to end. Stops on the exact blocker; fabricates nothing."""
+    """Experiment 7 end to end. Stops on the exact blocker; fabricates nothing.
+
+    Every optional parameter defaults to the baseline behaviour, so calling
+    this with no arguments is Experiment 7 exactly as before. Supplying a
+    different pipeline runs the same method over different models, which is
+    Experiment 11.
+
+    ``base_cache`` must change with the pipeline. The canonical cache is keyed
+    by partition alone, so a second pipeline sharing the default path would
+    overwrite the baseline cache and silently invalidate Experiments 6 to 9."""
     config = EnvironmentConfig.load()
     if not id_hmac_key_is_configured():
         raise OpaqueIdentifierKeyError(
             f"{ID_HMAC_KEY_VARIABLE} must be configured before identifiers are produced."
         )
     image_root, metadata_path = config.require_bfw_roots()
-    detector, embedder = load_models(config.require_model_root())
+    if detector is None or embedder is None:
+        detector, embedder = load_models(config.require_model_root())
 
     announce_stage(1, 4, "Loading BFW and rebuilding the identity groups",
                    "Training, calibration and held-out identities share no person.")
@@ -8185,7 +8206,8 @@ def run_ml_review_experiment(
                    "attribute is used.")
     announce("Scoring the development partition once for both classifier groups")
     development, development_digest, development_context = canonical_primary_run(
-        protocol, partition="development", detector=detector, embedder=embedder, dataset=dataset
+        protocol, partition="development", detector=detector, embedder=embedder,
+        dataset=dataset, base_cache=base_cache,
     )
     announce(f"Using canonical development run {development_digest[:16]}")
 
@@ -8218,7 +8240,8 @@ def run_ml_review_experiment(
         )
 
     provenance = _provenance_block(
-        dataset, protocol, summary, detector, embedder, artifact_type="ml_review_threshold"
+        dataset, protocol, summary, detector, embedder,
+        artifact_type="ml_review_threshold", description=description,
     )
     subgroup_counts = lambda ids: {
         s: sum(1 for i in ids if _subgroup_of_identity(protocol)[i] == s) for s in BFW_SUBGROUPS
@@ -8227,7 +8250,9 @@ def run_ml_review_experiment(
         output_root / "ml_review_protocol_summary.json",
         {
             **_provenance_block(dataset, protocol, summary, detector, embedder,
-                                artifact_type="ml_review_protocol_summary"),
+
+                                artifact_type="ml_review_protocol_summary",
+                                description=description),
             "training_identities": len(training_ids),
             "calibration_identities": len(calibration_ids),
             "held_out_test_identities": len(test_ids),
@@ -8250,7 +8275,7 @@ def run_ml_review_experiment(
     write_json_artifact(
         output_root / "ml_review_model.json",
         {**_provenance_block(dataset, protocol, summary, detector, embedder,
-                             artifact_type="ml_review_model"),
+                             artifact_type="ml_review_model", description=description),
          "model": classifier.as_dict(),
          "feature_definitions": _feature_definitions(),
          "training_rows": len(training_rows),
@@ -8281,7 +8306,9 @@ def run_ml_review_experiment(
     write_json_artifact(
         output_root / "ml_review_development_metrics.json",
         {**_provenance_block(dataset, protocol, summary, detector, embedder,
-                             artifact_type="ml_review_development_metrics"),
+
+                             artifact_type="ml_review_development_metrics",
+                             description=description),
          "status": "ml_review_development",
          "calibration_operating_points": {
              str(t): review_rates_at_probability(
@@ -8299,7 +8326,8 @@ def run_ml_review_experiment(
                    "adjustment.")
     announce("Scoring the held-out test partition")
     test_run, canonical_digest, test_context = canonical_primary_test_run(
-        protocol, detector=detector, embedder=embedder, dataset=dataset
+        protocol, detector=detector, embedder=embedder, dataset=dataset,
+        cache_path=base_cache,
     )
     announce(f"Using canonical primary-pipeline run {canonical_digest[:16]}")
     test_rows, test_excluded = build_review_feature_rows(test_run.search_results)
@@ -8333,7 +8361,7 @@ def run_ml_review_experiment(
 
     test_payload = {
         **_provenance_block(dataset, protocol, summary, detector, embedder,
-                            artifact_type="ml_review_test_metrics"),
+                            artifact_type="ml_review_test_metrics", description=description),
         "status": "ml_review_tested",
         "threshold_source": project_relative(policy_path),
         "threshold_status": ML_REVIEW_STATUS_FROZEN,
@@ -8365,7 +8393,9 @@ def run_ml_review_experiment(
     write_json_artifact(
         output_root / "ml_review_confidence_intervals.json",
         {**_provenance_block(dataset, protocol, summary, detector, embedder,
-                             artifact_type="ml_review_confidence_intervals"),
+
+                             artifact_type="ml_review_confidence_intervals",
+                             description=description),
          "replicates": bootstrap_replicates,
          "resampling_unit": "identity (cluster bootstrap, subgroup-stratified)",
          "intervals": intervals},
@@ -8373,7 +8403,9 @@ def run_ml_review_experiment(
     write_json_artifact(
         output_root / "ml_review_subgroup_metrics.json",
         {**_provenance_block(dataset, protocol, summary, detector, embedder,
-                             artifact_type="ml_review_subgroup_metrics"),
+
+                             artifact_type="ml_review_subgroup_metrics",
+                             description=description),
          "replicates": bootstrap_replicates,
          "resampling_unit": "identity (cluster bootstrap, subgroup-stratified)",
          "subgroups": per_subgroup},
@@ -8393,6 +8425,191 @@ def run_ml_review_experiment(
     assert_no_identifier_key_leak(output_root)
     announce("Privacy validation passed for every review artefact")
     return test_payload
+
+
+###############################################################################
+# Experiment 11: the review classifier on the higher-capacity pipeline
+###############################################################################
+#
+# Experiment 7 fitted the classifier on the baseline pipeline and Experiment 8
+# compared the pipelines without it, so the framework's most elaborate addition
+# and its strongest components were never combined. This runs the identical
+# method over SCRFD + ArcFace search results, which is what allows the question
+# "does the framework still add value once the components are better?" to be
+# answered rather than assumed.
+#
+# The identity split uses the same seed, so the training, calibration and
+# held-out groups are exactly those of Experiment 7 and the two classifiers are
+# directly comparable.
+
+ARCFACE_REVIEW_DIRNAME = "arcface_review"
+
+# A separate cache base. The canonical cache is keyed by partition alone, so
+# sharing the default path would overwrite the baseline runs that Experiments 6
+# to 9 depend on.
+ARCFACE_RUN_CACHE = RAW_ROOT / "canonical_arcface_run.json"
+
+
+def run_arcface_review_experiment(
+    output_root: Path = AGGREGATE_ROOT, *, seed: int = DEFAULT_RANDOM_SEED,
+) -> Dict[str, Any]:
+    """Fit and evaluate the review classifier on SCRFD + ArcFace searches.
+
+    The classifier is reported against a similarity-threshold comparator, and
+    that comparator must be this pipeline's own threshold: Experiment 6 froze
+    0.477 for SFace, which means nothing in ArcFace's embedding space. An
+    open-set policy is therefore developed and frozen here first, using exactly
+    the rule Experiment 6 uses and the same development identities."""
+    config = EnvironmentConfig.load()
+    (detector, embedder), description = load_arcface_pipeline(config)
+    sub_root = Path(output_root) / ARCFACE_REVIEW_DIRNAME
+    sub_root.mkdir(parents=True, exist_ok=True)
+
+    image_root, metadata_path = config.require_bfw_roots()
+    dataset = load_bfw_dataset(image_root, metadata_path)
+    protocol = build_open_set_protocol(dataset, seed=seed)
+    summary = open_set_protocol_summary(
+        protocol, dataset=dataset, detector=detector, embedder=embedder
+    )
+
+    announce_stage(1, 2, "Freezing an operating threshold for SCRFD + ArcFace",
+                   "Development identities only, using the rule Experiment 6 uses.")
+    # Cached, so the classifier stage below reuses this scoring rather than
+    # repeating it.
+    development, _digest, _context = canonical_primary_run(
+        protocol, partition="development", detector=detector, embedder=embedder,
+        dataset=dataset, base_cache=ARCFACE_RUN_CACHE,
+    )
+    operating_points = {
+        str(target): select_open_set_threshold(
+            development.search_results, target_fpir=target
+        )
+        for target in FPIR_TARGETS
+    }
+    policy_path = sub_root / "bfw_open_set_threshold.json"
+    write_json_artifact(policy_path, {
+        "artifact_type": "bfw_open_set_threshold",
+        "status": OPEN_SET_STATUS_FROZEN,
+        "method": METHOD_B,
+        "primary_fpir_target": PRIMARY_FPIR_TARGET,
+        "operating_points": operating_points,
+        "selection_rule": OPEN_SET_SELECTION_RULE,
+        "developed_on": "BFW development partition (identity-disjoint from test)",
+        "public_manifest_sha256": summary["public_manifest_sha256"],
+        "protocol_digest": summary["public_manifest_sha256"],
+        **_provenance_block(
+            dataset, protocol, summary, detector, embedder,
+            artifact_type="bfw_open_set_threshold", description=description,
+        ),
+    })
+    announce(f"Froze the SCRFD + ArcFace open-set policy at "
+             f"{project_relative(policy_path)}")
+
+    announce_stage(2, 2, "Fitting and evaluating the review classifier",
+                   "Same features, same seed and same identity groups as "
+                   "Experiment 7.")
+    return run_ml_review_experiment(
+        output_root=sub_root, seed=seed,
+        detector=detector, embedder=embedder, description=description,
+        base_cache=ARCFACE_RUN_CACHE,
+    )
+
+
+def render_arcface_review_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """The classifier's effect on each pipeline, side by side.
+
+    The question is not which column is best but whether the classifier moves
+    the review burden in the same direction on both pipelines. A consistent
+    direction is a finding about the framework; an inconsistent one means the
+    effect depends on the components underneath it."""
+    root = Path(aggregate_root)
+    baseline = _load_optional(root, "ml_review_test_metrics.json")
+    compare = _load_optional(root / ARCFACE_REVIEW_DIRNAME, "ml_review_test_metrics.json")
+    if not compare:
+        return missing_artefact_message(
+            "classifier pipeline comparison", "option 17 (--mode arcface-review)"
+        )
+
+    def cells(getter) -> List[str]:
+        out: List[str] = []
+        for payload in (baseline, compare):
+            if not payload:
+                out += ["not available", "not available"]
+                continue
+            # Each artefact carries both the similarity-threshold comparator
+            # and the classifier fitted on the same pipeline.
+            out.append(getter(payload["comparator_three_image_open_set_calibrated"]["rates"]))
+            out.append(getter(payload["classifier"]))
+        return out
+
+    rows = [
+        ["Known duplicates detected (TPIR@1)",
+         *cells(lambda r: _percentage_of(r.get("tpir_rank1")))],
+        ["New profiles wrongly referred (FPIR)",
+         *cells(lambda r: _percentage_of(r.get("fpir")))],
+        ["Reviews per 1,000 new profiles",
+         *cells(lambda r: f"{r.get('false_reviews_per_1000_non_mated', float('nan')):.1f}")],
+    ]
+
+    def direction(payload: Optional[Mapping[str, Any]]) -> Optional[float]:
+        if not payload:
+            return None
+        before = payload["comparator_three_image_open_set_calibrated"]["rates"].get(
+            "false_reviews_per_1000_non_mated")
+        after = payload["classifier"].get("false_reviews_per_1000_non_mated")
+        if not isinstance(before, (int, float)) or not isinstance(after, (int, float)):
+            return None
+        return after - before
+
+    moved_baseline, moved_compare = direction(baseline), direction(compare)
+    lines = [
+        "EXPERIMENT 11 - THE REVIEW CLASSIFIER ON BOTH PIPELINES",
+        "",
+        "Dataset:",
+        "BFW held-out identities. Both classifiers are fitted on the same",
+        "development identities under the same seed, and each is frozen on its",
+        "own calibration group before the held-out identities are scored.",
+        "",
+        render_plain_pipeline_table(
+            ["Metric", "SFace threshold", "SFace + classifier",
+             "ArcFace threshold", "ArcFace + classifier"],
+            rows,
+        ),
+        "",
+        "Outcome:",
+        "",
+    ]
+    if moved_baseline is not None and moved_compare is not None:
+        same_direction = (moved_baseline > 0) == (moved_compare > 0)
+        verb = lambda d: "raised" if d > 0 else "reduced"
+        lines.append(wrap_plain(
+            f"The classifier {verb(moved_baseline)} the review burden on "
+            f"YuNet + SFace by {abs(moved_baseline):.1f} per 1,000, and "
+            f"{verb(moved_compare)} it on SCRFD + ArcFace by "
+            f"{abs(moved_compare):.1f} per 1,000."
+        ))
+        lines += ["", wrap_plain(
+            "The direction is the same on both pipelines, so the effect is a "
+            "property of the classifier rather than of the models it runs on."
+            if same_direction else
+            "The direction differs between pipelines, so the classifier's effect "
+            "depends on the components underneath it and does not generalise."
+        )]
+    # A rate of zero is an observation, not a guarantee. Saying so matters most
+    # here, because the classifier's best-looking column is the zero one.
+    zero_observed = [
+        payload for payload in (baseline, compare)
+        if payload and payload["classifier"].get("false_reviews_per_1000_non_mated") == 0
+    ]
+    if zero_observed:
+        scored = zero_observed[0]["classifier"].get("scored_non_mated_probes")
+        lines += ["", wrap_plain(
+            f"A rate of zero means no false referral was observed among the "
+            f"{scored:,} new profiles scored. It does not establish that the "
+            f"population rate is zero, and the interval around it remains wide."
+        )]
+    lines += ["", wrap_plain(DENOMINATOR_NOTE), "", wrap_plain(REFERRAL_DISCLAIMER)]
+    return "\n".join(lines)
 
 
 def _subgroup_of_identity(protocol: OpenSetProtocol) -> Dict[str, str]:
@@ -11007,6 +11224,58 @@ def generate_figures(
         fig.suptitle("Complete-pipeline coverage and latency", y=1.0)
         path = figures_root / "pipeline_coverage_and_latency.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)
+
+        # --- Both pipelines across all three datasets (Experiments 9 and 10) --
+        # The single most informative comparison in the project, because the
+        # coverage difference reverses between LFW and CPLFW. Drawn only when
+        # the 1:1 comparison has been run.
+        verif = aggregate_root / VERIFICATION_COMPARISON_DIRNAME
+        base_lfw = load("lfw_final_metrics.json")
+        base_cplfw = load("cplfw_metrics.json")
+        comp_lfw = read_json_artifact(verif / "lfw_final_metrics.json") \
+            if (verif / "lfw_final_metrics.json").is_file() else None
+        comp_cplfw = read_json_artifact(verif / "cplfw_metrics.json") \
+            if (verif / "cplfw_metrics.json").is_file() else None
+        if base_lfw and base_cplfw and comp_lfw and comp_cplfw:
+            datasets = ["LFW", "CPLFW"]
+            series = {
+                PIPELINE_DISPLAY_NAMES["opencv"]: (base_lfw, base_cplfw),
+                PIPELINE_DISPLAY_NAMES["insightface"]: (comp_lfw, comp_cplfw),
+            }
+            fig, (acc_ax, cov_ax) = plt.subplots(1, 2, figsize=(12.0, 5.0))
+            positions = np.arange(len(datasets))
+            width = 0.35
+            for index, (name, payloads) in enumerate(series.items()):
+                offset = (index - 0.5) * width
+                colour = LAYER_PIPELINE_COLOURS[index % 2]
+                accuracy = [_percent(d.get("accuracy")) for d in payloads]
+                coverage = [
+                    _percent(1.0 - d.get("failure_rate", float("nan"))) for d in payloads
+                ]
+                for ax, values in ((acc_ax, accuracy), (cov_ax, coverage)):
+                    bars = ax.bar(positions + offset, values, width, label=name,
+                                  color=colour)
+                    ax.bar_label(bars, fmt="%.1f%%", fontsize=8, padding=2)
+            for ax, title in (
+                (acc_ax, "Correct decisions among scored pairs"),
+                (cov_ax, "Photographs reaching comparison"),
+            ):
+                ax.set_xticks(positions); ax.set_xticklabels(datasets, fontsize=10)
+                # Headroom for the printed values; ticks still stop at 100%.
+                ax.set_ylim(0, 112); ax.set_yticks(list(range(0, 101, 20)))
+                ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _p: f"{v:.0f}%"))
+                ax.set_title(title, fontsize=10)
+                ax.grid(axis="y", alpha=0.3)
+            acc_ax.set_ylabel("Per cent", fontsize=9)
+            acc_ax.legend(fontsize=9, loc="lower left", framealpha=0.95)
+            fig.suptitle(
+                "Both pipelines on 1:1 verification, by dataset\n"
+                "Accuracy favours SCRFD + ArcFace on both; coverage reverses "
+                "between them",
+                fontsize=11, y=1.04,
+            )
+            path = figures_root / "pipeline_across_datasets.png"
+            _save_figure(fig, path); plt.close(fig); written.append(path)
     elif open_set:
         coverage = open_set["methods"][METHOD_B]["coverage"]
         fig, (left, right) = plt.subplots(1, 2, figsize=(9.5, 4.2))
@@ -11958,6 +12227,7 @@ def render_experiment_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) ->
     pipeline = load("pipeline_comparison_metrics.json")
     verif_final = load("lfw_final_metrics.json", sub)
     verif_cplfw = load("cplfw_metrics.json", sub)
+    arcface_review = load("ml_review_test_metrics.json", root / ARCFACE_REVIEW_DIRNAME)
 
     pending = "not run yet"
 
@@ -12022,13 +12292,31 @@ def render_experiment_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) ->
         ])
     else:
         rows.append(["8", "SCRFD + ArcFace", "BFW held-out", "1:N", pending])
-    if verif_final and verif_cplfw:
+    # One row per dataset: LFW and CPLFW pose different problems, and merging
+    # them would hide that the coverage difference runs in opposite directions.
+    rows.append([
+        "9", "SCRFD + ArcFace", "LFW pairs.txt", "1:1",
+        f"{pct(verif_final.get('accuracy'))} correct, "
+        f"{pct(verif_final.get('failure_rate'))} not scored"
+        if verif_final else pending,
+    ])
+    rows.append([
+        "10", "SCRFD + ArcFace", "CPLFW", "1:1",
+        f"{pct(verif_cplfw.get('accuracy'))} correct, "
+        f"{pct(verif_cplfw.get('failure_rate'))} not scored"
+        if verif_cplfw else pending,
+    ])
+    if arcface_review:
+        classifier = arcface_review["classifier"]
         rows.append([
-            "9", "SCRFD + ArcFace", "LFW + CPLFW", "1:1",
-            f"{pct(verif_final.get('accuracy'))} and {pct(verif_cplfw.get('accuracy'))} correct",
+            "11", "SCRFD + ArcFace + classifier", "BFW held-out", "1:N",
+            f"{pct(classifier.get('tpir_rank1'))} TPIR@1, "
+            f"{classifier.get('false_reviews_per_1000_non_mated', float('nan')):.1f} reviews/1,000",
         ])
     else:
-        rows.append(["9", "SCRFD + ArcFace", "LFW + CPLFW", "1:1", pending])
+        rows.append(
+            ["11", "SCRFD + ArcFace + classifier", "BFW held-out", "1:N", pending]
+        )
 
     return "\n".join([
         "EVERY EXPERIMENT AT A GLANCE",
@@ -12047,6 +12335,84 @@ def render_experiment_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) ->
         wrap_plain(
             "Only the logistic regression in Experiment 7 is trained by this project. "
             "YuNet, SFace, SCRFD and ArcFace are pretrained and used as published."
+        ),
+    ])
+
+
+def render_model_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """The five models side by side: what each does and what it cost.
+
+    The experiment table compares arrangements; this compares the parts they
+    are built from. Measured columns are read from the artefacts, so a figure
+    quoted here is one the programme actually recorded rather than one taken
+    from the publishing project's own claims."""
+    root = Path(aggregate_root)
+    pipeline = _load_optional(root, "pipeline_comparison_metrics.json")
+    held_out = (pipeline or {}).get("held_out_metrics") or {}
+    sizes = (pipeline or {}).get("model_file_sizes") or {}
+    review = _load_optional(root, "ml_review_model.json")
+
+    def group_mb(group: str) -> str:
+        entries = (sizes.get(group) or {}).values()
+        total = sum(e.get("megabytes", 0.0) for e in entries if isinstance(e, Mapping))
+        return f"{total:.1f} MB" if total else "not available"
+
+    def latency(key_fragment: str, stage: str) -> str:
+        for name, metrics in held_out.items():
+            if key_fragment in name:
+                value = (metrics.get("coverage") or {}).get(stage)
+                if isinstance(value, (int, float)):
+                    return f"{value:.1f} ms"
+        return "not available"
+
+    rows = [
+        ["YuNet", "Finds the face", "OpenCV Zoo", "bounding box + 5 landmarks",
+         "no", "1-7"],
+        ["SFace", "Face to numbers", "OpenCV Zoo", "128 values",
+         "no", "1-7"],
+        ["SCRFD", "Finds the face", "InsightFace", "bounding box + 5 landmarks",
+         "no", "8-11"],
+        ["ArcFace", "Face to numbers", "InsightFace buffalo_l", "512 values",
+         "no", "8-11"],
+        ["Logistic regression", "Decides referral", "fitted here",
+         f"{len(review['model']['feature_order'])} features" if review else "9 features",
+         "yes", "7, 11"],
+    ]
+    measured = [
+        ["Detection, mean per image", latency("opencv", "detection_latency_mean_ms"),
+         latency("arcface", "detection_latency_mean_ms")],
+        ["Embedding, mean per image", latency("opencv", "embedding_latency_mean_ms"),
+         latency("arcface", "embedding_latency_mean_ms")],
+        ["Complete pipeline, mean per image",
+         latency("opencv", "complete_pipeline_latency_mean_ms"),
+         latency("arcface", "complete_pipeline_latency_mean_ms")],
+        ["Weight files on disk", group_mb("primary"), group_mb("comparison")],
+    ]
+    return "\n".join([
+        "THE MODELS COMPARED",
+        "",
+        render_plain_pipeline_table(
+            ["Model", "Role", "Source", "Output", "Trained here", "Used in"], rows
+        ),
+        "",
+        "Measured cost, from the BFW held-out run:",
+        "",
+        render_plain_pipeline_table(
+            ["", PIPELINE_DISPLAY_NAMES["opencv"], PIPELINE_DISPLAY_NAMES["insightface"]],
+            measured,
+        ),
+        "",
+        wrap_plain(
+            "Only the logistic regression is fitted by this project, on development "
+            "identities that share nobody with the held-out test set. The four face "
+            "networks are pretrained and used exactly as published, which is what makes "
+            "the arrangement rather than the models the contribution under test."
+        ),
+        "",
+        wrap_plain(
+            "A similarity threshold belongs to the model that produced it. SFace and "
+            "ArcFace embed into spaces of different width, so a cutoff calibrated for "
+            "one is never applied to the other."
         ),
     ])
 
@@ -12240,6 +12606,31 @@ written to a separate directory, so the original five experiments are
 untouched.
 
 No model will be trained or fine-tuned.""",
+
+    "arcface-review": """Selected: Experiment 11 - the review classifier on SCRFD + ArcFace
+
+Purpose:
+Experiment 7 fitted the classifier on YuNet + SFace and Experiment 8 compared
+the pipelines without it, so the framework's most elaborate addition and its
+strongest components were never combined. This tests whether the classifier
+still helps once the models underneath it are better.
+
+Dataset:
+BFW, using the same identity groups and the same seed as Experiment 7, so the
+two classifiers are directly comparable.
+
+Models:
+InsightFace SCRFD + ArcFace, plus a logistic-regression classifier fitted here.
+
+This experiment will:
+1. Score the BFW development identities with SCRFD + ArcFace.
+2. Fit the classifier on the training group only.
+3. Freeze a referral probability on the separate calibration group.
+4. Apply that frozen probability to the held-out identities.
+
+Neither face network is trained or fine-tuned. Results are written to a
+separate directory and use a separate run cache, so Experiments 6 to 9 are
+untouched.""",
 
     "review": """LOCAL HUMAN-REVIEW DEMONSTRATION
 
@@ -12551,6 +12942,12 @@ BFW EXTENSION EXPERIMENTS
 
  15. Show the saved Experiment 9 results
 
+ 17. Run Experiment 11 - the review classifier on SCRFD + ArcFace
+     Fits the same classifier on the higher-capacity pipeline, to test whether
+     the framework still helps once the models are better.
+
+ 18. Show the saved Experiment 11 results
+
 
 OVERVIEW
 
@@ -12573,6 +12970,8 @@ MODES = (
     # Experiment 9: the same comparison pipeline on the 1:1 protocols, which
     # tests whether its open-set advantage also holds for pair verification.
     "verification-compare", "verification-compare-summary",
+    # Experiment 11: the review classifier fitted on the comparison pipeline.
+    "arcface-review", "arcface-review-summary",
     # A single table covering every experiment, for orientation.
     "experiment-table",
     "extensions",
@@ -13442,8 +13841,27 @@ def action_show_verification_comparison_summary(output_root: Path = AGGREGATE_RO
     return 0
 
 
+def action_run_arcface_review(output_root: Path = AGGREGATE_ROOT) -> int:
+    """Experiment 11. Requires the optional comparison models."""
+    run_arcface_review_experiment(output_root)
+    print("")
+    print(render_plain_section(render_arcface_review_summary(output_root)))
+    print("")
+    print(render_reference_section())
+    return 0
+
+
+def action_show_arcface_review_summary(output_root: Path = AGGREGATE_ROOT) -> int:
+    print(render_plain_section(render_arcface_review_summary(output_root)))
+    print("")
+    print(render_reference_section())
+    return 0
+
+
 def action_show_experiment_table(output_root: Path = AGGREGATE_ROOT) -> int:
     print(render_experiment_comparison_table(output_root))
+    print("")
+    print(render_model_comparison_table(output_root))
     return 0
 
 
@@ -13495,6 +13913,7 @@ MENU_PREVIEW_KEYS = {
     "12": "pipeline-compare",
     "13": "extensions",
     "14": "verification-compare",
+    "17": "arcface-review",
 }
 
 
@@ -13516,6 +13935,8 @@ def run_menu() -> int:
         "14": action_run_verification_comparison,
         "15": action_show_verification_comparison_summary,
         "16": action_show_experiment_table,
+        "17": action_run_arcface_review,
+        "18": action_show_arcface_review_summary,
     }
     # The scope of the artefact is stated before any option is offered.
     print("")
@@ -13633,6 +14054,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_action(
             lambda: action_show_verification_comparison_summary(args.results_root)
         )
+    if args.mode == "arcface-review":
+        return _run_action(lambda: action_run_arcface_review(args.results_root))
+    if args.mode == "arcface-review-summary":
+        return _run_action(lambda: action_show_arcface_review_summary(args.results_root))
     if args.mode == "experiment-table":
         return _run_action(lambda: action_show_experiment_table(args.results_root))
     if args.mode == "extensions":

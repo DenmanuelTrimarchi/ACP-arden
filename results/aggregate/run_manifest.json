@@ -1,7 +1,7 @@
 {
   "artifact_type": "run_manifest",
   "cplfw_image_variant": "raw",
-  "created_at": "2026-08-03T19:40:21.337792+00:00",
+  "created_at": "2026-08-09T19:35:45.552807+00:00",
   "dataset_root_variable": "FACE_DATA_ROOT",
   "dataset_storage": "private, gitignored local research storage; path omitted from public artifacts",
   "frozen_threshold": 0.3630116835391414,
@@ -10,11 +10,11 @@
   "model_root_variable": "FACE_MODEL_ROOT",
   "opaque_id_version": "hmac-sha256-v1",
   "output_file_sha256": {
-    "calibrated_threshold.json": "8731085f658ff722024535df7c233f18191815176a48f76a7eabc8117eade392",
-    "cplfw_metrics.json": "99f2d330c65170b22ef9d35c0f905bb973018c5a08145695e7f17357d97e0890",
-    "duplicate_gallery_metrics_v2.json": "4374f763110bc5eb6dda1f2dc4ddef5ca2e3882a533cba855bf6a0de103bedff",
-    "lfw_development_metrics.json": "7f3326f9405030c82116c9b67e82e5d5835b88db5b7913c156a211a0445d791f",
-    "lfw_final_metrics.json": "baf810986a3fd85f87abbac4aa5f6de86c37f6e453199f4da723faa7a7ec801c"
+    "calibrated_threshold.json": "9553629d9715984aadfa8abf6b4097276eb6b10f35afb39120d5b8f86e2d3e38",
+    "cplfw_metrics.json": "d8b1f054bae15a4ed9a338d0b2cfec101f572284aee1f5744e828631b05ca74a",
+    "duplicate_gallery_metrics_v2.json": "7a1e57606a00ff9d4003cfa69f65c332bc36de183bc00df20005721f07fa9e3c",
+    "lfw_development_metrics.json": "f15e17df60abdb153a832fe6dce0cdce9b7c59d821e4b8486b3d43f738f3026a",
+    "lfw_final_metrics.json": "ab533e6296bca861b697135216bf64dcafa37235ce66a772f6588b59ae83cf6c"
   },
   "output_root": "results/aggregate",
   "produced_by": "ACP_arden.py --mode full",

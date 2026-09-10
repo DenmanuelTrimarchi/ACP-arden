@@ -26,7 +26,7 @@ The same frozen threshold on raw cross-pose images. Conditional accuracy only, a
 
 ## Implementation layers (results 3-6)
 
-The five layers share the BFW open-set protocol and are directly comparable, in the order the project developed them:
+The five layers share the BFW open-set protocol and are directly comparable, in the order the project developed them. Each adds one component to the previous combination, so the difference between consecutive layers is what that component contributes:
 
 3. Single-image gallery, transferred 1:1 threshold
 4. Three-image gallery, transferred 1:1 threshold — higher TPIR but **higher FPIR**; a mean template sits nearer the centre of the embedding space and is closer to everyone, so this layer is not an improvement
@@ -57,7 +57,7 @@ FPIR is plotted on its own axis with a metric-specific upper bound, not on the 0
 
 > A zero-event percentile-bootstrap interval such as 0%–0% means that no false referral was observed among the resampled benchmark identities. It does not establish that the population error probability is exactly zero.
 
-These are binary dataset categories. They do not represent the full range of gender identities, every identity, or any real dating-application population.
+These are binary dataset categories. They do not represent the full range of gender identities, every identity, or any real deployed population.
 
 ## 9. Profile-photo consistency analysis
 

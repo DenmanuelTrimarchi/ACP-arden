@@ -14,7 +14,7 @@
     "open_set_non_mated_gallery_control": "A non-mated probe searched against the complete gallery. This control tests whether a person absent from the gallery avoids matching any enrolled profile. It is stricter than, and structurally different from, comparing one photograph with one specified profile template.",
     "wrong_profile_template_control": "The same control photograph compared with exactly one wrong enrolled profile template, assigned deterministically from the protocol seed and the opaque sample identifier. This is the direct one-photograph-to-one-profile comparison. It is supplementary and does not replace the open-set control; both apply the same frozen pipeline-specific threshold, and no threshold was recalibrated for either."
   },
-  "created_at": "2026-08-03T20:20:07.437632+00:00",
+  "created_at": "2026-09-09T23:47:49.023822+00:00",
   "dataset_provenance": {
     "dataset_name": "BFW",
     "evaluated_image_set_sha256": "3eacaebf889307b6b5375e40881fe173d23cb0d00a969938ed0ecdb145e00b73",
@@ -59,7 +59,7 @@
     "Development and test identities are completely disjoint, and the operating threshold was frozen before the held-out test partition was scored.",
     "Extraction failures are counted as coverage failures, never as genuine no-match decisions.",
     "Confidence intervals describe sampling uncertainty over these benchmark identities only. They do not extend to any other population.",
-    "Benchmark demographics do not represent a real dating-application user population, so subgroup figures must not be read as deployment estimates."
+    "Benchmark demographics do not represent any real deployed user population, so subgroup figures must not be read as deployment estimates."
   ],
   "methodology_revision": "open-set-gallery-accounting-v2",
   "model_sha256": {

@@ -1,7 +1,7 @@
 {
   "aggregation": "pooled over identity outcomes, not averaged over subgroups",
   "artifact_type": "pipeline_sex_aggregated_metrics",
-  "created_at": "2026-08-04T00:23:01.324809+00:00",
+  "created_at": "2026-09-10T01:43:07.673426+00:00",
   "groups": {
     "insightface-scrfd-arcface-buffalo_l \u2014 female": {
       "bootstrap_replicates": 2000,
@@ -24,7 +24,7 @@
       "non_mated_probe_coverage_upper_95": 0.9993333333333333,
       "pipeline": "insightface-scrfd-arcface-buffalo_l",
       "pipeline_threshold": 0.393957955447,
-      "population_note": "These benchmark categories do not represent every identity or any real dating-application population.",
+      "population_note": "These benchmark categories do not represent every identity or any real deployed population.",
       "scored_mated_probes": 500,
       "scored_non_mated_probes": 1496,
       "seed": 20260727,
@@ -63,7 +63,7 @@
       "non_mated_probe_coverage_upper_95": 0.9973333333333333,
       "pipeline": "insightface-scrfd-arcface-buffalo_l",
       "pipeline_threshold": 0.393957955447,
-      "population_note": "These benchmark categories do not represent every identity or any real dating-application population.",
+      "population_note": "These benchmark categories do not represent every identity or any real deployed population.",
       "scored_mated_probes": 499,
       "scored_non_mated_probes": 1491,
       "seed": 20260727,
@@ -102,7 +102,7 @@
       "non_mated_probe_coverage_upper_95": 0.9746666666666667,
       "pipeline": "opencv-sface-2021dec-yunet-2023mar",
       "pipeline_threshold": 0.477117869159,
-      "population_note": "These benchmark categories do not represent every identity or any real dating-application population.",
+      "population_note": "These benchmark categories do not represent every identity or any real deployed population.",
       "scored_mated_probes": 481,
       "scored_non_mated_probes": 1442,
       "seed": 20260727,
@@ -141,7 +141,7 @@
       "non_mated_probe_coverage_upper_95": 0.9573333333333334,
       "pipeline": "opencv-sface-2021dec-yunet-2023mar",
       "pipeline_threshold": 0.477117869159,
-      "population_note": "These benchmark categories do not represent every identity or any real dating-application population.",
+      "population_note": "These benchmark categories do not represent every identity or any real deployed population.",
       "scored_mated_probes": 461,
       "scored_non_mated_probes": 1417,
       "seed": 20260727,
@@ -160,7 +160,7 @@
       "tpir_rank5_upper_95": 0.9671790345236162
     }
   },
-  "limitations": "These are binary dataset categories. They do not represent the full range of gender identities or any real dating-application population.",
+  "limitations": "These are binary dataset categories. They do not represent the full range of gender identities or any real deployed population.",
   "policy_note": "Duplicate-profile screening: a high similarity to another enrolled gallery identity opens a case for human review only. It is not evidence of scam activity and does not ban, reject or accuse any identity. This polarity applies to gallery screening; profile-photo consistency refers a *low* similarity instead, and an extraction failure makes no decision at all.",
   "schema_version": 1,
   "seed": 20260727,

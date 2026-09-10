@@ -642,7 +642,7 @@ could be attributed to the embedding model alone.
 
 ### Figures
 
-`results/figures/` holds 15 figures, each in PNG (300 dpi) and SVG,
+`results/figures/` holds 16 figures, each in PNG (300 dpi) and SVG,
 generated from the published JSON and CSV artefacts rather than typed values,
 with PNG text metadata stripped and the privacy scan applied:
 
@@ -659,6 +659,7 @@ male_subgroup_pipeline_comparison
 mated_non_mated_similarity_distributions
 ml_review_classifier_coefficients
 open_set_operating_curve
+pipeline_across_datasets
 pipeline_coverage_and_latency
 profile_photo_consistency_outcomes
 subgroup_fpir_tpir_with_confidence_intervals

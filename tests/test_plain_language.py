@@ -697,3 +697,133 @@ def test_the_overview_table_marks_unrun_experiments_rather_than_hiding_them(
     assert text.count("not run yet") >= 7
     for exp in ("1-2", "3", "9"):
         assert any(l.strip().startswith(exp + " ") for l in text.splitlines()), exp
+
+
+# --- Experiment 11: the classifier on the comparison pipeline ---------------------
+
+ARC_REVIEW = AGG / "arcface_review"
+
+
+def _skip_without_experiment_eleven() -> None:
+    """The directory is created when the run starts, so presence of the
+    directory is not evidence the run finished."""
+    if not (ARC_REVIEW / "ml_review_test_metrics.json").is_file():
+        pytest.skip("Experiment 11 has not completed in this checkout")
+
+
+def test_experiment_eleven_uses_a_separate_run_cache() -> None:
+    """The canonical cache is keyed by partition alone, so a second pipeline
+    sharing the default path would overwrite the baseline runs that
+    Experiments 6 to 10 depend on."""
+    assert acp.ARCFACE_RUN_CACHE != acp.CANONICAL_RUN_CACHE
+    assert acp.ARCFACE_RUN_CACHE.name.startswith("canonical_arcface")
+    baseline = acp.canonical_cache_path("development", acp.CANONICAL_RUN_CACHE)
+    compare = acp.canonical_cache_path("development", acp.ARCFACE_RUN_CACHE)
+    assert baseline != compare
+
+
+def test_experiment_eleven_writes_to_its_own_directory() -> None:
+    assert acp.ARCFACE_REVIEW_DIRNAME == "arcface_review"
+    _skip_without_experiment_eleven()
+    # Both chains write ml_review_test_metrics.json; they must not collide.
+    assert (AGG / "ml_review_test_metrics.json").is_file()
+    assert (ARC_REVIEW / "ml_review_test_metrics.json").is_file()
+
+
+def test_experiment_eleven_artefacts_name_the_right_pipeline() -> None:
+    """primary_pipeline_description reports the OpenCV names unconditionally,
+    so an unguarded run would label these as YuNet + SFace."""
+    _skip_without_experiment_eleven()
+    for name in ("ml_review_test_metrics.json", "ml_review_model.json",
+                 "bfw_open_set_threshold.json"):
+        path = ARC_REVIEW / name
+        if not path.is_file():
+            continue
+        pipeline = json.loads(path.read_text())["pipeline"]
+        assert "arcface" in pipeline["pipeline_name"].lower(), name
+        assert pipeline["embedding_dimensions"] == 512, name
+
+
+def test_experiment_eleven_uses_its_own_comparator_threshold() -> None:
+    """A cutoff calibrated for SFace means nothing in ArcFace's space."""
+    _skip_without_experiment_eleven()
+    baseline = json.loads((AGG / "bfw_open_set_threshold.json").read_text())
+    compare = json.loads((ARC_REVIEW / "bfw_open_set_threshold.json").read_text())
+    target = str(acp.PRIMARY_FPIR_TARGET)
+    assert (baseline["operating_points"][target]["threshold"]
+            != compare["operating_points"][target]["threshold"])
+    assert compare["status"] == acp.OPEN_SET_STATUS_FROZEN
+
+
+def test_experiment_eleven_summary_reports_both_pipelines() -> None:
+    _skip_without_experiment_eleven()
+    text = acp.render_arcface_review_summary(AGG)
+    for column in ("SFace threshold", "SFace + classifier",
+                   "ArcFace threshold", "ArcFace + classifier"):
+        assert column in text, column
+    # The finding is whether the classifier moves the burden the same way.
+    assert "review burden" in text
+    assert "not available" not in text
+
+
+def test_a_missing_experiment_eleven_gives_an_instruction(tmp_path: Path) -> None:
+    text = acp.render_arcface_review_summary(tmp_path)
+    assert "not available yet" in text
+    assert "option 17" in text
+
+
+def test_experiment_eleven_is_wired_to_the_menu() -> None:
+    assert acp.MENU_PREVIEW_KEYS.get("17") == "arcface-review"
+    for mode in ("arcface-review", "arcface-review-summary"):
+        assert mode in acp.MODES, mode
+    preview = acp.render_experiment_preview("arcface-review")
+    assert "separate directory" in preview and "separate run cache" in preview
+
+
+# --- The 1:1 rows are separated by dataset ----------------------------------------
+
+
+def test_the_overview_separates_lfw_from_cplfw() -> None:
+    """Merging them would hide that the coverage difference runs in opposite
+    directions on the two datasets."""
+    text = acp.render_experiment_comparison_table(AGG)
+    nine = next(l for l in text.splitlines() if l.strip().startswith("9 "))
+    ten = next(l for l in text.splitlines() if l.strip().startswith("10 "))
+    assert "LFW" in nine and "CPLFW" not in nine
+    assert "CPLFW" in ten
+    assert "SCRFD + ArcFace" in nine and "SCRFD + ArcFace" in ten
+
+
+def test_the_overview_includes_experiment_eleven() -> None:
+    text = acp.render_experiment_comparison_table(AGG)
+    row = next(l for l in text.splitlines() if l.strip().startswith("11 "))
+    assert "classifier" in row
+
+
+# --- The model comparison table ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model", ["YuNet", "SFace", "SCRFD", "ArcFace", "Logistic regression"])
+def test_the_model_table_covers_every_model(model: str) -> None:
+    assert model in acp.render_model_comparison_table(AGG), model
+
+
+def test_the_model_table_marks_only_the_classifier_as_trained_here() -> None:
+    text = acp.render_model_comparison_table(AGG)
+    rows = [l for l in text.splitlines()
+            if any(m in l for m in ("YuNet", "SFace", "SCRFD", "ArcFace", "Logistic"))]
+    trained = [l for l in rows if l.rstrip().split()[-2:][0] == "yes"
+               or " yes " in l]
+    assert len(trained) == 1 and "Logistic" in trained[0]
+    assert "Only the logistic regression is fitted by this project" in text
+
+
+def test_the_model_table_reports_measured_cost() -> None:
+    text = acp.render_model_comparison_table(AGG)
+    for label in ("Detection, mean per image", "Embedding, mean per image",
+                  "Complete pipeline, mean per image", "Weight files on disk"):
+        assert label in text, label
+    assert " ms" in text and " MB" in text
+    # A threshold belongs to the model that produced it.
+    assert "never applied to the other" in text

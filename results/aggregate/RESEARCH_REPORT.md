@@ -1,6 +1,8 @@
-# ACP-arden research report
+# COM7014 Advanced Computing Project — research report
 
 Auto-generated from the published artefacts. Ordered to show what each layer was intended to improve, and where it did not.
+
+**Research objective.** To establish whether a framework combining several existing models achieves better results than any one of them used alone. Each layer below adds one component to the previous combination, so the difference between consecutive layers measures what that component contributes. No face-detection or face-recognition network is trained or fine-tuned; the contribution under test is the composition, not the models themselves.
 
 ## 1. LFW 1:1 verification
 
@@ -70,7 +72,7 @@ A non-match indicates that the photograph is inconsistent with the enrolled faci
 
 | Pipeline | End-to-end (95% CI) | Zero-face | Multiple-face | Embed mean | Complete mean | Model size |
 | --- | --- | --- | --- | --- | --- | --- |
-| insightface-scrfd-arcface-buffalo_l | 96.70% [95.40%–97.90%] | 2 | 12 | 63.49 ms | 95.33 ms | 182.4 MB |
+| insightface-scrfd-arcface-buffalo_l | 96.70% [95.40%–97.90%] | 2 | 12 | 51.58 ms | 78.49 ms | 182.4 MB |
 | opencv-sface-2021dec-yunet-2023mar | 87.20% [84.30%–89.90%] | 189 | 0 | 17.89 ms | 21.72 ms | 37.1 MB |
 
 Each pipeline was calibrated on its own development scores; the SFace threshold is never applied to ArcFace. This is a complete-pipeline comparison — detection, alignment, preprocessing, embedding width and runtime all differ — so no difference is attributable to the embedding model alone.
@@ -81,7 +83,7 @@ A stronger pipeline is not free. Where it improves extraction and identification
 
 ## 12. Limitations and policy
 
-ACP-arden is a benchmark-validated, human-review-only academic face-comparison proof of concept. It evaluates duplicate-profile screening and profile-photo facial consistency using frozen pretrained face-recognition pipelines and an identity-disjoint logistic-regression review classifier.
+This is a benchmark-validated, human-review-only academic face-comparison study. It evaluates duplicate-profile screening and profile-photo facial consistency using frozen pretrained face-recognition pipelines and an identity-disjoint logistic-regression review classifier.
 
 The two tasks refer in opposite directions, and a single threshold statement would misdescribe one of them:
 
@@ -98,4 +100,4 @@ No face-detection or face-recognition network is trained or fine-tuned. Experime
 - Development and test identities are completely disjoint, and the operating threshold was frozen before the held-out test partition was scored.
 - Extraction failures are counted as coverage failures, never as genuine no-match decisions.
 - Confidence intervals describe sampling uncertainty over these benchmark identities only. They do not extend to any other population.
-- Benchmark demographics do not represent a real dating-application user population, so subgroup figures must not be read as deployment estimates.
+- Benchmark demographics do not represent any real deployed user population, so subgroup figures must not be read as deployment estimates.
