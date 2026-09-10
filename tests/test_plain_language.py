@@ -602,3 +602,98 @@ def test_the_plain_summaries_match_the_stored_values() -> None:
     coverage = payload["methods"][acp.METHOD_B]["coverage"]
     assert f"{coverage['scored_mated_probes']:,}" in text
     assert f"{coverage['intended_mated_probes']:,}" in text
+
+
+# --- Experiment 9 and the overview table ------------------------------------------
+
+VERIF = AGG / "verification_comparison"
+
+
+def test_the_menu_names_the_models_for_each_experiment_group() -> None:
+    """A reader choosing an option should know what will run before it starts."""
+    text = acp.MENU_TEXT
+    assert "models: YuNet + SFace" in text
+    for phrase in ("YuNet + SFace on BFW",
+                   "YuNet + SFace + logistic regression on BFW",
+                   "Both pipelines on the same BFW identities",
+                   "SCRFD + ArcFace through the same one-to-one chain"):
+        assert phrase in text, phrase
+
+
+def test_the_menu_offers_experiment_nine_and_the_overview() -> None:
+    for option in ("14.", "15.", "16."):
+        assert option in acp.MENU_TEXT, option
+    assert "OVERVIEW" in acp.MENU_TEXT
+
+
+def test_experiment_nine_has_a_preview_wired_to_its_option() -> None:
+    assert acp.MENU_PREVIEW_KEYS.get("14") == "verification-compare"
+    preview = acp.render_experiment_preview("verification-compare")
+    assert "Purpose:" in preview
+    # The whole point is that a threshold is never shared between pipelines.
+    assert "baseline threshold is never reused" in preview
+    assert "No model will be trained or fine-tuned." in preview
+
+
+def test_the_new_modes_are_registered() -> None:
+    for mode in ("verification-compare", "verification-compare-summary",
+                 "experiment-table"):
+        assert mode in acp.MODES, mode
+
+
+def test_experiment_nine_writes_to_its_own_directory() -> None:
+    """Experiments 1-5 must not be overwritten by the comparison chain: both
+    write a file called calibrated_threshold.json."""
+    assert acp.VERIFICATION_COMPARISON_DIRNAME == "verification_comparison"
+    if not VERIF.is_dir():
+        pytest.skip("Experiment 9 has not been run in this checkout")
+    baseline = json.loads((AGG / "calibrated_threshold.json").read_text())
+    compare = json.loads((VERIF / "calibrated_threshold.json").read_text())
+    assert baseline["threshold"] != compare["threshold"], (
+        "each pipeline must calibrate its own threshold"
+    )
+    assert baseline["status"] == compare["status"] == "frozen"
+
+
+def test_experiment_nine_summary_reports_both_pipelines() -> None:
+    if not VERIF.is_dir():
+        pytest.skip("Experiment 9 has not been run")
+    text = acp.render_verification_comparison_summary(AGG)
+    for column in ("LFW: YuNet+SFace", "LFW: SCRFD+ArcFace",
+                   "CPLFW: YuNet+SFace", "CPLFW: SCRFD+ArcFace"):
+        assert column in text, column
+    assert "Frozen threshold" in text
+    assert "not available" not in text
+
+
+def test_a_missing_experiment_nine_gives_an_instruction(tmp_path: Path) -> None:
+    text = acp.render_verification_comparison_summary(tmp_path)
+    assert "not available yet" in text
+    assert "option 14" in text
+
+
+@pytest.mark.parametrize("exp", ["1-2", "3", "4", "5", "6", "7", "8", "9"])
+def test_the_overview_table_covers_every_experiment(exp: str) -> None:
+    text = acp.render_experiment_comparison_table(AGG)
+    rows = [l for l in text.splitlines() if l.strip().startswith(exp + " ")]
+    assert rows, f"experiment {exp} missing from the overview table"
+
+
+def test_the_overview_table_names_models_and_task_for_each_row() -> None:
+    text = acp.render_experiment_comparison_table(AGG)
+    assert "YuNet + SFace" in text and "SCRFD + ArcFace" in text
+    assert "logistic regression" in text
+    # Both task types must be distinguished, never pooled.
+    assert "1:1" in text and "1:N" in text
+    assert "never pooled" in text
+    assert "Only the logistic regression in Experiment 7 is trained" in text
+
+
+def test_the_overview_table_marks_unrun_experiments_rather_than_hiding_them(
+    tmp_path: Path,
+) -> None:
+    """A missing row would read as a gap in the method, not in what was run."""
+    text = acp.render_experiment_comparison_table(tmp_path)
+    assert text.count("not run yet") >= 7
+    for exp in ("1-2", "3", "9"):
+        assert any(l.strip().startswith(exp + " ") for l in text.splitlines()), exp

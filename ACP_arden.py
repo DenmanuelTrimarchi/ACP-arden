@@ -11935,6 +11935,122 @@ def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     return "\n".join(lines)
 
 
+# --- Every experiment on one page ---------------------------------------------
+
+
+def render_experiment_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """All nine experiments side by side: models, dataset, task and outcome.
+
+    Read back from the published artefacts, so a row cannot disagree with the
+    file it summarises. An experiment that has not been run yet is shown as
+    such rather than omitted, since a missing row would read as a gap in the
+    method instead of a gap in what has been executed."""
+    root = Path(aggregate_root)
+    sub = root / VERIFICATION_COMPARISON_DIRNAME
+    load = lambda name, base=root: _load_optional(base, name)
+
+    final = load("lfw_final_metrics.json")
+    cplfw = load("cplfw_metrics.json")
+    threshold = load("calibrated_threshold.json")
+    gallery = load("duplicate_gallery_metrics_v2.json")
+    open_set = load("bfw_open_set_test_metrics.json")
+    review = load("ml_review_test_metrics.json")
+    pipeline = load("pipeline_comparison_metrics.json")
+    verif_final = load("lfw_final_metrics.json", sub)
+    verif_cplfw = load("cplfw_metrics.json", sub)
+
+    pending = "not run yet"
+
+    def pct(value: Any, digits: int = 2) -> str:
+        return f"{value * 100:.{digits}f}%" if isinstance(value, (int, float)) else pending
+
+    rows: List[List[str]] = []
+
+    # Experiments 1-2 produce the operating point every later 1:1 result uses.
+    rows.append([
+        "1-2", "YuNet + SFace", "LFW dev pairs", "1:1",
+        f"threshold frozen at {threshold['threshold']:.6f}" if threshold else pending,
+    ])
+    rows.append([
+        "3", "YuNet + SFace", "LFW pairs.txt", "1:1",
+        f"{pct(final.get('accuracy'))} correct, {pct(final.get('failure_rate'))} not scored"
+        if final else pending,
+    ])
+    rows.append([
+        "4", "YuNet + SFace", "CPLFW", "1:1",
+        f"{pct(cplfw.get('accuracy'))} correct, {pct(cplfw.get('failure_rate'))} not scored"
+        if cplfw else pending,
+    ])
+    # Experiment 5 reuses the 1:1 threshold for gallery search deliberately, so
+    # its false-review rate is the problem the later experiments address.
+    rows.append([
+        "5", "YuNet + SFace", "LFW gallery", "1:N",
+        f"{pct(gallery.get('end_to_end_duplicate_detection_rate'))} detected, "
+        f"{pct(gallery.get('false_duplicate_review_rate'))} false reviews"
+        if gallery else pending,
+    ])
+    if open_set:
+        primary = open_set["methods"][METHOD_B]["primary_operating_point"]
+        rows.append([
+            "6", "YuNet + SFace", "BFW held-out", "1:N",
+            f"{pct(primary.get('tpir_rank1'))} TPIR@1, "
+            f"{primary.get('false_reviews_per_1000_non_mated', float('nan')):.1f} reviews/1,000",
+        ])
+    else:
+        rows.append(["6", "YuNet + SFace", "BFW held-out", "1:N", pending])
+    if review:
+        classifier = review["classifier"]
+        rows.append([
+            "7", "+ logistic regression", "BFW held-out", "1:N",
+            f"{pct(classifier.get('tpir_rank1'))} TPIR@1, "
+            f"{classifier.get('false_reviews_per_1000_non_mated', float('nan')):.1f} reviews/1,000",
+        ])
+    else:
+        rows.append(["7", "+ logistic regression", "BFW held-out", "1:N", pending])
+    arcface = None
+    if pipeline and pipeline.get("evaluated") == "yes":
+        arcface = next(
+            (v for k, v in (pipeline.get("held_out_metrics") or {}).items()
+             if "arcface" in k.lower()), None
+        )
+    if arcface:
+        rates = arcface["rates"]
+        rows.append([
+            "8", "SCRFD + ArcFace", "BFW held-out", "1:N",
+            f"{pct(rates.get('tpir_rank1'))} TPIR@1, "
+            f"{rates.get('false_reviews_per_1000_non_mated', float('nan')):.1f} reviews/1,000",
+        ])
+    else:
+        rows.append(["8", "SCRFD + ArcFace", "BFW held-out", "1:N", pending])
+    if verif_final and verif_cplfw:
+        rows.append([
+            "9", "SCRFD + ArcFace", "LFW + CPLFW", "1:1",
+            f"{pct(verif_final.get('accuracy'))} and {pct(verif_cplfw.get('accuracy'))} correct",
+        ])
+    else:
+        rows.append(["9", "SCRFD + ArcFace", "LFW + CPLFW", "1:1", pending])
+
+    return "\n".join([
+        "EVERY EXPERIMENT AT A GLANCE",
+        "",
+        render_plain_pipeline_table(
+            ["Exp", "Models", "Dataset", "Task", "Headline result"], rows
+        ),
+        "",
+        wrap_plain(
+            "Task 1:1 compares two photographs and reports a false match rate. Task 1:N "
+            "searches one photograph against a whole gallery and reports a false positive "
+            "identification rate. The two are different quantities and are never pooled: "
+            "one comparison per decision against one per enrolled profile."
+        ),
+        "",
+        wrap_plain(
+            "Only the logistic regression in Experiment 7 is trained by this project. "
+            "YuNet, SFace, SCRFD and ArcFace are pretrained and used as published."
+        ),
+    ])
+
+
 def render_overall_conclusion(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     """The five project-level findings, with the figures read from artefacts."""
     open_set = _load_optional(aggregate_root, "bfw_open_set_test_metrics.json")
@@ -12096,6 +12212,32 @@ comparison, then rebuild every figure from the resulting artefacts.
 
 This option runs Experiments 7 and 8 only. Experiment 6 must already have been
 run, because both extensions reuse its frozen threshold and its canonical run.
+
+No model will be trained or fine-tuned.""",
+
+    "verification-compare": """Selected: Experiment 9 - both pipelines on 1:1 verification
+
+Purpose:
+Test whether the advantage SCRFD + ArcFace showed on gallery search also holds
+for one-to-one verification, and in particular under the extreme pose
+variation of CPLFW.
+
+Datasets:
+LFW pairs.txt and CPLFW pairs_CPLFW.txt, 6,000 pairs each, raw images.
+
+Models:
+InsightFace SCRFD detector + ArcFace buffalo_l recognition model.
+
+This experiment will:
+1. Produce candidate thresholds from the LFW training pairs only.
+2. Select and freeze one threshold using the LFW development pairs.
+3. Evaluate the frozen threshold on the untouched final LFW pairs.
+4. Apply that same threshold to CPLFW without recalibrating it.
+
+The baseline threshold is never reused: a similarity from a 512-dimensional
+ArcFace vector does not mean what the same number means for SFace. Results are
+written to a separate directory, so the original five experiments are
+untouched.
 
 No model will be trained or fine-tuned.""",
 
@@ -12373,11 +12515,11 @@ SETUP AND VALIDATION
      Tests the calculations using synthetic data. No real face image is processed.
 
 
-ORIGINAL FIVE EXPERIMENTS
+ORIGINAL FIVE EXPERIMENTS          models: YuNet + SFace
 
   3. Run Experiments 1-5
-     Calibrates the original model, evaluates LFW and CPLFW, and demonstrates
-     duplicate-profile gallery screening.
+     LFW and CPLFW. Chooses a one-to-one threshold, freezes it, tests it on
+     unseen pairs and under pose change, then reuses it for gallery search.
 
   4. Show the saved results from Experiments 1-5
 
@@ -12388,16 +12530,32 @@ ORIGINAL FIVE EXPERIMENTS
 BFW EXTENSION EXPERIMENTS
 
   8. Run Experiment 6 - BFW duplicate-profile evaluation
+     YuNet + SFace on BFW. Calibrates a threshold for gallery search instead
+     of borrowing the one-to-one threshold.
 
   9. Show the saved Experiment 6 results
 
  10. Run Experiment 7 - logistic-regression review classifier
+     YuNet + SFace + logistic regression on BFW. The only model trained here.
 
  11. Show the saved Experiment 7 results
 
  12. Run Experiment 8 - compare YuNet + SFace with SCRFD + ArcFace
+     Both pipelines on the same BFW identities, each with its own threshold.
 
  13. Run Experiments 7 and 8, then regenerate all figures
+
+ 14. Run Experiment 9 - both pipelines on LFW and CPLFW
+     SCRFD + ArcFace through the same one-to-one chain, to test whether its
+     advantage also holds for pair verification and under pose change.
+
+ 15. Show the saved Experiment 9 results
+
+
+OVERVIEW
+
+ 16. Show every experiment at a glance
+     One table: models, dataset, task and headline result for all nine.
 
 
   7. Exit
@@ -12412,6 +12570,11 @@ MODES = (
     # baseline experiments only.
     "ml-review", "ml-review-summary",
     "pipeline-compare", "pipeline-compare-summary",
+    # Experiment 9: the same comparison pipeline on the 1:1 protocols, which
+    # tests whether its open-set advantage also holds for pair verification.
+    "verification-compare", "verification-compare-summary",
+    # A single table covering every experiment, for orientation.
+    "experiment-table",
     "extensions",
 )
 
@@ -12895,6 +13058,148 @@ def experiment_duplicate_gallery(
     return summary
 
 
+###############################################################################
+# Experiment 9: 1:1 verification with the higher-capacity pipeline
+###############################################################################
+#
+# Experiment 8 compared the two pipelines on open-set gallery search only, so
+# its conclusion rested on a single task. This runs the same SCRFD + ArcFace
+# pipeline through the 1:1 chain of Experiments 1-4, which tests whether the
+# advantage it showed there also holds for pair verification and, in
+# particular, under the extreme pose variation of CPLFW.
+#
+# The existing experiment functions are reused unchanged. They already take a
+# detector, an embedder and an output location, so the only difference is which
+# models are supplied and where the artefacts are written. Writing into a
+# sub-directory keeps the original five experiments untouched: the two chains
+# cannot overwrite one another's threshold.
+
+VERIFICATION_COMPARISON_DIRNAME = "verification_comparison"
+
+
+def run_verification_comparison(
+    output_root: Path = AGGREGATE_ROOT, *, cplfw_image_variant: str = "raw"
+) -> Dict[str, Any]:
+    """Calibrate, freeze and evaluate the comparison pipeline on LFW and CPLFW.
+
+    The same three-stage separation the baseline obeys is enforced here too:
+    candidates from pairsDevTrain only, selection and freezing on pairsDevTest,
+    then the frozen threshold applied unchanged to pairs.txt and to CPLFW. A
+    threshold calibrated for SFace is never reused, because a cosine similarity
+    from a 512-dimensional ArcFace vector does not mean what the same number
+    means in SFace's 128-dimensional space."""
+    config = EnvironmentConfig.load()
+    (detector, embedder), description = load_arcface_pipeline(config)
+
+    # A separate directory, so the baseline threshold artefact and metrics are
+    # never overwritten by this chain.
+    sub_root = Path(output_root) / VERIFICATION_COMPARISON_DIRNAME
+    sub_root.mkdir(parents=True, exist_ok=True)
+
+    announce_stage(1, 4, "Producing candidate thresholds for SCRFD + ArcFace",
+                   "LFW pairsDevTrain only; no threshold is selected yet.")
+    threshold_artifact = experiment_calibrate(config, detector, embedder, sub_root)
+
+    announce_stage(2, 4, "Selecting and freezing the threshold",
+                   "LFW pairsDevTest, using the same deterministic rule as the "
+                   "baseline pipeline.")
+    experiment_evaluate_lfw(
+        config, detector, embedder, split="dev",
+        threshold_artifact=threshold_artifact,
+        output_path=sub_root / "lfw_development_metrics.json",
+    )
+
+    announce_stage(3, 4, "Evaluating the untouched LFW pairs",
+                   "The frozen threshold is applied and never changed.")
+    experiment_evaluate_lfw(
+        config, detector, embedder, split="final",
+        threshold_artifact=threshold_artifact,
+        output_path=sub_root / "lfw_final_metrics.json",
+    )
+
+    announce_stage(4, 4, "Evaluating CPLFW under the same frozen threshold",
+                   "Cross-pose generalisation; no CPLFW-specific calibration.")
+    experiment_evaluate_cplfw(
+        config, detector, embedder, image_variant=cplfw_image_variant,
+        threshold_artifact=threshold_artifact,
+        output_path=sub_root / "cplfw_metrics.json",
+    )
+
+    # Published artefacts are scanned like every other, so a private storage
+    # path cannot reach a result through this chain either.
+    leaks = find_path_leaks(sub_root, forbidden_substrings=default_forbidden_path_substrings())
+    if leaks:
+        raise PrivacyLeakError(
+            f"{len(leaks)} personal or absolute path(s) found in the verification "
+            f"comparison artefacts."
+        )
+    announce("Privacy validation passed for every verification-comparison artefact")
+    return {"output_root": str(project_relative(sub_root)),
+            "pipeline": description.as_dict()}
+
+
+def render_verification_comparison_summary(output_root: Path = AGGREGATE_ROOT) -> str:
+    """Both pipelines on the same 1:1 protocols, side by side.
+
+    Extraction coverage is shown beside accuracy because the two answer
+    different questions: whether a face was found at all, and whether the
+    comparison was correct once it had been."""
+    sub_root = Path(output_root) / VERIFICATION_COMPARISON_DIRNAME
+    baseline_final = _load_optional(Path(output_root), "lfw_final_metrics.json")
+    baseline_cplfw = _load_optional(Path(output_root), "cplfw_metrics.json")
+    compare_final = _load_optional(sub_root, "lfw_final_metrics.json")
+    compare_cplfw = _load_optional(sub_root, "cplfw_metrics.json")
+    if not compare_final or not compare_cplfw:
+        return missing_artefact_message(
+            "1:1 pipeline comparison", "option 14 (--mode verification-compare)"
+        )
+
+    def row(label: str, getter) -> List[str]:
+        cells = []
+        for payload in (baseline_final, compare_final, baseline_cplfw, compare_cplfw):
+            cells.append(getter(payload) if payload else "not available")
+        return [label, *cells]
+
+    lines = [
+        "EXPERIMENT 9 - 1:1 VERIFICATION, BOTH PIPELINES",
+        "",
+        "Datasets:",
+        "LFW pairs.txt and CPLFW pairs_CPLFW.txt, raw images, 6,000 pairs each.",
+        "",
+        "Each pipeline uses its own threshold, calibrated on LFW development",
+        "pairs and frozen before either evaluation. No threshold is shared",
+        "between pipelines.",
+        "",
+        render_plain_pipeline_table(
+            ["Metric", "LFW: YuNet+SFace", "LFW: SCRFD+ArcFace",
+             "CPLFW: YuNet+SFace", "CPLFW: SCRFD+ArcFace"],
+            [
+                row("Correct decisions among scored pairs",
+                    lambda d: _percentage_of(d.get("accuracy"))),
+                row("Photographs reaching comparison",
+                    lambda d: _percentage_of(1.0 - d.get("failure_rate", float("nan")))),
+                row("Pairs scored",
+                    lambda d: f"{d.get('scored_pairs', 0):,} of {d.get('total_pairs', 0):,}"),
+                row("Wrongly accepted (FMR)",
+                    lambda d: _percentage_of(d.get("false_match_rate"))),
+                row("Wrongly rejected (FNMR)",
+                    lambda d: _percentage_of(d.get("false_non_match_rate"))),
+                row("Frozen threshold",
+                    lambda d: f"{d.get('threshold', float('nan')):.6f}"),
+            ],
+        ),
+        "",
+        wrap_plain(DENOMINATOR_NOTE),
+        "",
+        wrap_plain(
+            "CPLFW is the harder test. Where the two pipelines differ most in the "
+            "share of photographs reaching comparison, the difference is attributable "
+            "to face detection rather than to face comparison."
+        ),
+    ]
+    return "\n".join(lines)
+
+
 def action_run_complete_evaluation(
     output_root: Path = AGGREGATE_ROOT,
     *,
@@ -13119,6 +13424,29 @@ def action_show_pipeline_comparison_summary(output_root: Path = AGGREGATE_ROOT) 
     return 0
 
 
+def action_run_verification_comparison(output_root: Path = AGGREGATE_ROOT) -> int:
+    """Experiment 9. Requires the optional comparison models, exactly as
+    Experiment 8 does."""
+    run_verification_comparison(output_root=output_root)
+    print("")
+    print(render_plain_section(render_verification_comparison_summary(output_root)))
+    print("")
+    print(render_reference_section())
+    return 0
+
+
+def action_show_verification_comparison_summary(output_root: Path = AGGREGATE_ROOT) -> int:
+    print(render_plain_section(render_verification_comparison_summary(output_root)))
+    print("")
+    print(render_reference_section())
+    return 0
+
+
+def action_show_experiment_table(output_root: Path = AGGREGATE_ROOT) -> int:
+    print(render_experiment_comparison_table(output_root))
+    return 0
+
+
 def action_run_extensions(output_root: Path = AGGREGATE_ROOT) -> int:
     """Both extension experiments. An unavailable optional pipeline must not
     prevent the classifier experiment from being reported."""
@@ -13149,6 +13477,8 @@ def action_run_extensions(output_root: Path = AGGREGATE_ROOT) -> int:
     print("")
     print(render_reference_section())
     print("")
+    print(render_experiment_comparison_table(output_root))
+    print("")
     print(section_heading("OVERALL PROJECT CONCLUSION"))
     print("")
     print(render_overall_conclusion(output_root))
@@ -13164,6 +13494,7 @@ MENU_PREVIEW_KEYS = {
     "10": "ml-review",
     "12": "pipeline-compare",
     "13": "extensions",
+    "14": "verification-compare",
 }
 
 
@@ -13182,6 +13513,9 @@ def run_menu() -> int:
         "11": action_show_ml_review_summary,
         "12": action_run_pipeline_comparison,
         "13": action_run_extensions,
+        "14": action_run_verification_comparison,
+        "15": action_show_verification_comparison_summary,
+        "16": action_show_experiment_table,
     }
     # The scope of the artefact is stated before any option is offered.
     print("")
@@ -13293,6 +13627,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_action(lambda: action_run_pipeline_comparison(args.results_root))
     if args.mode == "pipeline-compare-summary":
         return _run_action(lambda: action_show_pipeline_comparison_summary(args.results_root))
+    if args.mode == "verification-compare":
+        return _run_action(lambda: action_run_verification_comparison(args.results_root))
+    if args.mode == "verification-compare-summary":
+        return _run_action(
+            lambda: action_show_verification_comparison_summary(args.results_root)
+        )
+    if args.mode == "experiment-table":
+        return _run_action(lambda: action_show_experiment_table(args.results_root))
     if args.mode == "extensions":
         return _run_action(lambda: action_run_extensions(args.results_root))
 
