@@ -148,6 +148,15 @@ python ACP_arden.py --mode ml-review-summary         # headline classifier figur
 python ACP_arden.py --mode pipeline-compare          # pretrained pipeline comparison
 python ACP_arden.py --mode pipeline-compare-summary  # its status
 python ACP_arden.py --mode extensions                # both, then regenerate figures
+
+# Extension experiments 9 to 12 (need the optional comparison models)
+python ACP_arden.py --mode verification-compare          # 9 and 10: SCRFD + ArcFace on LFW and CPLFW
+python ACP_arden.py --mode verification-compare-summary  # their headline figures
+python ACP_arden.py --mode arcface-review                # 11: the classifier on SCRFD + ArcFace
+python ACP_arden.py --mode arcface-review-summary        # the classifier on both pipelines
+python ACP_arden.py --mode mixed-pipelines               # 12: the detectors and embedders crossed
+python ACP_arden.py --mode mixed-pipelines-summary       # the two-by-two table
+python ACP_arden.py --mode experiment-table              # every experiment at a glance
 ```
 
 `--mode full` continues to mean exactly the original five-experiment
@@ -668,6 +677,50 @@ subgroup_fpir_tpir_with_confidence_intervals
 `results/figures/FIGURE_CAPTIONS.md` accompanies them, stating each figure's
 denominator, a short interpretation and the limitations that apply — a chart
 without its sample size invites over-reading.
+
+## Extension experiments 9 to 12
+
+These need the optional comparison models. Each writes into its own directory
+under `results/aggregate/` and uses its own run cache, so none of them can
+overwrite a baseline artefact or a cached run.
+
+### Experiments 9 and 10 — the comparison pipeline on one-to-one verification
+
+> Does the advantage SCRFD + ArcFace showed on gallery search also hold for
+> one-to-one verification, and under the pose variation of CPLFW?
+
+The same three-stage separation the baseline obeys: candidates from
+`pairsDevTrain.txt` only, selection and freezing on `pairsDevTest.txt`, then the
+frozen threshold applied unchanged to `pairs.txt` and to CPLFW. Reported per
+dataset, because the two pose different problems and the coverage difference
+runs in opposite directions.
+
+### Experiment 11 — the review classifier on the comparison pipeline
+
+> Does the review classifier still help once the models underneath it are
+> better?
+
+The same features, seed and identity groups as Experiment 7, so the two
+classifiers are directly comparable. The comparator is this pipeline's own
+frozen open-set threshold: the one Experiment 6 froze for SFace means nothing in
+ArcFace's embedding space, so a policy is developed and frozen here first.
+
+### Experiment 12 — the detectors and the embedders crossed
+
+> Which component earns the difference: the detector, the embedder, or the
+> pairing?
+
+Experiments 6, 8 and 11 change both components together, so none of them can
+attribute the result. This runs SCRFD with SFace and YuNet with ArcFace on the
+same held-out identities, each at a threshold frozen on the development
+identities by the rule Experiment 6 uses, completing a two-by-two.
+
+Only the three-image template method is run. The single-image control needs a
+one-to-one threshold calibrated in each crossing's own embedding space, and
+reusing another pipeline's would produce a control that means nothing.
+
+Neither crossing is a new model. Both halves of each are pretrained and used as
+published; only the arrangement is new.
 
 ## Reproducibility and the canonical run
 
