@@ -651,11 +651,12 @@ could be attributed to the embedding model alone.
 
 ### Figures
 
-`results/figures/` holds 16 figures, each in PNG (300 dpi) and SVG,
+`results/figures/` holds 17 figures, each in PNG (300 dpi) and SVG,
 generated from the published JSON and CSV artefacts rather than typed values,
 with PNG text metadata stripped and the privacy scan applied:
 
 ```text
+detector_embedder_crossed
 duplicate_detection_by_method
 false_reviews_per_1000_by_method
 female_male_aggregate_comparison

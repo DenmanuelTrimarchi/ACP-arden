@@ -75,7 +75,7 @@
       "threshold": 0.09565935602930503
     }
   },
-  "created_at": "2026-09-10T00:51:31.524537+00:00",
+  "created_at": "2026-09-11T01:36:00.667680+00:00",
   "dataset": "LFW",
   "dataset_archive_md5": "1b42dfed7d15c9b2dd63d5e5840c86ad",
   "evaluated_image_set_sha256": "094554d088c661087c7d886e79b3e0376daaeb42c17b228db3f2a0130c4f0d8f",
@@ -86,12 +86,12 @@
   "frozen_from_protocol": "pairsDevTest.txt",
   "frozen_from_protocol_sha256": "7cb06600ea8b2814ac26e946201cdb304296262aad67d046a16a7ec85d0ff87c",
   "model_sha256": {
-    "sface": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
-    "yunet": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91"
+    "detector": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+    "recognition": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
   },
-  "model_version": "opencv-sface-2021dec-yunet-2023mar",
+  "model_version": "insightface-scrfd-arcface-buffalo_l",
   "operating_strategy": "balanced_accuracy",
-  "preprocessing_revision": "opencv-yunet-sface-exif-bgr-l2-v1",
+  "preprocessing_revision": "insightface-arcface-112x112-v1",
   "protocol_file": "pairsDevTrain.txt",
   "protocol_sha256": "1d454dada7dfeca0e7eab6f65dc4e97a6312d44cf142207be28d688be92aabfa",
   "schema_version": 1,

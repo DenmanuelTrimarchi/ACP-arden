@@ -107,6 +107,31 @@ The classifier moves the burden in **opposite directions** on the two pipelines.
 The zero on the second row is an observation over 2,987 scored new profiles, not a demonstration that the population rate is zero; the interval around a zero-event rate remains wide. Detection fell from 96.80% to 95.90% in exchange.
 
 
+## 10c. Which component carries the gain
+
+Experiments 6, 8 and 11 each change the detector and the embedder together, so none of them can say which component earned the difference. Experiment 12 runs the two crossings on the same held-out identities, each at a threshold frozen on the development identities by the same rule.
+
+| Pipeline | Duplicates detected (TPIR@1) | 95% interval | Reviews per 1,000 |
+| --- | --- | --- | --- |
+| YuNet + SFace | 92.57% | 90.15–94.89% | 5.2 |
+| SCRFD + SFace | 94.99% | 93.39–96.50% | 6.4 |
+| YuNet + ArcFace | 97.24% | 95.98–98.47% | 1.7 |
+| SCRFD + ArcFace | 96.80% | 95.50–98.00% | 1.3 |
+
+Changing the embedder alone moves detection by +4.67 percentage points; changing the detector alone moves it by +2.43. The gain belongs almost entirely to the embedder.
+
+Which of those differences the intervals actually support is stated rather than assumed. Comparing independent intervals is conservative: separation is evidence of a difference, but overlap on its own does not establish that there is none.
+
+The intervals are disjoint for swapping the embedder at the YuNet detector, so that difference is supported.
+They overlap for swapping the embedder at the SCRFD detector, swapping the detector at the SFace embedder and swapping the detector at the ArcFace embedder, which this benchmark cannot separate.
+
+The two changes are not additive. Making both moves detection by +4.23 points, less than the +7.10 the separate gains would predict, and no better than the embedder alone. The stronger detector adds nothing once the stronger embedder is in place.
+
+This qualifies the project's own objective. Combining components did produce the best result, but not because the combination was greater than its parts: one component carried the improvement and the other contributed within sampling noise. A study that swapped both at once, as sections 8 and 10 do, would have credited the pairing for a gain that one component produced alone.
+
+The review burden orders the pipelines differently. The two ArcFace cells refer far fewer profiles than the two SFace cells, but within each embedder the stronger detector refers slightly more, having scored more of the harder photographs rather than failing to extract them. Detection and burden are therefore not improved by the same choice. Every interval on these burden figures overlaps every other, so that ordering is the direction the point estimates take rather than a difference this benchmark establishes.
+
+
 ## 11. Performance against cost
 
 A stronger pipeline is not free. Where it improves extraction and identification it also costs disk and latency, and the trade-off is shown in `implementation_layers_performance_latency` rather than omitted.

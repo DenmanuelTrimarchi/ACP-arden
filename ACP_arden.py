@@ -10220,6 +10220,25 @@ def _write_figure_captions(
         "portable performance claim. A layer without a measured complete-pipeline "
         "latency is omitted from this figure rather than given an invented value.",
         "",
+        "## The later comparisons (Experiments 9 to 12)",
+        "",
+        "- **pipeline_across_datasets** — both pipelines on one-to-one verification, "
+        "accuracy on the left and the share of photographs reaching comparison on the "
+        "right, for LFW and CPLFW. The two panels move in opposite directions on LFW "
+        "and must not be read as one quantity: the accuracy panel is conditional on "
+        "scored pairs, while coverage counts every intended pair. The coverage "
+        "difference on LFW follows from the protocol's requirement that exactly one "
+        "face be found, not from a detector failing to find faces.",
+        "- **detector_embedder_crossed** — the four detector and embedder combinations "
+        "on the same held-out identities, each at a threshold frozen on the "
+        "development identities. Colour identifies the embedder, so a pair of bars of "
+        "one colour shows the detector varied at a fixed embedder. Detection carries "
+        "95% identity-cluster bootstrap bounds; the referral panel does not, because "
+        "every burden interval overlaps every other and drawing them would suggest a "
+        "separation the benchmark does not support. The detection axis begins at 85% "
+        "rather than zero, since all four values exceed 92% and a full range would "
+        "hide the differences. Overlapping intervals are not evidence of equality.",
+        "",
         "## Open-set operating points and the review classifier",
         "",
         "- **open_set_operating_curve** — TPIR@1 (per cent, higher is better) against "
@@ -11278,6 +11297,11 @@ def generate_figures(
         path = aggregate_root / name
         return read_json_artifact(path) if path.is_file() else None
 
+    def load_from(base: Path, name: str) -> Optional[Dict[str, Any]]:
+        """The same, for the sub-directories the later experiments write into."""
+        path = base / name
+        return read_json_artifact(path) if path.is_file() else None
+
     open_set = load("bfw_open_set_test_metrics.json")
     review = load("ml_review_test_metrics.json")
     pipeline = load("pipeline_comparison_metrics.json")
@@ -12043,6 +12067,94 @@ def generate_figures(
         fig.suptitle(f"{pipeline_name} coverage and latency", y=1.0)
         path = figures_root / "pipeline_coverage_and_latency.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)
+
+
+    # --- Experiment 12: the two components varied one at a time --------------
+    crossed = {
+        name: load_from(aggregate_root / MIXED_PIPELINE_DIRNAME / name,
+                        "bfw_open_set_test_metrics.json")
+        for name in ("scrfd-sface", "yunet-arcface")
+    }
+    crossed_bands = {
+        name: load_from(aggregate_root / MIXED_PIPELINE_DIRNAME / name,
+                        "bfw_open_set_confidence_intervals.json")
+        for name in ("scrfd-sface", "yunet-arcface")
+    }
+    if all(crossed.values()) and pipeline:
+        held = pipeline.get("held_out_metrics") or {}
+
+        def matched(fragment: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+            for key, metrics in held.items():
+                if fragment in key:
+                    return (metrics.get("rates") or {},
+                            metrics.get("confidence_intervals") or {})
+            return {}, {}
+
+        def crossing(name: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+            payload = crossed[name] or {}
+            point = ((payload.get("methods") or {}).get(METHOD_B) or {}).get(
+                "primary_operating_point") or {}
+            return point, ((crossed_bands[name] or {}).get("intervals") or {})
+
+        cells = [
+            ("YuNet\n+ SFace", *matched("opencv")),
+            ("SCRFD\n+ SFace", *crossing("scrfd-sface")),
+            ("YuNet\n+ ArcFace", *crossing("yunet-arcface")),
+            ("SCRFD\n+ ArcFace", *matched("insightface")),
+        ]
+        if all(rates for _n, rates, _b in cells):
+            names = [name for name, _r, _b in cells]
+            detection = [_percent(rates.get("tpir_rank1")) for _n, rates, _b in cells]
+            # Asymmetric error bars, because a percentile interval is not
+            # centred on its point estimate.
+            lower, upper = [], []
+            for (_name, rates, bands), point in zip(cells, detection):
+                band = bands.get("tpir_rank1") or {}
+                low, high = band.get("lower_95"), band.get("upper_95")
+                if isinstance(low, (int, float)) and isinstance(high, (int, float)):
+                    lower.append(max(0.0, point - low * 100.0))
+                    upper.append(max(0.0, high * 100.0 - point))
+                else:
+                    lower.append(0.0); upper.append(0.0)
+            burden = [rates.get("false_reviews_per_1000_non_mated", float("nan"))
+                      for _n, rates, _b in cells]
+            # SFace cells first, then ArcFace, so the embedder groups read as pairs.
+            colours = ["#4C72B0", "#4C72B0", "#DD8452", "#DD8452"]
+
+            fig, (left, right) = plt.subplots(1, 2, figsize=(12.0, 5.0))
+            positions = np.arange(len(names))
+            bars = left.bar(positions, detection, 0.6, color=colours,
+                            yerr=[lower, upper], capsize=4, ecolor="#444444")
+            left.bar_label(bars, fmt="%.2f%%", fontsize=8, padding=6)
+            left.set_ylim(85, 102); left.set_yticks(list(range(85, 101, 5)))
+            left.yaxis.set_major_formatter(FuncFormatter(lambda v, _p: f"{v:.0f}%"))
+            left.set_title("Known duplicates detected (TPIR@1), with 95% intervals",
+                           fontsize=10)
+            left.set_ylabel("Per cent", fontsize=9)
+
+            bars = right.bar(positions, burden, 0.6, color=colours)
+            right.bar_label(bars, fmt="%.1f", fontsize=8, padding=3)
+            right.set_ylim(bottom=0)
+            right.set_title("New profiles wrongly referred, per 1,000", fontsize=10)
+            right.set_ylabel("Referrals per 1,000", fontsize=9)
+
+            for ax in (left, right):
+                ax.set_xticks(positions)
+                ax.set_xticklabels(names, fontsize=9)
+                ax.grid(axis="y", alpha=0.3)
+            legend = [
+                Line2D([0], [0], color="#4C72B0", lw=8, label="SFace embedder (128)"),
+                Line2D([0], [0], color="#DD8452", lw=8, label="ArcFace embedder (512)"),
+            ]
+            left.legend(handles=legend, fontsize=9, loc="lower left", framealpha=0.95)
+            fig.suptitle(
+                "The detector and the embedder varied one at a time\n"
+                "Detection follows the embedder; the detector adds little once "
+                "ArcFace is in place",
+                fontsize=11, y=1.04,
+            )
+            path = figures_root / "detector_embedder_crossed.png"
+            _save_figure(fig, path); plt.close(fig); written.append(path)
 
     write_implementation_layer_artefacts(aggregate_root)
     _write_figure_captions(aggregate_root, figures_root, written)
