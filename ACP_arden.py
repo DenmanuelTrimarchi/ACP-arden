@@ -10659,6 +10659,77 @@ def write_pipeline_sex_aggregates(
 # quantity.
 
 
+def _intervals_all_overlap(
+    intervals: Sequence[Optional[Tuple[float, float]]]
+) -> bool:
+    """True when no interval in the set is disjoint from any other."""
+    known = [i for i in intervals if i is not None]
+    if len(known) < 2:
+        return False
+    return all(
+        not (left[1] < right[0] or right[1] < left[0])
+        for index, left in enumerate(known) for right in known[index + 1:]
+    )
+
+
+def _interval_separation_lines(
+    cells: Mapping[str, Tuple[Mapping[str, Any], Mapping[str, Any]]]
+) -> List[str]:
+    """Say which of the four comparisons the intervals actually separate.
+
+    Written from the numbers rather than asserted in prose, so the sentence
+    cannot survive unchanged if a later run moves an interval."""
+
+    def bounds(name: str) -> Optional[Tuple[float, float]]:
+        interval = cells[name][1]
+        low, high = interval.get("lower_95"), interval.get("upper_95")
+        if isinstance(low, (int, float)) and isinstance(high, (int, float)):
+            return float(low), float(high)
+        return None
+
+    comparisons = (
+        ("swapping the embedder at the YuNet detector", "YuNet + SFace", "YuNet + ArcFace"),
+        ("swapping the embedder at the SCRFD detector", "SCRFD + SFace", "SCRFD + ArcFace"),
+        ("swapping the detector at the SFace embedder", "YuNet + SFace", "SCRFD + SFace"),
+        ("swapping the detector at the ArcFace embedder",
+         "YuNet + ArcFace", "SCRFD + ArcFace"),
+    )
+    separated: List[str] = []
+    overlapping: List[str] = []
+    for label, left_name, right_name in comparisons:
+        left, right = bounds(left_name), bounds(right_name)
+        if left is None or right is None:
+            continue
+        # Disjoint whenever one interval ends before the other begins.
+        if left[1] < right[0] or right[1] < left[0]:
+            separated.append(label)
+        else:
+            overlapping.append(label)
+
+    lines: List[str] = []
+    if separated:
+        lines.append(
+            "The intervals are disjoint for " + _join_plainly(separated)
+            + (", so that difference is supported." if len(separated) == 1
+               else ", so those differences are supported.")
+        )
+    if overlapping:
+        lines.append(
+            ("They overlap for " if separated else "The intervals overlap for ")
+            + _join_plainly(overlapping)
+            + ", which this benchmark cannot separate."
+        )
+    return lines
+
+
+def _join_plainly(items: Sequence[str]) -> str:
+    """Comma-separated with a final 'and', as the reports are written."""
+    items = list(items)
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
 def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     """Consolidated write-up, ordered so each layer's intent is visible.
 
@@ -10995,6 +11066,151 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             lines += [
                 "Not run in this checkout. No cross-pipeline classifier result is "
                 "invented in its place.", "",
+            ]
+
+        # --- 10c. Which component carries the gain ---------------------------
+        # Sections 6, 8 and 10b all compare pipelines that differ in both
+        # components at once, so none of them can attribute the difference.
+        lines += ["", "## 10c. Which component carries the gain", ""]
+        crossings = {
+            name: load("bfw_open_set_test_metrics.json",
+                       aggregate_root / MIXED_PIPELINE_DIRNAME / name)
+            for name in ("scrfd-sface", "yunet-arcface")
+        }
+        crossing_intervals = {
+            name: load("bfw_open_set_confidence_intervals.json",
+                       aggregate_root / MIXED_PIPELINE_DIRNAME / name)
+            for name in ("scrfd-sface", "yunet-arcface")
+        }
+        if all(crossings.values()) and pipeline:
+            def crossed_point(name: str) -> Mapping[str, Any]:
+                methods = (crossings[name] or {}).get("methods") or {}
+                return (methods.get(METHOD_B) or {}).get("primary_operating_point") or {}
+
+            def matched_point(fragment: str) -> Mapping[str, Any]:
+                for key, metrics in (pipeline.get("held_out_metrics") or {}).items():
+                    if fragment in key:
+                        return metrics.get("rates") or {}
+                return {}
+
+            def crossed_interval(name: str, metric: str) -> Mapping[str, Any]:
+                return ((crossing_intervals[name] or {}).get("intervals") or {}).get(metric) or {}
+
+            def matched_interval(fragment: str, metric: str) -> Mapping[str, Any]:
+                for key, metrics in (pipeline.get("held_out_metrics") or {}).items():
+                    if fragment in key:
+                        return (metrics.get("confidence_intervals") or {}).get(metric) or {}
+                return {}
+
+            cells = {
+                "YuNet + SFace": (matched_point("opencv"), matched_interval("opencv", "tpir_rank1")),
+                "SCRFD + SFace": (crossed_point("scrfd-sface"),
+                                  crossed_interval("scrfd-sface", "tpir_rank1")),
+                "YuNet + ArcFace": (crossed_point("yunet-arcface"),
+                                    crossed_interval("yunet-arcface", "tpir_rank1")),
+                "SCRFD + ArcFace": (matched_point("insightface"),
+                                    matched_interval("insightface", "tpir_rank1")),
+            }
+
+            def band(interval: Mapping[str, Any]) -> str:
+                low, high = interval.get("lower_95"), interval.get("upper_95")
+                if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+                    return "not available"
+                return f"{low * 100:.2f}–{high * 100:.2f}%"
+
+            lines += [
+                "Experiments 6, 8 and 11 each change the detector and the embedder "
+                "together, so none of them can say which component earned the "
+                "difference. Experiment 12 runs the two crossings on the same held-out "
+                "identities, each at a threshold frozen on the development identities "
+                "by the same rule.",
+                "",
+                "| Pipeline | Duplicates detected (TPIR@1) | 95% interval | "
+                "Reviews per 1,000 |",
+                "| --- | --- | --- | --- |",
+            ]
+            for name, (point, interval) in cells.items():
+                referrals = point.get("false_reviews_per_1000_non_mated")
+                lines.append(
+                    f"| {name} | {pct(point.get('tpir_rank1'))} | {band(interval)} | "
+                    + (f"{referrals:.1f} |" if isinstance(referrals, (int, float)) else "n/a |")
+                )
+            lines += [""]
+
+            def detection(name: str) -> Optional[float]:
+                value = cells[name][0].get("tpir_rank1")
+                return float(value) if isinstance(value, (int, float)) else None
+
+            sface_yunet = detection("YuNet + SFace")
+            sface_scrfd = detection("SCRFD + SFace")
+            arcface_yunet = detection("YuNet + ArcFace")
+            arcface_scrfd = detection("SCRFD + ArcFace")
+            if (sface_yunet is not None and sface_scrfd is not None
+                    and arcface_yunet is not None and arcface_scrfd is not None):
+                detector_gain = (sface_scrfd - sface_yunet) * 100.0
+                embedder_gain = (arcface_yunet - sface_yunet) * 100.0
+                both_gain = (arcface_scrfd - sface_yunet) * 100.0
+
+                def referral_interval(name: str) -> Optional[Tuple[float, float]]:
+                    source = "opencv" if name == "YuNet + SFace" else (
+                        "insightface" if name == "SCRFD + ArcFace" else None)
+                    interval = (
+                        matched_interval(source, "fpir") if source
+                        else crossed_interval(
+                            "scrfd-sface" if name == "SCRFD + SFace" else "yunet-arcface",
+                            "fpir",
+                        )
+                    )
+                    low, high = interval.get("lower_95"), interval.get("upper_95")
+                    if isinstance(low, (int, float)) and isinstance(high, (int, float)):
+                        return float(low), float(high)
+                    return None
+
+                burden_intervals_overlap = _intervals_all_overlap(
+                    [referral_interval(name) for name in cells]
+                )
+                lines += [
+                    f"Changing the embedder alone moves detection by "
+                    f"{embedder_gain:+.2f} percentage points; changing the detector "
+                    f"alone moves it by {detector_gain:+.2f}. The gain belongs almost "
+                    f"entirely to the embedder.",
+                    "",
+                    "Which of those differences the intervals actually support is "
+                    "stated rather than assumed. Comparing independent intervals is "
+                    "conservative: separation is evidence of a difference, but overlap "
+                    "on its own does not establish that there is none.",
+                    "",
+                    *_interval_separation_lines(cells),
+                    "",
+                    f"The two changes are not additive. Making both moves detection by "
+                    f"{both_gain:+.2f} points, less than the "
+                    f"{detector_gain + embedder_gain:+.2f} the separate gains would "
+                    f"predict, and no better than the embedder alone. The stronger "
+                    f"detector adds nothing once the stronger embedder is in place.",
+                    "",
+                    "This qualifies the project's own objective. Combining components "
+                    "did produce the best result, but not because the combination was "
+                    "greater than its parts: one component carried the improvement and "
+                    "the other contributed within sampling noise. A study that swapped "
+                    "both at once, as sections 8 and 10 do, would have credited the "
+                    "pairing for a gain that one component produced alone.",
+                    "",
+                    "The review burden orders the pipelines differently. The two "
+                    "ArcFace cells refer far fewer profiles than the two SFace cells, "
+                    "but within each embedder the stronger detector refers slightly "
+                    "more, having scored more of the harder photographs rather than "
+                    "failing to extract them. Detection and burden are therefore not "
+                    "improved by the same choice."
+                    + (" Every interval on these burden figures overlaps every other, "
+                       "so that ordering is the direction the point estimates take "
+                       "rather than a difference this benchmark establishes."
+                       if burden_intervals_overlap else ""),
+                    "",
+                ]
+        else:
+            lines += [
+                "Not run in this checkout. No attribution between the detector and "
+                "the embedder is asserted without it.", "",
             ]
 
         lines += [

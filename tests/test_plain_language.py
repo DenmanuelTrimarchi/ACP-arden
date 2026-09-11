@@ -932,4 +932,7 @@ def test_each_crossing_freezes_a_threshold_of_its_own() -> None:
 def test_the_crossings_do_not_overwrite_the_baseline_artefacts() -> None:
     _skip_without_experiment_twelve()
     baseline = json.loads((AGG / "bfw_open_set_test_metrics.json").read_text())
-    assert baseline["pipeline"]["pipeline_name"] == acp.MODEL_VERSION
+    # Experiment 6's own artefact still names the baseline pair, with the
+    # digest keys that pipeline uses.
+    assert baseline["pipeline_name"] == acp.MODEL_VERSION
+    assert set(baseline["model_sha256"]) == {"yunet", "sface"}
