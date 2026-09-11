@@ -827,3 +827,109 @@ def test_the_model_table_reports_measured_cost() -> None:
     assert " ms" in text and " MB" in text
     # A threshold belongs to the model that produced it.
     assert "never applied to the other" in text
+
+
+# --- Experiment 12: the crossed pipelines ------------------------------------
+
+MIXED = AGG / "mixed_pipelines"
+
+
+def _skip_without_experiment_twelve(crossing: str = "scrfd-sface") -> None:
+    """The directory appears when the run starts, so its presence is not
+    evidence that the crossing finished."""
+    if not (MIXED / crossing / "bfw_open_set_test_metrics.json").is_file():
+        pytest.skip(f"Experiment 12 ({crossing}) has not completed in this checkout")
+
+
+def test_each_crossing_has_its_own_run_cache() -> None:
+    """Sharing a cache base would let one crossing overwrite the scored run of
+    another, or of the baseline the whole study depends on."""
+    paths = {acp.mixed_run_cache(c) for c in acp.MIXED_CROSSINGS}
+    assert len(paths) == len(acp.MIXED_CROSSINGS)
+    assert acp.CANONICAL_RUN_CACHE not in paths
+    assert acp.ARCFACE_RUN_CACHE not in paths
+
+
+def _skip_without_the_comparison_models() -> None:
+    """Describing a crossing re-verifies both model files, so the optional
+    comparison pack must be present for these checks to mean anything."""
+    config = acp.EnvironmentConfig.load()
+    if not acp.arcface_preconditions(config)["ready"]:
+        pytest.skip("The optional comparison models are not installed")
+
+
+def test_the_crossings_are_described_with_the_models_they_actually_use() -> None:
+    """A crossing labelled with the wrong pipeline name would misattribute its
+    result to a pipeline that never produced it."""
+    _skip_without_the_comparison_models()
+    config = acp.EnvironmentConfig.load()
+    scrfd_sface = acp.mixed_pipeline_description("scrfd-sface", config)
+    assert scrfd_sface.embedding_dimensions == acp.EMBEDDING_DIMENSIONS
+    assert "SCRFD" in scrfd_sface.detector_name
+    assert "SFace" in scrfd_sface.embedding_model_name
+
+    yunet_arcface = acp.mixed_pipeline_description("yunet-arcface", config)
+    assert yunet_arcface.embedding_dimensions == 512
+    assert "YuNet" in yunet_arcface.detector_name
+    assert "ArcFace" in yunet_arcface.embedding_model_name
+
+    # The two halves must come from different pipelines, or it is not a crossing.
+    assert scrfd_sface.model_sha256["detector"] != yunet_arcface.model_sha256["detector"]
+    assert scrfd_sface.model_sha256["recognition"] != yunet_arcface.model_sha256["recognition"]
+
+
+def test_an_unknown_crossing_is_refused() -> None:
+    with pytest.raises(ValueError):
+        acp.mixed_pipeline_description("yunet-sface")
+
+
+def test_the_crossed_summary_reports_its_absence_gracefully() -> None:
+    """Every summary must say what to run rather than fail, because the
+    crossings are optional and need the comparison models."""
+    text = acp.render_mixed_pipeline_summary(Path("/nonexistent-results-root"))
+    assert "not available yet" in text
+    assert "mixed-pipelines" in text
+
+
+def test_experiment_twelve_is_wired_into_the_menu() -> None:
+    assert "mixed-pipelines" in acp.MODES
+    assert "mixed-pipelines-summary" in acp.MODES
+    assert acp.MENU_PREVIEW_KEYS["19"] == "mixed-pipelines"
+    assert "mixed-pipelines" in acp.EXPERIMENT_PREVIEWS
+    assert "19. Run Experiment 12" in acp.MENU_TEXT
+    assert "20. Show the saved Experiment 12" in acp.MENU_TEXT
+
+
+def test_experiment_twelve_artefacts_name_the_crossing_that_produced_them() -> None:
+    _skip_without_experiment_twelve()
+    expected = {"scrfd-sface": 128, "yunet-arcface": 512}
+    for crossing, dimensions in expected.items():
+        path = MIXED / crossing / "bfw_open_set_test_metrics.json"
+        if not path.is_file():
+            continue
+        payload = json.loads(path.read_text())
+        assert payload["pipeline"]["pipeline_name"] == f"mixed-{crossing}"
+        assert payload["pipeline"]["embedding_dimensions"] == dimensions
+        assert payload["crossing"] == crossing
+
+
+def test_each_crossing_freezes_a_threshold_of_its_own() -> None:
+    """A threshold belongs to the embedding space that produced it, so no two
+    pipelines may report the same frozen operating point by inheritance."""
+    _skip_without_experiment_twelve()
+    target = str(acp.PRIMARY_FPIR_TARGET)
+    baseline = json.loads((AGG / "bfw_open_set_threshold.json").read_text())
+    baseline_threshold = baseline["operating_points"][target]["threshold"]
+    for crossing in acp.MIXED_CROSSINGS:
+        path = MIXED / crossing / "bfw_open_set_threshold.json"
+        if not path.is_file():
+            continue
+        payload = json.loads(path.read_text())
+        assert payload["status"] == acp.OPEN_SET_STATUS_FROZEN
+        assert payload["operating_points"][target]["threshold"] != baseline_threshold
+
+
+def test_the_crossings_do_not_overwrite_the_baseline_artefacts() -> None:
+    _skip_without_experiment_twelve()
+    baseline = json.loads((AGG / "bfw_open_set_test_metrics.json").read_text())
+    assert baseline["pipeline"]["pipeline_name"] == acp.MODEL_VERSION

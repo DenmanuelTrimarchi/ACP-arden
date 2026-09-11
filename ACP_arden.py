@@ -4104,6 +4104,7 @@ def open_set_protocol_summary(
     dataset: Optional[BfwDataset] = None,
     detector: Any = None,
     embedder: Any = None,
+    description: Optional[PipelineDescription] = None,
 ) -> Dict[str, Any]:
     """Public manifest summary: opaque identifiers and counts only.
 
@@ -4134,6 +4135,7 @@ def open_set_protocol_summary(
             "by_subgroup": by_subgroup,
         }
 
+    _identity = pipeline_identity_fields(detector, embedder, description)
     return {
         "artifact_type": "bfw_open_set_protocol_summary",
         "schema_version": SCHEMA_VERSION,
@@ -4145,13 +4147,8 @@ def open_set_protocol_summary(
         "public_manifest_sha256": sha256_of_text(
             "\n".join(sorted(f"{e.partition}:{e.role}:{e.sample_id}" for e in protocol.entries))
         ),
-        "model_version": MODEL_VERSION,
-        "pipeline_name": MODEL_VERSION,
-        "preprocessing_revision": PREPROCESSING_REVISION,
-        "model_sha256": {
-            "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
-            "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
-        },
+        "pipeline_name": _identity["model_version"],
+        **_identity,
         "software_environment": software_environment_report(),
         "dataset_provenance": (
             bfw_dataset_provenance(dataset) if dataset is not None else None
@@ -5715,21 +5712,21 @@ def evaluate_open_set_success_criteria(
 
 
 def _open_set_provenance(
-    dataset: BfwDataset, protocol: OpenSetProtocol, detector: Any, embedder: Any
+    dataset: BfwDataset,
+    protocol: OpenSetProtocol,
+    detector: Any,
+    embedder: Any,
+    description: Optional[PipelineDescription] = None,
 ) -> Dict[str, Any]:
+    _identity = pipeline_identity_fields(detector, embedder, description)
     return {
         "schema_version": SCHEMA_VERSION,
         "methodology_revision": GALLERY_METHODOLOGY_REVISION,
         "opaque_id_version": OPAQUE_ID_VERSION,
         "created_at": utc_now_iso(),
         "software_environment": software_environment_report(),
-        "pipeline_name": MODEL_VERSION,
-        "model_version": MODEL_VERSION,
-        "preprocessing_revision": PREPROCESSING_REVISION,
-        "model_sha256": {
-            "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
-            "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
-        },
+        "pipeline_name": _identity["model_version"],
+        **_identity,
         "dataset_provenance": bfw_dataset_provenance(dataset),
         "seed": protocol.seed,
         "policy_note": POLICY_NOTE,
@@ -6862,6 +6859,36 @@ class PipelineDescription:
                 "between pipelines cannot be attributed to the embedding model alone."
             ),
         }
+
+
+def pipeline_identity_fields(
+    detector: Any = None,
+    embedder: Any = None,
+    description: Optional[PipelineDescription] = None,
+) -> Dict[str, Any]:
+    """The model identity an artefact records: name, preprocessing and digests.
+
+    ``description`` must be supplied whenever the models are not the baseline
+    pair. Without it the fields name YuNet and SFace unconditionally, which
+    stamps a comparison run with the wrong model names under the right digests
+    and leaves the artefact contradicting itself."""
+    if description is not None:
+        return {
+            "model_version": description.pipeline_name,
+            "preprocessing_revision": description.preprocessing_revision,
+            "model_sha256": dict(description.model_sha256),
+        }
+    return {
+        "model_version": MODEL_VERSION,
+        "preprocessing_revision": PREPROCESSING_REVISION,
+        # Record the verified model digests. The synthetic stand-ins used by
+        # the self-tests carry none; the real wrappers always do, and it is
+        # their verified value that reaches the artefact.
+        "model_sha256": {
+            "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
+            "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
+        },
+    }
 
 
 def primary_pipeline_description(detector: Any = None, embedder: Any = None) -> PipelineDescription:
@@ -8635,6 +8662,357 @@ def render_arcface_review_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         )]
     lines += ["", wrap_plain(DENOMINATOR_NOTE), "", wrap_plain(REFERRAL_DISCLAIMER)]
     return "\n".join(lines)
+
+# --- Experiment 12: crossing the two pipelines -------------------------------
+#
+# Experiments 6 and 8 each keep a detector and an embedder together, so the
+# advantage the comparison pipeline showed could belong to either component or
+# only to the pairing. Crossing them fills the two empty cells of the design:
+#
+#                   SFace embedder      ArcFace embedder
+#   YuNet detector   Experiment 6          crossing
+#   SCRFD detector     crossing          Experiment 8
+#
+# Each crossing is calibrated afresh on the development identities. A cosine
+# similarity means something different in every embedding space, so no frozen
+# threshold transfers between these four columns.
+
+MIXED_PIPELINE_DIRNAME = "mixed_pipelines"
+
+# Detector first, embedder second, matching the order the names are read in.
+MIXED_CROSSINGS = ("scrfd-sface", "yunet-arcface")
+
+MIXED_LICENCE_NOTE = (
+    "This pipeline combines an OpenCV Zoo model with an InsightFace model. Both "
+    "licences therefore apply together: the OpenCV weights are redistributable "
+    "for research use, and the InsightFace weights are used here only for "
+    "local, non-commercial academic evaluation that publishes aggregate metrics "
+    "alone. Neither model is trained, fine-tuned or redistributed."
+)
+
+
+def mixed_pipeline_description(
+    crossing: str, config: Optional[EnvironmentConfig] = None
+) -> PipelineDescription:
+    """Name, dimension and verified digests for one crossing.
+
+    The digests are re-verified here rather than copied, so a crossing cannot
+    be recorded against a model file that has since changed."""
+    if crossing not in MIXED_CROSSINGS:
+        raise ValueError(f"Unknown crossing {crossing!r}; expected one of {MIXED_CROSSINGS}.")
+    config = config or EnvironmentConfig.load()
+    arcface = arcface_pipeline_description(config)
+    primary_root = Path(config.require_model_root())
+    if crossing == "scrfd-sface":
+        return PipelineDescription(
+            pipeline_name="mixed-scrfd-sface",
+            detector_name="InsightFace SCRFD (det_10g)",
+            embedding_model_name="OpenCV SFace 2021dec",
+            embedding_dimensions=EMBEDDING_DIMENSIONS,
+            preprocessing_revision="mixed-scrfd-sface-112x112-v1",
+            model_sha256={
+                "detector": arcface.model_sha256["detector"],
+                "recognition": verify_model_file(
+                    primary_root / SFACE_FILENAME, SFACE_SHA256
+                ),
+            },
+            licence_note=MIXED_LICENCE_NOTE,
+        )
+    return PipelineDescription(
+        pipeline_name="mixed-yunet-arcface",
+        detector_name="OpenCV YuNet 2023mar",
+        embedding_model_name=f"InsightFace ArcFace {ARCFACE_MODEL_PACK} (w600k_r50)",
+        embedding_dimensions=512,
+        preprocessing_revision="mixed-yunet-arcface-112x112-v1",
+        model_sha256={
+            "detector": verify_model_file(primary_root / YUNET_FILENAME, YUNET_SHA256),
+            "recognition": arcface.model_sha256["recognition"],
+        },
+        licence_note=MIXED_LICENCE_NOTE,
+    )
+
+
+def load_mixed_pipeline(
+    crossing: str, config: Optional[EnvironmentConfig] = None
+) -> Tuple[Tuple[FaceDetector, FaceEmbedder], PipelineDescription]:
+    """One detector and one embedder drawn from different pipelines.
+
+    Both pipelines are loaded because the InsightFace loader prepares the
+    detector and the recognition model together; only the two halves named by
+    the crossing are returned."""
+    config = config or EnvironmentConfig.load()
+    description = mixed_pipeline_description(crossing, config)
+    yunet, sface = load_models(config.require_model_root())
+    (scrfd, arcface), _ = load_arcface_pipeline(config)
+    if crossing == "scrfd-sface":
+        return (scrfd, sface), description
+    return (yunet, arcface), description
+
+
+def mixed_run_cache(crossing: str) -> Path:
+    """A cache base of its own for each crossing.
+
+    The canonical cache is keyed by partition alone, so every pipeline needs a
+    separate base or one would silently overwrite another's scored run."""
+    return RAW_ROOT / f"canonical_mixed_{crossing.replace('-', '_')}_run.json"
+
+
+def run_mixed_pipeline_experiment(
+    crossing: str,
+    output_root: Path = AGGREGATE_ROOT,
+    *,
+    seed: int = DEFAULT_RANDOM_SEED,
+    bootstrap_replicates: int = BOOTSTRAP_REPLICATES,
+) -> Dict[str, Any]:
+    """Develop, freeze and test one crossing on the BFW open-set protocol.
+
+    The stages are the ones Experiment 6 obeys: a threshold selected on the
+    development identities alone by the same rule, then applied unchanged to
+    the held-out identities. Only the three-image template method is run. The
+    single-image control needs an LFW 1:1 threshold calibrated for this exact
+    embedding space, which no crossing has, and reusing another pipeline's
+    would produce a control that means nothing."""
+    config = EnvironmentConfig.load()
+    (detector, embedder), description = load_mixed_pipeline(crossing, config)
+    sub_root = Path(output_root) / MIXED_PIPELINE_DIRNAME / crossing
+    sub_root.mkdir(parents=True, exist_ok=True)
+    base_cache = mixed_run_cache(crossing)
+
+    image_root, metadata_path = config.require_bfw_roots()
+    dataset = load_bfw_dataset(image_root, metadata_path)
+    protocol = build_open_set_protocol(dataset, seed=seed)
+    summary = open_set_protocol_summary(
+        protocol, dataset=dataset, detector=detector, embedder=embedder,
+        description=description,
+    )
+    write_json_artifact(sub_root / "bfw_open_set_protocol_summary.json", summary)
+
+    announce_stage(1, 3, f"Freezing an operating threshold for {description.detector_name} "
+                         f"+ {description.embedding_model_name}",
+                   "Development identities only, using the rule Experiment 6 uses.")
+    development, development_digest, development_context = canonical_primary_run(
+        protocol, partition="development", detector=detector, embedder=embedder,
+        dataset=dataset, base_cache=base_cache,
+    )
+    operating_points = {
+        str(target): select_open_set_threshold(development.search_results, target_fpir=target)
+        for target in FPIR_TARGETS
+    }
+    policy_path = sub_root / "bfw_open_set_threshold.json"
+    write_json_artifact(policy_path, {
+        "artifact_type": "bfw_open_set_threshold",
+        "status": OPEN_SET_STATUS_FROZEN,
+        "method": METHOD_B,
+        "primary_fpir_target": PRIMARY_FPIR_TARGET,
+        "operating_points": operating_points,
+        "selection_rule": OPEN_SET_SELECTION_RULE,
+        "developed_on": "BFW development partition (identity-disjoint from test)",
+        "public_manifest_sha256": summary["public_manifest_sha256"],
+        "protocol_digest": summary["public_manifest_sha256"],
+        **_provenance_block(
+            dataset, protocol, summary, detector, embedder,
+            artifact_type="bfw_open_set_threshold", description=description,
+        ),
+    })
+    frozen_threshold = require_frozen_open_set_policy(
+        read_json_artifact(policy_path), context=project_relative(policy_path)
+    )
+    announce(f"Froze the {description.pipeline_name} open-set policy at "
+             f"{project_relative(policy_path)}")
+
+    announce_stage(2, 3, "Testing unseen identities",
+                   "The frozen threshold is applied unchanged to the held-out group.")
+    test_run, test_digest, test_context = canonical_primary_run(
+        protocol, partition="test", detector=detector, embedder=embedder,
+        dataset=dataset, base_cache=base_cache,
+    )
+    coverage = open_set_coverage(test_run)
+    rates = open_set_rates_at_threshold(test_run.search_results, frozen_threshold)
+
+    provenance = _provenance_block(
+        dataset, protocol, summary, detector, embedder,
+        artifact_type="bfw_open_set_test_metrics", description=description,
+    )
+    provenance["canonical_test_run_digest"] = test_digest
+    provenance["canonical_development_run_digest"] = development_digest
+    provenance["canonical_test_context_sha256"] = context_digest(test_context)
+    provenance["canonical_development_context_sha256"] = context_digest(development_context)
+    provenance["cache_schema_version"] = CANONICAL_CACHE_SCHEMA_VERSION
+
+    test_payload = {
+        "status": OPEN_SET_STATUS_TESTED,
+        "crossing": crossing,
+        "public_manifest_sha256": summary["public_manifest_sha256"],
+        "protocol_digest": summary["public_manifest_sha256"],
+        "threshold_source": project_relative(policy_path),
+        "operating_threshold": frozen_threshold,
+        "primary_fpir_target": PRIMARY_FPIR_TARGET,
+        "methods": {
+            METHOD_B: {
+                "coverage": coverage,
+                "operating_points": {
+                    str(target): open_set_rates_at_threshold(
+                        test_run.search_results, operating_points[str(target)]["threshold"]
+                    )
+                    for target in FPIR_TARGETS
+                },
+                "primary_operating_point": rates,
+                **open_set_duplicate_detection(test_run, frozen_threshold),
+            },
+        },
+        "success_criteria": evaluate_open_set_success_criteria(coverage, rates),
+        **provenance,
+    }
+    write_json_artifact(sub_root / "bfw_open_set_test_metrics.json", test_payload)
+
+    announce_stage(3, 3, f"Computing {bootstrap_replicates} cluster-bootstrap replicates",
+                   "Identities, not images, are resampled.")
+    intervals = cluster_bootstrap_intervals(
+        test_run.search_results, threshold=frozen_threshold,
+        replicates=bootstrap_replicates, seed=seed,
+    )
+    write_json_artifact(sub_root / "bfw_open_set_confidence_intervals.json", {
+        "replicates": bootstrap_replicates,
+        "seed": seed,
+        "operating_threshold": frozen_threshold,
+        "intervals": intervals,
+        **_provenance_block(
+            dataset, protocol, summary, detector, embedder,
+            artifact_type="bfw_open_set_confidence_intervals", description=description,
+        ),
+    })
+
+    # Published artefacts are scanned like every other, so a private storage
+    # path cannot reach a result through this chain either.
+    leaks = find_path_leaks(sub_root, forbidden_substrings=default_forbidden_path_substrings())
+    if leaks:
+        raise PrivacyLeakError(
+            f"{len(leaks)} personal or absolute path(s) found in the {crossing} artefacts."
+        )
+    announce(f"Privacy validation passed for every {crossing} artefact")
+    return test_payload
+
+
+def run_mixed_pipeline_matrix(
+    output_root: Path = AGGREGATE_ROOT,
+    *,
+    seed: int = DEFAULT_RANDOM_SEED,
+    bootstrap_replicates: int = BOOTSTRAP_REPLICATES,
+) -> Dict[str, Any]:
+    """Both crossings, completing the two-by-two against Experiments 6 and 8."""
+    results: Dict[str, Any] = {}
+    for index, crossing in enumerate(MIXED_CROSSINGS, start=1):
+        announce(f"--- Crossing {index} of {len(MIXED_CROSSINGS)}: {crossing} ---")
+        results[crossing] = run_mixed_pipeline_experiment(
+            crossing, output_root, seed=seed, bootstrap_replicates=bootstrap_replicates
+        )
+    return results
+
+def render_mixed_pipeline_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """The detector and the embedder varied one at a time.
+
+    Experiments 6 and 8 change both components together, so the gap between
+    them cannot say which one earned it. Reading the rows of this table gives
+    the detector's contribution at a fixed embedder, and the columns give the
+    embedder's at a fixed detector."""
+    root = Path(aggregate_root)
+    pipeline = _load_optional(root, "pipeline_comparison_metrics.json")
+    held_out = (pipeline or {}).get("held_out_metrics") or {}
+
+    def matched(fragment: str) -> Optional[Mapping[str, Any]]:
+        for name, metrics in held_out.items():
+            if fragment in name:
+                rates = metrics.get("rates")
+                return rates if isinstance(rates, Mapping) else None
+        return None
+
+    def crossed(crossing: str) -> Optional[Mapping[str, Any]]:
+        payload = _load_optional(
+            root / MIXED_PIPELINE_DIRNAME / crossing, "bfw_open_set_test_metrics.json"
+        )
+        if not payload:
+            return None
+        point = ((payload.get("methods") or {}).get(METHOD_B) or {}).get(
+            "primary_operating_point"
+        )
+        return point if isinstance(point, Mapping) else None
+
+    cells = {
+        ("yunet", "sface"): matched("opencv"),
+        ("scrfd", "arcface"): matched("insightface"),
+        ("scrfd", "sface"): crossed("scrfd-sface"),
+        ("yunet", "arcface"): crossed("yunet-arcface"),
+    }
+    if cells[("scrfd", "sface")] is None and cells[("yunet", "arcface")] is None:
+        return missing_artefact_message(
+            "crossed pipelines", "option 19 (--mode mixed-pipelines)"
+        )
+
+    def cell(detector: str, embedder: str, render) -> str:
+        rates = cells[(detector, embedder)]
+        return render(rates) if rates else "not run"
+
+    def grid(title: str, render) -> List[str]:
+        rows = [
+            [name,
+             cell(key, "sface", render),
+             cell(key, "arcface", render)]
+            for key, name in (("yunet", "YuNet detector"), ("scrfd", "SCRFD detector"))
+        ]
+        return [title, "",
+                render_plain_pipeline_table(
+                    ["", "SFace embedder (128)", "ArcFace embedder (512)"], rows
+                ), ""]
+
+    lines = ["THE DETECTOR AND THE EMBEDDER, CROSSED", ""]
+    lines += [wrap_plain(
+        "Each cell is one pipeline on the same BFW held-out identities, each at "
+        "its own threshold frozen on the development identities by the same rule. "
+        "The diagonal cells are Experiments 6 and 8; the other two are run only "
+        "to separate the two components."
+    ), ""]
+    lines += grid("Known duplicates detected (TPIR@1, higher is better):",
+                  lambda r: _percentage_of(r.get("tpir_rank1")))
+    lines += grid("New profiles wrongly referred, per 1,000 (lower is better):",
+                  lambda r: (f"{r['false_reviews_per_1000_non_mated']:.1f}"
+                             if isinstance(r.get("false_reviews_per_1000_non_mated"),
+                                           (int, float)) else "not available"))
+
+    # The attribution only holds when every cell was measured.
+    def tpir(detector: str, embedder: str) -> Optional[float]:
+        rates = cells[(detector, embedder)]
+        value = rates.get("tpir_rank1") if rates else None
+        return float(value) if isinstance(value, (int, float)) else None
+
+    base = tpir("yunet", "sface")
+    detector_only = tpir("scrfd", "sface")
+    embedder_only = tpir("yunet", "arcface")
+    both = tpir("scrfd", "arcface")
+    if None not in (base, detector_only, embedder_only, both):
+        # mypy cannot narrow a tuple membership test, so the values are re-read.
+        base_v, det_v = float(base), float(detector_only)  # type: ignore[arg-type]
+        emb_v, both_v = float(embedder_only), float(both)  # type: ignore[arg-type]
+        detector_gain = (det_v - base_v) * 100.0
+        embedder_gain = (emb_v - base_v) * 100.0
+        total_gain = (both_v - base_v) * 100.0
+        lines += [wrap_plain(
+            f"Swapping the detector alone moves detection by "
+            f"{detector_gain:+.2f} percentage points, and swapping the embedder "
+            f"alone by {embedder_gain:+.2f}. Swapping both moves it by "
+            f"{total_gain:+.2f}, against {detector_gain + embedder_gain:+.2f} if "
+            f"the two contributions simply added. The difference between those "
+            f"last two figures is what the pairing itself contributes."
+        ), ""]
+
+    lines += [wrap_plain(
+        "No threshold is shared between cells. A cosine similarity from a "
+        "512-dimensional ArcFace vector does not mean what the same number means "
+        "in SFace's 128-dimensional space, so each pipeline is calibrated afresh "
+        "and only the resulting rates are comparable."
+    ), "", wrap_plain(DENOMINATOR_NOTE), "", wrap_plain(REFERRAL_DISCLAIMER)]
+    return "\n".join(lines)
+
+
 
 
 def _subgroup_of_identity(protocol: OpenSetProtocol) -> Dict[str, str]:
@@ -12470,6 +12848,23 @@ def render_experiment_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) ->
         rows.append(
             ["11", "SCRFD + ArcFace + classifier", "BFW held-out", "1:N", pending]
         )
+    # Experiment 12 varies one component at a time, so each crossing is its own
+    # row: reading them against 6 and 8 is what separates the two contributions.
+    for label, crossing in (("12a", "scrfd-sface"), ("12b", "yunet-arcface")):
+        crossed = load("bfw_open_set_test_metrics.json",
+                       root / MIXED_PIPELINE_DIRNAME / crossing)
+        point = (((crossed or {}).get("methods") or {}).get(METHOD_B) or {}).get(
+            "primary_operating_point"
+        ) if crossed else None
+        detector, embedder = crossing.split("-")
+        name = f"{detector.upper() if detector == 'scrfd' else 'YuNet'} + " \
+               f"{'SFace' if embedder == 'sface' else 'ArcFace'}"
+        rows.append([
+            label, name, "BFW held-out", "1:N",
+            f"{pct(point.get('tpir_rank1'))} TPIR@1, "
+            f"{point.get('false_reviews_per_1000_non_mated', float('nan')):.1f} reviews/1,000"
+            if point else pending,
+        ])
 
     return "\n".join([
         "EVERY EXPERIMENT AT A GLANCE",
@@ -12760,6 +13155,36 @@ untouched.
 
 No model will be trained or fine-tuned.""",
 
+    "mixed-pipelines": """Selected: Experiment 12 - the detectors and embedders crossed
+
+Purpose:
+Experiments 6 and 8 change the detector and the embedder together, so the gap
+between them cannot say which component earned it. Running the two crossings
+varies one component at a time and separates the two contributions.
+
+Dataset:
+BFW, the same identity-disjoint protocol, groups and seed as Experiment 6, so
+all four cells are measured on the same held-out identities.
+
+Models:
+SCRFD detector with the SFace embedder, then the YuNet detector with the
+ArcFace embedder. Both halves of each crossing are pretrained and used as
+published; only the arrangement is new.
+
+This experiment will:
+1. Freeze an operating threshold for each crossing on the development
+   identities alone, by the rule Experiment 6 uses.
+2. Apply each frozen threshold unchanged to the held-out identities.
+3. Compute cluster-bootstrap intervals over identities.
+4. Print the two-by-two table against Experiments 6 and 8.
+
+Only the three-image template method is run. The single-image control needs a
+one-to-one threshold calibrated in each crossing's own embedding space, which
+no crossing has.
+
+Each crossing writes into its own directory and its own cache, so no existing
+result is overwritten.
+""",
     "arcface-review": """Selected: Experiment 11 - the review classifier on SCRFD + ArcFace
 
 Purpose:
@@ -13101,11 +13526,18 @@ BFW EXTENSION EXPERIMENTS
 
  18. Show the saved Experiment 11 results
 
+ 19. Run Experiment 12 - cross the detectors and the embedders
+     SCRFD + SFace and YuNet + ArcFace on BFW, each calibrated afresh. Varying
+     one component at a time is what separates the detector's contribution
+     from the embedder's.
+
+ 20. Show the saved Experiment 12 results
+
 
 OVERVIEW
 
  16. Show every experiment at a glance
-     One table: models, dataset, task and headline result for all nine.
+     One table: models, dataset, task and headline result for every experiment.
 
 
   7. Exit
@@ -13125,6 +13557,9 @@ MODES = (
     "verification-compare", "verification-compare-summary",
     # Experiment 11: the review classifier fitted on the comparison pipeline.
     "arcface-review", "arcface-review-summary",
+    # Experiment 12: the detector and the embedder crossed, so each component's
+    # contribution can be read separately.
+    "mixed-pipelines", "mixed-pipelines-summary",
     # A single table covering every experiment, for orientation.
     "experiment-table",
     "extensions",
@@ -13298,6 +13733,8 @@ def experiment_calibrate(
     detector: FaceDetector,
     embedder: FaceEmbedder,
     output_root: Path,
+    *,
+    description: Optional[PipelineDescription] = None,
 ) -> Path:
     """Experiment 1, stage 1: candidate thresholds from pairsDevTrain.txt only.
     Never reads the development or final protocol, and never selects a winner."""
@@ -13336,15 +13773,7 @@ def experiment_calibrate(
             "total_pairs": result.total_pairs,
             "scored_pairs": len(result.valid_scores),
             "failure_breakdown": dict(result.failures),
-            "model_version": MODEL_VERSION,
-            "preprocessing_revision": PREPROCESSING_REVISION,
-            # Record the verified model digests. The synthetic stand-ins used by
-            # the self-tests carry none; the real wrappers always do, and it is
-            # their verified value that reaches the artefact.
-            "model_sha256": {
-                "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
-                "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
-            },
+            **pipeline_identity_fields(detector, embedder, description),
             "software_environment": software_environment_report(),
         },
     )
@@ -13363,6 +13792,7 @@ def experiment_evaluate_lfw(
     split: str,
     threshold_artifact: Path,
     output_path: Path,
+    description: Optional[PipelineDescription] = None,
 ) -> Dict[str, Any]:
     """split='dev' is selection stage 2: it scores every candidate on
     pairsDevTest.txt, selects one by SELECTION_RULE and rewrites the threshold
@@ -13440,12 +13870,7 @@ def experiment_evaluate_lfw(
             # Only the selection stage contributes extra fields.
             **extra_fields,
             **summary,
-            "model_version": MODEL_VERSION,
-            "preprocessing_revision": PREPROCESSING_REVISION,
-            "model_sha256": {
-                "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
-                "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
-            },
+            **pipeline_identity_fields(detector, embedder, description),
             "software_environment": software_environment_report(),
         },
     )
@@ -13464,6 +13889,7 @@ def experiment_evaluate_cplfw(
     image_variant: str,
     threshold_artifact: Path,
     output_path: Path,
+    description: Optional[PipelineDescription] = None,
 ) -> Dict[str, Any]:
     """Experiment 4: cross-pose generalisation using the exact LFW-frozen
     threshold. There is deliberately no CPLFW-specific calibration step."""
@@ -13507,12 +13933,7 @@ def experiment_evaluate_cplfw(
                 "generalisation, not a separately tuned CPLFW-specific result."
             ),
             **summary,
-            "model_version": MODEL_VERSION,
-            "preprocessing_revision": PREPROCESSING_REVISION,
-            "model_sha256": {
-                "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
-                "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
-            },
+            **pipeline_identity_fields(detector, embedder, description),
             "software_environment": software_environment_report(),
         },
     )
@@ -13533,6 +13954,7 @@ def experiment_duplicate_gallery(
     output_path: Path,
     review_db: Optional[Path] = None,
     seed: int = DEFAULT_RANDOM_SEED,
+    description: Optional[PipelineDescription] = None,
 ) -> Dict[str, Any]:
     """Experiment 5: build a deterministic 1:N gallery from real LFW images and
     measure duplicate detection against the same frozen threshold. Identities
@@ -13589,12 +14011,7 @@ def experiment_duplicate_gallery(
             "seed": manifest.seed,
             "policy_note": POLICY_NOTE,
             **summary,
-            "model_version": MODEL_VERSION,
-            "preprocessing_revision": PREPROCESSING_REVISION,
-            "model_sha256": {
-                "yunet": getattr(detector, "model_sha256", YUNET_SHA256),
-                "sface": getattr(embedder, "model_sha256", SFACE_SHA256),
-            },
+            **pipeline_identity_fields(detector, embedder, description),
             "software_environment": software_environment_report(),
         },
     )
@@ -13650,7 +14067,9 @@ def run_verification_comparison(
 
     announce_stage(1, 4, "Producing candidate thresholds for SCRFD + ArcFace",
                    "LFW pairsDevTrain only; no threshold is selected yet.")
-    threshold_artifact = experiment_calibrate(config, detector, embedder, sub_root)
+    threshold_artifact = experiment_calibrate(
+        config, detector, embedder, sub_root, description=description
+    )
 
     announce_stage(2, 4, "Selecting and freezing the threshold",
                    "LFW pairsDevTest, using the same deterministic rule as the "
@@ -13659,6 +14078,7 @@ def run_verification_comparison(
         config, detector, embedder, split="dev",
         threshold_artifact=threshold_artifact,
         output_path=sub_root / "lfw_development_metrics.json",
+        description=description,
     )
 
     announce_stage(3, 4, "Evaluating the untouched LFW pairs",
@@ -13667,6 +14087,7 @@ def run_verification_comparison(
         config, detector, embedder, split="final",
         threshold_artifact=threshold_artifact,
         output_path=sub_root / "lfw_final_metrics.json",
+        description=description,
     )
 
     announce_stage(4, 4, "Evaluating CPLFW under the same frozen threshold",
@@ -13675,6 +14096,7 @@ def run_verification_comparison(
         config, detector, embedder, image_variant=cplfw_image_variant,
         threshold_artifact=threshold_artifact,
         output_path=sub_root / "cplfw_metrics.json",
+        description=description,
     )
 
     # Published artefacts are scanned like every other, so a private storage
@@ -14011,6 +14433,23 @@ def action_show_arcface_review_summary(output_root: Path = AGGREGATE_ROOT) -> in
     return 0
 
 
+def action_run_mixed_pipelines(output_root: Path = AGGREGATE_ROOT) -> int:
+    """Experiment 12. Requires the optional comparison models."""
+    run_mixed_pipeline_matrix(output_root)
+    print("")
+    print(render_plain_section(render_mixed_pipeline_summary(output_root)))
+    print("")
+    print(render_reference_section())
+    return 0
+
+
+def action_show_mixed_pipeline_summary(output_root: Path = AGGREGATE_ROOT) -> int:
+    print(render_plain_section(render_mixed_pipeline_summary(output_root)))
+    print("")
+    print(render_reference_section())
+    return 0
+
+
 def action_show_experiment_table(output_root: Path = AGGREGATE_ROOT) -> int:
     print(render_experiment_comparison_table(output_root))
     print("")
@@ -14067,6 +14506,7 @@ MENU_PREVIEW_KEYS = {
     "13": "extensions",
     "14": "verification-compare",
     "17": "arcface-review",
+    "19": "mixed-pipelines",
 }
 
 
@@ -14090,6 +14530,8 @@ def run_menu() -> int:
         "16": action_show_experiment_table,
         "17": action_run_arcface_review,
         "18": action_show_arcface_review_summary,
+        "19": action_run_mixed_pipelines,
+        "20": action_show_mixed_pipeline_summary,
     }
     # The scope of the artefact is stated before any option is offered.
     print("")
@@ -14211,6 +14653,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_action(lambda: action_run_arcface_review(args.results_root))
     if args.mode == "arcface-review-summary":
         return _run_action(lambda: action_show_arcface_review_summary(args.results_root))
+    if args.mode == "mixed-pipelines":
+        return _run_action(lambda: action_run_mixed_pipelines(args.results_root))
+    if args.mode == "mixed-pipelines-summary":
+        return _run_action(lambda: action_show_mixed_pipeline_summary(args.results_root))
     if args.mode == "experiment-table":
         return _run_action(lambda: action_show_experiment_table(args.results_root))
     if args.mode == "extensions":
