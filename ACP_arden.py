@@ -983,7 +983,12 @@ class SFaceEmbedder:
         self._recognizer = cv2.FaceRecognizerSF.create(str(model_path), "")
 
     def embed(self, bgr: np.ndarray, face_row: np.ndarray) -> np.ndarray:
-        aligned = self._recognizer.alignCrop(bgr, face_row)
+        # alignCrop reads the landmark columns as 32-bit floats and does not
+        # check the array's type, so a 64-bit row is misread rather than
+        # refused and the crop that follows bears no relation to the face.
+        # The conversion costs nothing for YuNet's own rows, which are already
+        # 32-bit, and makes the embedder safe to pair with any detector.
+        aligned = self._recognizer.alignCrop(bgr, np.asarray(face_row, dtype=np.float32))
         feature = self._recognizer.feature(aligned)
         embedding = np.asarray(feature, dtype=np.float64).reshape(-1)
         if embedding.shape[0] != EMBEDDING_DIMENSIONS:
@@ -6793,10 +6798,30 @@ class ArcFaceEmbedder:
         self.model_sha256 = model_sha256
         self._dimensions = dimensions
 
+    @staticmethod
+    def _landmarks_from_row(face_row: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        """The five landmarks a fifteen-column detector row carries, or None.
+
+        Columns 4 to 13 hold them as x,y pairs. An all-zero block means the
+        detector supplied none and the caller should look elsewhere."""
+        if face_row is None:
+            return None
+        row = np.asarray(face_row, dtype=np.float64).reshape(-1)
+        if row.shape[0] < 14:
+            return None
+        landmarks = row[4:14].reshape(5, 2)
+        return landmarks if np.any(landmarks) else None
+
     def embed(self, bgr: np.ndarray, face_row: np.ndarray) -> np.ndarray:
         from insightface.utils import face_align  # type: ignore[import-not-found]
 
-        landmarks = self._detector.last_landmarks()
+        # Read the landmarks from the row first, so the embedder works with any
+        # detector that fills the fifteen columns rather than only the one it
+        # was constructed with. The detector's own record is the fallback for
+        # rows that carry no landmarks.
+        landmarks = self._landmarks_from_row(face_row)
+        if landmarks is None:
+            landmarks = self._detector.last_landmarks()
         if landmarks is None:
             raise SimilarityError("No landmarks were available for alignment.")
         aligned = face_align.norm_crop(bgr, landmark=landmarks, image_size=112)

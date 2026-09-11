@@ -977,6 +977,70 @@ def test_the_arcface_embedder_refuses_unexpected_dimensions() -> None:
         embedder.embed(np.zeros((112, 112, 3), dtype=np.uint8), np.zeros(15))
 
 
+class _RecordingRecognizer:
+    """Stands in for cv2.FaceRecognizerSF and remembers the row it was given."""
+
+    def __init__(self) -> None:
+        self.row_dtype: Any = None
+
+    def alignCrop(self, bgr, face_row):  # noqa: N802 - the OpenCV spelling
+        self.row_dtype = np.asarray(face_row).dtype
+        return bgr
+
+    def feature(self, aligned):
+        return np.ones((1, acp.EMBEDDING_DIMENSIONS))
+
+
+def test_the_sface_embedder_converts_the_row_before_aligning() -> None:
+    """alignCrop reads the landmark columns as 32-bit floats without checking
+    the array's type, so a 64-bit row is misread rather than refused. Any
+    detector's row must therefore be converted before it is passed on."""
+    embedder = object.__new__(acp.SFaceEmbedder)
+    recognizer = _RecordingRecognizer()
+    # Built without the constructor so the test needs no model binary.
+    setattr(embedder, "_recognizer", recognizer)
+    embedder.embed(np.zeros((112, 112, 3), dtype=np.uint8), np.zeros(15, dtype=np.float64))
+    assert recognizer.row_dtype == np.float32
+
+
+class _DetectorWithoutLandmarkRecord:
+    """A detector that fills the row but keeps no landmark state, as YuNet
+    does. The ArcFace embedder must still be able to align from such a row."""
+
+    def detect_single_face(self, bgr: np.ndarray) -> np.ndarray:
+        row = np.zeros(15, dtype=np.float32)
+        row[0], row[1], row[2], row[3] = 10.0, 12.0, 40.0, 44.0
+        row[4:14] = [22.0, 28.0, 38.0, 28.0, 30.0, 36.0, 24.0, 44.0, 36.0, 44.0]
+        row[14] = 0.95
+        return row
+
+
+def test_the_arcface_embedder_aligns_from_any_detectors_row() -> None:
+    reference = acp.ArcFaceDetector(_StubDetectorModel(1), "digest")
+    embedder = acp.ArcFaceEmbedder(_StubRecognitionModel(512), reference, "digest")
+    foreign = _DetectorWithoutLandmarkRecord()
+    image = np.zeros((112, 112, 3), dtype=np.uint8)
+    # The reference detector has recorded nothing, so alignment can only come
+    # from the row itself.
+    embedding = embedder.embed(image, foreign.detect_single_face(image))
+    assert embedding.shape == (512,)
+
+
+def test_the_landmarks_are_read_from_the_row_when_it_carries_them() -> None:
+    row = np.zeros(15, dtype=np.float32)
+    row[4:14] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    landmarks = acp.ArcFaceEmbedder._landmarks_from_row(row)
+    assert landmarks is not None
+    assert landmarks.shape == (5, 2)
+    assert landmarks[0].tolist() == [1.0, 2.0]
+    assert landmarks[4].tolist() == [9.0, 10.0]
+    # A row that carries none, and a row too short to carry any, both defer to
+    # the detector's own record instead.
+    assert acp.ArcFaceEmbedder._landmarks_from_row(np.zeros(15)) is None
+    assert acp.ArcFaceEmbedder._landmarks_from_row(np.zeros(13)) is None
+    assert acp.ArcFaceEmbedder._landmarks_from_row(None) is None
+
+
 def test_the_arcface_detector_requires_exactly_one_face() -> None:
     for count in (0, 2):
         detector = acp.ArcFaceDetector(_StubDetectorModel(count), "digest")
