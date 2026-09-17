@@ -18,7 +18,7 @@ Captions follow the order in which the study developed, so each layer's intent i
 
 ### 1. LFW 1:1 verification
 
-Pairwise verification with the frozen threshold, reported as accuracy, FMR and FNMR over scored pairs. A 1:1 quantity that never appears on an FPIR axis: one comparison, no competing candidates, no ranking. Conditional on scored pairs.
+Official ten-fold pairwise cross-validation with a training-only threshold per fold, reported as accuracy, FMR and FNMR over scored pairs. A 1:1 quantity that never appears on an FPIR axis: one comparison, no competing candidates, no ranking. Conditional on scored pairs.
 
 ### 2. CPLFW cross-pose evaluation
 
@@ -26,11 +26,11 @@ The same frozen threshold on raw cross-pose images. Conditional accuracy only, a
 
 ## Implementation layers (results 3-6)
 
-The five layers share the BFW open-set protocol and are directly comparable, in the order the project developed them. Each adds one component to the previous combination, so the difference between consecutive layers is what that component contributes:
+The five layers share the BFW open-set protocol and show the order the project developed them. Coverage and calibration can also differ; adjacent contrasts are descriptive. The separately calibrated enrolment comparison and the crossed detector/recogniser experiment address these confounders:
 
 3. Single-image gallery, transferred 1:1 threshold
-4. Three-image gallery, transferred 1:1 threshold — higher TPIR but **higher FPIR**; a mean template sits nearer the centre of the embedding space and is closer to everyone, so this layer is not an improvement
-5. Three-image gallery, BFW development calibration — the reduction in false reviews comes from calibration, not from the representation
+4. Three-image gallery, transferred 1:1 threshold — observed TPIR and FPIR both increase under this transferred policy; this does not establish an inherent disadvantage of averaging normalised embeddings
+5. Three-image gallery, BFW development calibration — isolates the policy change while keeping the three-image representation fixed
 6. Logistic-regression review classifier, frozen probability threshold
 7. SCRFD + ArcFace, its own frozen BFW development calibration
 
@@ -72,8 +72,9 @@ A same-identity probe stands for a photograph belonging to the enrolled person. 
 
 ## The later comparisons (Experiments 9 to 12)
 
-- **pipeline_across_datasets** — both pipelines on one-to-one verification, accuracy on the left and the share of photographs reaching comparison on the right, for LFW and CPLFW. The two panels move in opposite directions on LFW and must not be read as one quantity: the accuracy panel is conditional on scored pairs, while coverage counts every intended pair. The coverage difference on LFW follows from the protocol's requirement that exactly one face be found, not from a detector failing to find faces.
-- **detector_embedder_crossed** — the four detector and embedder combinations on the same held-out identities, each at a threshold frozen on the development identities. Colour identifies the embedder, so a pair of bars of one colour shows the detector varied at a fixed embedder. Detection carries 95% identity-cluster bootstrap bounds; the referral panel does not, because every burden interval overlaps every other and drawing them would suggest a separation the benchmark does not support. The detection axis begins at 85% rather than zero, since all four values exceed 92% and a full range would hide the differences. Overlapping intervals are not evidence of equality.
+- **pipeline_across_datasets** — both pipelines on one-to-one verification, accuracy on the left and the share of photographs reaching comparison on the right, for LFW and CPLFW. The two panels move in opposite directions on LFW and must not be read as one quantity: the accuracy panel is conditional on scored pairs, while coverage counts every intended pair. The coverage difference on LFW includes rejections under the exactly-one-face rule; the failure categories do not establish which detections are true faces.
+- **detector_embedder_crossed** — the four detector and embedder combinations on the same held-out identities, each at a threshold frozen on the development identities. Colour identifies the embedder, so a pair of bars of one colour shows the detector varied at a fixed embedder. Detection carries 95% identity-cluster bootstrap bounds. Referral points are descriptive; paired referral differences and their intervals appear in the paired report. The conditional detection axis starts at 85%, explicitly truncating the scale. Scored subsets differ, so read this alongside the next figure.
+- **paired_pipeline_comparison** — all four pipelines on a common 0–100% scale: mated extraction coverage, detection across all intended mated probes, and TPIR@1 within the common-success subset. Bars show 95% identity-cluster intervals. The accompanying paired report estimates differences using the same identity draws for every pipeline; interval overlap alone is not a test.
 
 ## Open-set operating points and the review classifier
 

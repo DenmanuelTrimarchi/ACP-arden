@@ -59,6 +59,7 @@ Title: YuNet: A Tiny Millisecond-level Face Detector
 Author: Wu, W., Peng, H. and Yu, S., Machine Intelligence Research, 20(5), pp. 656-665
 Date: 2023
 Availability: https://doi.org/10.1007/s11633-023-1423-y
+GitHub: https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet
 File: face_detection_yunet_2023mar.onnx
 Licence: MIT
 SHA-256: 8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4
@@ -71,6 +72,7 @@ Title: SFace: Sigmoid-Constrained Hypersphere Loss for Robust Face Recognition
 Author: Zhong, Y., Deng, W., Hu, J., Zhao, D., Li, X. and Wen, D., IEEE Transactions on Image Processing, 30, pp. 2587-2598
 Date: 2021
 Availability: https://doi.org/10.1109/TIP.2020.3048632
+GitHub: https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface
 File: face_recognition_sface_2021dec.onnx
 Licence: Apache-2.0
 SHA-256: 0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79
@@ -282,6 +284,7 @@ Title: ArcFace: Additive Angular Margin Loss for Deep Face Recognition
 Author: Deng, J., Guo, J., Xue, N. and Zafeiriou, S., Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
 Date: 2019
 Availability: https://doi.org/10.1109/CVPR.2019.00482
+GitHub: https://github.com/deepinsight/insightface
 ```
 
 ```text
@@ -289,6 +292,7 @@ Title: Sample and Computation Redistribution for Efficient Face Detection (SCRFD
 Author: Guo, J., Deng, J., Lattas, A. and Zafeiriou, S., International Conference on Learning Representations (ICLR)
 Date: 2022
 Availability: https://arxiv.org/abs/2105.04714
+GitHub: https://github.com/deepinsight/insightface
 ```
 
 ## Libraries
@@ -357,3 +361,26 @@ immediately above the adapted block and a matching row to the table above. Do
 not add a header where the origin cannot be verified: record the uncertainty
 instead and raise it for review. A header is a claim about provenance, and an
 unverifiable claim is worse than an acknowledged gap.
+
+## Added evaluation methods
+
+The final LFW evaluation implements the official ten-fold pair protocol,
+fitting an accuracy-maximising threshold on nine folds and evaluating the
+remaining fold. See the LFW technical report by Huang et al. (2007),
+[Labelled Faces in the Wild](https://people.cs.umass.edu/~elm/papers/lfw.pdf).
+The implementation preserves protocol positions when extraction fails and
+reports both coverage and conditional performance. The local overlap audit
+explains why the development files cannot define an independent final LFW test.
+
+Paired comparisons use the project's existing identity-cluster percentile
+bootstrap, now sharing the same identity draws between methods. Resampling is
+stratified by probe role and BFW subgroup. Common-success comparisons and
+full-protocol end-to-end comparisons estimate different quantities.
+
+The supplementary zero-event bound inverts the binomial zero-event probability:
+`P(no identity with a false referral) = (1-p)^n`, giving a one-sided 95% upper
+bound `1 - 0.05**(1/n)`. Here trials are independent, exchangeable identity
+clusters; dependence among photographs within an identity is unrestricted.
+The bound concerns any referral within an identity's intended probe set, not
+the conditional scored-probe FPIR. Gallery, population and calibration
+uncertainty are outside its scope.

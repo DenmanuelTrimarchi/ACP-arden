@@ -2,11 +2,11 @@
 
 Auto-generated from the published artefacts. Ordered to show what each layer was intended to improve, and where it did not.
 
-**Research objective.** To establish whether a framework combining several existing models achieves better results than any one of them used alone. Each layer below adds one component to the previous combination, so the difference between consecutive layers measures what that component contributes. No face-detection or face-recognition network is trained or fine-tuned; the contribution under test is the composition, not the models themselves.
+**Research objective.** Assess how detector and recogniser choice, enrolment images and threshold calibration affect duplicate detection, false-review burden, subgroup performance and computational cost. Controlled comparisons separate these factors where the protocol permits. The face networks remain pretrained and frozen; only the review classifier is trained here.
 
 ## 1. LFW 1:1 verification
 
-Accuracy 99.09%, FMR 0.11%, FNMR 1.71%, EER 0.78%, extraction failure 10.02%. This is a 1:1 pair task and its FMR is not comparable with the 1:N FPIR figures below.
+LFW mean fold accuracy 99.28%, pooled FMR 0.33%, FNMR 1.11%, EER 0.78%, extraction failure 10.02%. This is a 1:1 pair task and its FMR is not comparable with the 1:N FPIR figures below. The official ten-fold protocol fits a threshold using the other nine folds for each held-out fold; the separate development-frozen transfer threshold is not used here.
 
 ## 2. CPLFW cross-pose transfer
 
@@ -18,11 +18,11 @@ FPIR 8.95%, TPIR@1 93.46%, 89.5 false reviews per 1,000. Reusing a 1:1 threshold
 
 ## 4. BFW three-image template, same threshold
 
-FPIR 15.22%, TPIR@1 96.71%. Averaging three images raises identification but **raises** FPIR at a fixed threshold: a mean template sits nearer the centre of the embedding space and is closer to everyone. Multi-image enrolment alone did not reduce false reviews.
+FPIR 15.22%, TPIR@1 96.71%. Averaging three images changes both genuine and impostor score distributions. These renormalised templates do not necessarily become closer to every face. The separately calibrated one-versus-three-image comparison appears in the supplementary diagnostics.
 
 ## 5. BFW gallery-specific calibration
 
-FPIR 0.52%, TPIR@1 92.57%, 5.2 false reviews per 1,000. The reduction is attributable to calibration, not to the representation.
+FPIR 0.52%, TPIR@1 92.57%, 5.2 false reviews per 1,000. Comparing this row with the preceding three-image row isolates the threshold change on the same templates.
 
 ## 6. Logistic-regression review classifier
 
@@ -72,25 +72,23 @@ A non-match indicates that the photograph is inconsistent with the enrolled faci
 
 | Pipeline | End-to-end (95% CI) | Zero-face | Multiple-face | Embed mean | Complete mean | Model size |
 | --- | --- | --- | --- | --- | --- | --- |
-| insightface-scrfd-arcface-buffalo_l | 96.70% [95.40%–97.90%] | 2 | 12 | 51.58 ms | 78.49 ms | 182.4 MB |
+| insightface-scrfd-arcface-buffalo_l | 96.70% [95.40%–97.90%] | 2 | 12 | 52.78 ms | 80.73 ms | 182.4 MB |
 | opencv-sface-2021dec-yunet-2023mar | 87.20% [84.30%–89.90%] | 189 | 0 | 17.89 ms | 21.72 ms | 37.1 MB |
 
 Each pipeline was calibrated on its own development scores; the SFace threshold is never applied to ArcFace. This is a complete-pipeline comparison — detection, alignment, preprocessing, embedding width and runtime all differ — so no difference is attributable to the embedding model alone.
 
 ## 10a. The same two pipelines on one-to-one verification
 
-Section 10 compared the pipelines on gallery search alone, so the conclusion rested on a single task. Experiments 9 and 10 put the comparison pipeline through the same one-to-one chain, each with a threshold calibrated on LFW development pairs and frozen before either evaluation.
+Section 10 compared the pipelines on gallery search alone, so the conclusion rested on a single task. Experiments 9 and 10 put the comparison pipeline through the same one-to-one protocols. LFW uses official ten-fold cross-validation, fitting each threshold on the other nine folds. CPLFW uses each pipeline's separate frozen LFW development threshold. No threshold is shared between pipelines.
 
 | Metric | LFW YuNet+SFace | LFW SCRFD+ArcFace | CPLFW YuNet+SFace | CPLFW SCRFD+ArcFace |
 | --- | --- | --- | --- | --- |
-| Correct among scored pairs | 99.09% | 99.69% | 90.24% | 93.13% |
+| Correct among scored pairs | 99.28% | 99.79% | 90.24% | 93.13% |
 | Reached comparison | 89.98% | 70.10% | 58.58% | 82.25% |
 | Zero-face failures | 61 | 0 | 2,321 | 57 |
 | Multiple-face failures | 540 | 1,794 | 164 | 1,008 |
 
-SCRFD + ArcFace is more accurate on both datasets, but it reaches comparison on **fewer** LFW pairs than YuNet + SFace and on far more CPLFW pairs. The failure breakdown explains the reversal, and it is not a detection weakness: SCRFD recorded almost no zero-face failures on either dataset, where YuNet failed to find a face in 2,321 CPLFW images. Every one of SCRFD's losses comes from finding more than one face.
-
-LFW images are press photographs that frequently contain bystanders. The protocol requires exactly one detected face, so a more sensitive detector converts additional true detections into rejections. The LFW coverage gap is therefore an artefact of that constraint rather than evidence about the detector, and coverage should not be compared across pipelines on this dataset without stating it. On CPLFW, where the difficulty is pose rather than bystanders, the comparison is unambiguous.
+Conditional accuracy must be read alongside extraction coverage: the pipelines score different subsets of pairs. The exactly-one-face rule rejects both zero-face and multiple-face detections. The breakdown records these outcomes but cannot establish whether additional detections are bystanders or false positives without manual annotation. These results compare complete pipelines and do not isolate the recogniser.
 
 
 ## 10b. The review classifier on both pipelines
@@ -104,37 +102,46 @@ Section 6 fitted the classifier on the baseline pipeline and section 10 compared
 
 The classifier moves the burden in **opposite directions** on the two pipelines. Its effect is therefore a property of the components it runs on rather than of the classifier alone. The negative result in section 6 stands for the baseline pipeline, but it cannot be stated as a general finding about the method.
 
-The zero on the second row is an observation over 2,987 scored new profiles, not a demonstration that the population rate is zero; the interval around a zero-event rate remains wide. Detection fell from 96.80% to 95.90% in exchange.
+The zero on the second row is an observation over 2,987 scored new profiles, not a demonstration that the population rate is zero; the empirical zero-event bootstrap interval cannot bound population FPIR. A supplementary identity-level upper bound is reported with its assumptions. Detection fell from 96.80% to 95.90% in exchange.
 
 
-## 10c. Which component carries the gain
+## 10c. Detector, recogniser and coverage contributions
 
-Experiments 6, 8 and 11 each change the detector and the embedder together, so none of them can say which component earned the difference. Experiment 12 runs the two crossings on the same held-out identities, each at a threshold frozen on the development identities by the same rule.
+Same intended identities and pipeline-specific development thresholds. End-to-end detection retains failed extraction and failed enrolment in its denominator.
 
-| Pipeline | Duplicates detected (TPIR@1) | 95% interval | Reviews per 1,000 |
-| --- | --- | --- | --- |
-| YuNet + SFace | 92.57% | 90.15–94.89% | 5.2 |
-| SCRFD + SFace | 94.99% | 93.39–96.50% | 6.4 |
-| YuNet + ArcFace | 97.24% | 95.98–98.47% | 1.7 |
-| SCRFD + ArcFace | 96.80% | 95.50–98.00% | 1.3 |
+| Pipeline | Conditional TPIR@1 | End-to-end detection | Mated coverage | False reviews / 1,000 scored new probes | Common-success TPIR@1 |
+| --- | --- | --- | --- | --- | --- |
+| YuNet + SFace | 92.57% | 87.20% | 94.20% | 5.25 | 92.57% |
+| SCRFD + SFace | 94.99% | 94.90% | 99.90% | 6.36 | 95.44% |
+| YuNet + ArcFace | 97.24% | 91.60% | 94.20% | 1.75 | 97.24% |
+| SCRFD + ArcFace | 96.80% | 96.70% | 99.90% | 1.34 | 97.24% |
 
-Changing the embedder alone moves detection by +4.67 percentage points; changing the detector alone moves it by +2.43. The gain belongs almost entirely to the embedder.
+Common-success subset: 3,789 of 4,000 intended probes. Conditional comparisons across different surviving subsets cannot isolate a detector effect.
 
-Which of those differences the intervals actually support is stated rather than assumed. Comparing independent intervals is conservative: separation is evidence of a difference, but overlap on its own does not establish that there is none.
+Paired changes below are right minus left in percentage points. Every bootstrap replicate uses the same identity draws across all methods.
 
-The intervals are disjoint for swapping the embedder at the YuNet detector, so that difference is supported.
-They overlap for swapping the embedder at the SCRFD detector, swapping the detector at the SFace embedder and swapping the detector at the ArcFace embedder, which this benchmark cannot separate.
+| Left → right | End-to-end change (95% CI) | FPIR change (95% CI) |
+| --- | --- | --- |
+| YuNet + SFace → SCRFD + SFace | +7.70 [+5.80, +9.90] | +0.11 [-0.19, +0.44] |
+| YuNet + SFace → YuNet + ArcFace | +4.40 [+2.80, +6.20] | -0.35 [-0.70, -0.07] |
+| YuNet + SFace → SCRFD + ArcFace | +9.50 [+7.30, +12.10] | -0.39 [-0.71, -0.11] |
+| SCRFD + SFace → YuNet + ArcFace | -3.30 [-5.30, -1.50] | -0.46 [-0.86, -0.13] |
+| SCRFD + SFace → SCRFD + ArcFace | +1.80 [+1.00, +2.80] | -0.50 [-0.84, -0.23] |
+| YuNet + ArcFace → SCRFD + ArcFace | +5.10 [+3.60, +6.90] | -0.04 [-0.21, +0.13] |
 
-The two changes are not additive. Making both moves detection by +4.23 points, less than the +7.10 the separate gains would predict, and no better than the embedder alone. The stronger detector adds nothing once the stronger embedder is in place.
+Detector-by-embedder interaction in end-to-end detection: -2.60 [-3.90, -1.50] percentage points. Contrast: (SCRFD+ArcFace - YuNet+ArcFace) - (SCRFD+SFace - YuNet+SFace).
 
-This qualifies the project's own objective. Combining components did produce the best result, but not because the combination was greater than its parts: one component carried the improvement and the other contributed within sampling noise. A study that swapped both at once, as sections 8 and 10 do, would have credited the pairing for a gain that one component produced alone.
+Exploratory unadjusted 95% intervals. Fixed galleries and frozen policies; uncertainty excludes model fitting, threshold estimation, gallery selection and population shift. Common-success analysis describes a selected subset only. Zero-event bootstrap intervals cannot bound population FPIR.
 
-The review burden orders the pipelines differently. The two ArcFace cells refer far fewer profiles than the two SFace cells, but within each embedder the stronger detector refers slightly more, having scored more of the harder photographs rather than failing to extract them. Detection and burden are therefore not improved by the same choice. Every interval on these burden figures overlaps every other, so that ordering is the direction the point estimates take rather than a difference this benchmark establishes.
-
+An interval containing zero does not establish equivalence or absence of a contribution. The effects describe the complete configured detector, alignment, recogniser and calibrated-policy combinations.
 
 ## 11. Performance against cost
 
 A stronger pipeline is not free. Where it improves extraction and identification it also costs disk and latency, and the trade-off is shown in `implementation_layers_performance_latency` rather than omitted.
+
+## 11a. Additional controlled diagnostics
+
+The separate COMPARISON_DIAGNOSTICS_REPORT.md reports calibrated one- versus three-image enrolment, gallery-size sensitivity, classifier feature ablations and error analysis. These extensions were designed after the benchmark test results were inspected and are exploratory, not independent confirmation.
 
 ## 12. Limitations and policy
 

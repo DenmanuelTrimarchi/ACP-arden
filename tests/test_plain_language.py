@@ -146,14 +146,14 @@ def test_the_denominator_distinction_is_explained_where_both_appear() -> None:
 
 
 def test_the_menu_is_grouped_by_purpose() -> None:
-    for heading in ("SETUP AND VALIDATION", "ORIGINAL FIVE EXPERIMENTS",
-                    "BFW EXTENSION EXPERIMENTS"):
+    for heading in ("SETUP AND VALIDATION", "EXPERIMENTS AND RESULTS",
+                    "CONTROLLED COMPARISONS"):
         assert heading in acp.MENU_TEXT, heading
 
 
-def test_option_thirteen_is_described_as_experiments_seven_and_eight() -> None:
+def test_combined_run_is_described_as_experiments_seven_and_eight() -> None:
     """It runs Experiments 7 and 8, not every extension experiment."""
-    line = next(l for l in acp.MENU_TEXT.splitlines() if l.strip().startswith("13."))
+    line = next(l for l in acp.MENU_TEXT.splitlines() if l.strip().startswith("23."))
     assert "Experiments 7 and 8" in line
     assert "both extension experiments" not in acp.MENU_TEXT.lower()
 
@@ -337,10 +337,10 @@ def test_the_stored_status_values_are_unchanged() -> None:
 
 @pytest.mark.parametrize(
     ("renderer", "expected"),
-    [("render_baseline_plain_summary", "option 3"),
-     ("render_open_set_plain_summary", "option 8"),
-     ("render_ml_review_plain_summary", "option 10"),
-     ("render_pipeline_plain_summary", "option 12")],
+    [("render_baseline_plain_summary", "option 4"),
+     ("render_open_set_plain_summary", "option 6"),
+     ("render_ml_review_plain_summary", "option 8"),
+     ("render_pipeline_plain_summary", "option 10")],
 )
 def test_a_missing_artefact_gives_an_instruction_not_a_crash(
     tmp_path: Path, renderer: str, expected: str
@@ -460,13 +460,13 @@ def test_the_academic_reports_keep_their_technical_wording(name: str) -> None:
 
 
 def test_both_section_headings_are_produced() -> None:
-    """The plain layer is only useful if it is announced as such."""
+    """Summary and technical details use the same section separators."""
     plain = acp.render_plain_section("body")
     technical = acp.render_technical_section("body")
-    assert "PLAIN-LANGUAGE SUMMARY" in plain
+    assert "# Summary\n" in plain
     assert "TECHNICAL DETAILS" in technical
-    assert plain.startswith("=" * 78)
-    assert technical.startswith("=" * 78)
+    assert plain.startswith("# " + "=" * 77)
+    assert technical.startswith("# " + "=" * 77)
 
 
 def test_the_reference_section_carries_the_overviews_and_glossary() -> None:
@@ -485,14 +485,14 @@ def test_the_reference_section_carries_the_overviews_and_glossary() -> None:
 def test_every_summary_option_prints_all_three_sections(
     action: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Plain language, then technical detail, then reference material - in that
+    """Summary, then technical detail, then reference material - in that
     order, for every option that displays a saved result."""
     getattr(acp, action)(AGG)
     printed = capsys.readouterr().out
-    for heading in ("PLAIN-LANGUAGE SUMMARY", "TECHNICAL DETAILS",
+    for heading in ("# Summary\n", "TECHNICAL DETAILS",
                     "REFERENCE INFORMATION"):
         assert heading in printed, f"{action} omitted {heading}"
-    assert (printed.index("PLAIN-LANGUAGE SUMMARY")
+    assert (printed.index("# Summary\n")
             < printed.index("TECHNICAL DETAILS")
             < printed.index("REFERENCE INFORMATION")), action
     # The glossary must reach every summary, not only the first one.
@@ -627,7 +627,7 @@ def test_the_menu_offers_experiment_nine_and_the_overview() -> None:
 
 
 def test_experiment_nine_has_a_preview_wired_to_its_option() -> None:
-    assert acp.MENU_PREVIEW_KEYS.get("14") == "verification-compare"
+    assert acp.MENU_PREVIEW_KEYS.get("12") == "verification-compare"
     preview = acp.render_experiment_preview("verification-compare")
     assert "Purpose:" in preview
     # The whole point is that a threshold is never shared between pipelines.
@@ -669,7 +669,7 @@ def test_experiment_nine_summary_reports_both_pipelines() -> None:
 def test_a_missing_experiment_nine_gives_an_instruction(tmp_path: Path) -> None:
     text = acp.render_verification_comparison_summary(tmp_path)
     assert "not available yet" in text
-    assert "option 14" in text
+    assert "option 12" in text
 
 
 @pytest.mark.parametrize("exp", ["1-2", "3", "4", "5", "6", "7", "8", "9"])
@@ -769,11 +769,11 @@ def test_experiment_eleven_summary_reports_both_pipelines() -> None:
 def test_a_missing_experiment_eleven_gives_an_instruction(tmp_path: Path) -> None:
     text = acp.render_arcface_review_summary(tmp_path)
     assert "not available yet" in text
-    assert "option 17" in text
+    assert "option 14" in text
 
 
 def test_experiment_eleven_is_wired_to_the_menu() -> None:
-    assert acp.MENU_PREVIEW_KEYS.get("17") == "arcface-review"
+    assert acp.MENU_PREVIEW_KEYS.get("14") == "arcface-review"
     for mode in ("arcface-review", "arcface-review-summary"):
         assert mode in acp.MODES, mode
     preview = acp.render_experiment_preview("arcface-review")
@@ -894,10 +894,10 @@ def test_the_crossed_summary_reports_its_absence_gracefully() -> None:
 def test_experiment_twelve_is_wired_into_the_menu() -> None:
     assert "mixed-pipelines" in acp.MODES
     assert "mixed-pipelines-summary" in acp.MODES
-    assert acp.MENU_PREVIEW_KEYS["19"] == "mixed-pipelines"
+    assert acp.MENU_PREVIEW_KEYS["16"] == "mixed-pipelines"
     assert "mixed-pipelines" in acp.EXPERIMENT_PREVIEWS
-    assert "19. Run Experiment 12" in acp.MENU_TEXT
-    assert "20. Show the saved Experiment 12" in acp.MENU_TEXT
+    assert "16. Run Experiment 12" in acp.MENU_TEXT
+    assert "17. Show the saved Experiment 12" in acp.MENU_TEXT
 
 
 def test_experiment_twelve_artefacts_name_the_crossing_that_produced_them() -> None:

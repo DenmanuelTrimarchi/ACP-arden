@@ -1600,18 +1600,42 @@ def test_the_reproducibility_mechanism_is_stated_honestly() -> None:
     assert "setNumThreads(0)" in readme
 
 
-def test_the_canonical_cache_round_trips_without_biometric_data() -> None:
+@pytest.mark.parametrize("partition", ["development", "test"])
+def test_the_canonical_cache_round_trips_without_storing_embeddings(partition: str) -> None:
     """The cache carries decisions and scores, never embeddings."""
-    path = Path(acp.__file__).parent / "results" / "raw" / "canonical_primary_run.json"
+    path = acp.canonical_cache_path(partition)
     if not path.is_file():
-        pytest.skip("canonical run not present in this checkout")
+        pytest.skip(f"canonical {partition} run not present in this checkout")
     payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["partition"] == partition
     assert payload["canonical_run_digest"]
-    text = json.dumps(payload)
-    for banned in ("embedding", "template", "image_path", "/Users/"):
-        assert banned not in text, f"cache leaks {banned}"
+    assert acp.cached_payload_integrity_reason(payload) is None
+
+    # Dimension counts, timings, similarity scores and the privacy note may
+    # name embeddings or templates without containing the vectors themselves.
+    forbidden_fields = {
+        "embedding", "embeddings", "face_embedding", "face_embeddings",
+        "template", "templates", "image_path", "image_paths",
+    }
+
+    def check_fields(value: Any) -> None:
+        if isinstance(value, dict):
+            for name, child in value.items():
+                assert name not in forbidden_fields, f"cache contains forbidden field: {name}"
+                check_fields(child)
+        elif isinstance(value, list):
+            for child in value:
+                check_fields(child)
+
+    check_fields(payload)
+    assert "/Users/" not in json.dumps(payload), "cache contains a personal filesystem path"
+    for record in payload["enrolment_outcomes"] + payload["search_results"]:
+        assert all(not isinstance(value, (list, dict)) for value in record.values()), (
+            "cached records must contain scalar values, not vectors or nested data"
+        )
     restored = acp.load_canonical_run(path)
     assert restored is not None
+    assert restored.partition == partition
     assert acp.canonical_run_digest(restored) == payload["canonical_run_digest"]
 
 

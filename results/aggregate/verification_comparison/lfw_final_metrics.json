@@ -1,20 +1,26 @@
 {
-  "accuracy": 0.9969091773656681,
+  "accuracy": 0.9978601997146933,
   "artifact_type": "lfw_verification_metrics",
   "confusion_matrix": {
-    "false_negative": 13,
+    "false_negative": 9,
     "false_positive": 0,
     "true_negative": 2133,
-    "true_positive": 2060
+    "true_positive": 2064
   },
-  "created_at": "2026-09-11T01:46:12.714509+00:00",
+  "created_at": "2026-09-17T13:55:05.406116+00:00",
   "dataset_archive_md5": "1b42dfed7d15c9b2dd63d5e5840c86ad",
-  "embedding_time_mean_ms": 76.47573085352903,
-  "embedding_time_median_ms": 75.62137499917299,
-  "embedding_time_p95_ms": 81.09283359663095,
+  "development_protocol_pair_overlap": {
+    "pairsDevTest.txt": 233,
+    "pairsDevTrain.txt": 525
+  },
+  "embedding_time_mean_ms": 86.65535350401233,
+  "embedding_time_median_ms": 83.19812500849366,
+  "embedding_time_p95_ms": 104.26371628418563,
+  "end_to_end_correct_decision_rate": 0.6995,
   "equal_error_rate": 0.0038591413410515862,
   "evaluated_image_set_sha256": "b60c959d807912f196cf208f6e6f95c40574543477d29d4d1e210675b6789bb9",
-  "f1": 0.9968545850471812,
+  "evaluation_protocol": "lfw_official_10_fold_cross_validation",
+  "f1": 0.9978245105148659,
   "failed_pairs": 1794,
   "failure_breakdown": {
     "multiple_faces_left": 1041,
@@ -22,17 +28,246 @@
   },
   "failure_rate": 0.299,
   "false_match_rate": 0.0,
-  "false_non_match_rate": 0.006271104679208876,
+  "false_non_match_rate": 0.004341534008683068,
+  "fold_accuracy_standard_error": 0.0009607103707438107,
+  "fold_accuracy_std": 0.003038032943295234,
+  "fold_count": 10,
+  "fold_results": [
+    {
+      "accuracy": 0.9952267303102625,
+      "confusion_matrix": {
+        "false_negative": 2,
+        "false_positive": 0,
+        "true_negative": 209,
+        "true_positive": 208
+      },
+      "f1": 0.9952153110047847,
+      "false_match_rate": 0.0,
+      "false_non_match_rate": 0.009523809523809525,
+      "fold": 1,
+      "precision": 1.0,
+      "recall": 0.9904761904761905,
+      "test_failed_pairs": 181,
+      "test_pairs": 600,
+      "test_scored_pairs": 419,
+      "threshold": 0.2726017405619367,
+      "training_pairs": 5400,
+      "training_scored_pairs": 3787,
+      "true_match_rate": 0.9904761904761905
+    },
+    {
+      "accuracy": 1.0,
+      "confusion_matrix": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 201,
+        "true_positive": 207
+      },
+      "f1": 1.0,
+      "false_match_rate": 0.0,
+      "false_non_match_rate": 0.0,
+      "fold": 2,
+      "precision": 1.0,
+      "recall": 1.0,
+      "test_failed_pairs": 192,
+      "test_pairs": 600,
+      "test_scored_pairs": 408,
+      "threshold": 0.2726017405619367,
+      "training_pairs": 5400,
+      "training_scored_pairs": 3798,
+      "true_match_rate": 1.0
+    },
+    {
+      "accuracy": 1.0,
+      "confusion_matrix": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 229,
+        "true_positive": 199
+      },
+      "f1": 1.0,
+      "false_match_rate": 0.0,
+      "false_non_match_rate": 0.0,
+      "fold": 3,
+      "precision": 1.0,
+      "recall": 1.0,
+      "test_failed_pairs": 172,
+      "test_pairs": 600,
+      "test_scored_pairs": 428,
+      "threshold": 0.2726017405619367,
+      "training_pairs": 5400,
+      "training_scored_pairs": 3778,
+      "true_match_rate": 1.0
+    },
+    {
+      "accuracy": 0.9977528089887641,
+      "confusion_matrix": {
+        "false_negative": 1,
+        "false_positive": 0,
+        "true_negative": 226,
+        "true_positive": 218
+      },
+      "f1": 0.9977116704805492,
+      "false_match_rate": 0.0,
+      "false_non_match_rate": 0.0045662100456621,
+      "fold": 4,
+      "precision": 1.0,
+      "recall": 0.9954337899543378,
+      "test_failed_pairs": 155,
+      "test_pairs": 600,
+      "test_scored_pairs": 445,
+      "threshold": 0.2726017405619367,
+      "training_pairs": 5400,
+      "training_scored_pairs": 3761,
+      "true_match_rate": 0.9954337899543378
+    },
+    {
+      "accuracy": 0.9930715935334873,
+      "confusion_matrix": {
+        "false_negative": 3,
+        "false_positive": 0,
+        "true_negative": 221,
+        "true_positive": 209
+      },
+      "f1": 0.9928741092636578,
+      "false_match_rate": 0.0,
+      "false_non_match_rate": 0.014150943396226415,
+      "fold": 5,
+      "precision": 1.0,
+      "recall": 0.9858490566037735,
+      "test_failed_pairs": 167,
+      "test_pairs": 600,
+      "test_scored_pairs": 433,
+      "threshold": 0.2726017405619367,
+      "training_pairs": 5400,
+      "training_scored_pairs": 3773,
+      "true_match_rate": 0.9858490566037735
+    },
+    {
+      "accuracy": 1.0,
+      "confusion_matrix": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 224,
+        "true_positive": 197
+      },
+      "f1": 1.0,
+      "false_match_rate": 0.0,
+      "false_non_match_rate": 0.0,
+      "fold": 6,
+      "precision": 1.0,
+      "recall": 1.0,
+      "test_failed_pairs": 179,
+      "test_pairs": 600,
+      "test_scored_pairs": 421,
+      "threshold": 0.2726017405619367,
+      "training_pairs": 5400,
+      "training_scored_pairs": 3785,
+      "true_match_rate": 1.0
+    },
+    {
+      "accuracy": 0.9927884615384616,
+      "confusion_matrix": {
+        "false_negative": 3,
+        "false_positive": 0,
+        "true_negative": 202,
+        "true_positive": 211
+      },
+      "f1": 0.9929411764705882,
+      "false_match_rate": 0.0,
+      "false_non_match_rate": 0.014018691588785047,
+      "fold": 7,
+      "precision": 1.0,
+      "recall": 0.985981308411215,
+      "test_failed_pairs": 184,
+      "test_pairs": 600,
+      "test_scored_pairs": 416,
+      "threshold": 0.2742924705948064,
+      "training_pairs": 5400,
+      "training_scored_pairs": 3790,
+      "true_match_rate": 0.985981308411215
+    },
+    {
+      "accuracy": 1.0,
+      "confusion_matrix": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 229,
+        "true_positive": 215
+      },
+      "f1": 1.0,
+      "false_match_rate": 0.0,
+      "false_non_match_rate": 0.0,
+      "fold": 8,
+      "precision": 1.0,
+      "recall": 1.0,
+      "test_failed_pairs": 156,
+      "test_pairs": 600,
+      "test_scored_pairs": 444,
+      "threshold": 0.2726017405619367,
+      "training_pairs": 5400,
+      "training_scored_pairs": 3762,
+      "true_match_rate": 1.0
+    },
+    {
+      "accuracy": 1.0,
+      "confusion_matrix": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 198,
+        "true_positive": 183
+      },
+      "f1": 1.0,
+      "false_match_rate": 0.0,
+      "false_non_match_rate": 0.0,
+      "fold": 9,
+      "precision": 1.0,
+      "recall": 1.0,
+      "test_failed_pairs": 219,
+      "test_pairs": 600,
+      "test_scored_pairs": 381,
+      "threshold": 0.2726017405619367,
+      "training_pairs": 5400,
+      "training_scored_pairs": 3825,
+      "true_match_rate": 1.0
+    },
+    {
+      "accuracy": 1.0,
+      "confusion_matrix": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "true_negative": 194,
+        "true_positive": 217
+      },
+      "f1": 1.0,
+      "false_match_rate": 0.0,
+      "false_non_match_rate": 0.0,
+      "fold": 10,
+      "precision": 1.0,
+      "recall": 1.0,
+      "test_failed_pairs": 189,
+      "test_pairs": 600,
+      "test_scored_pairs": 411,
+      "threshold": 0.2726017405619367,
+      "training_pairs": 5400,
+      "training_scored_pairs": 3795,
+      "true_match_rate": 1.0
+    }
+  ],
+  "image_content_sha256": "61cbefa5d8ef1ccbdb6a09c6e60c82ccefbf86789d85b276bb01c7ff1ff6b641",
+  "mean_fold_accuracy": 0.9978839594370976,
+  "metric_note": "Accuracy/rates/confusion are pooled out-of-fold decisions; mean_fold_accuracy weights folds equally. Rates exclude extraction failures; coverage is reported separately. Pooled ROC/EER are descriptive only.",
   "model_sha256": {
     "detector": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
     "recognition": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
   },
   "model_version": "insightface-scrfd-arcface-buffalo_l",
+  "pooled_accuracy": 0.9978601997146933,
   "precision": 1.0,
   "preprocessing_revision": "insightface-arcface-112x112-v1",
   "protocol_file": "pairs.txt",
   "protocol_sha256": "ea42330c62c92989f9d7c03237ed5d591365e89b3e649747777b70e692dc1592",
-  "recall": 0.9937288953207911,
+  "recall": 0.9956584659913169,
   "roc_auc": 0.9991494238992209,
   "roc_points": [
     {
@@ -21102,10 +21337,10 @@
     "python_version": "3.13.0"
   },
   "split": "final",
-  "threshold": 0.3290490369439799,
-  "threshold_artifact_sha256": "79f1f7e324e7546cefb49f9452c8785651f825cea8841f964d82e4709e81405a",
-  "threshold_source": "results/aggregate/verification_comparison/calibrated_threshold.json",
-  "threshold_status": "frozen",
+  "threshold_selection": "Maximum accuracy on the other nine folds; stricter threshold on ties",
+  "threshold_status": "per_fold_training_only",
   "total_pairs": 6000,
+  "transfer_threshold_note": "The separate LFW development threshold is used only for CPLFW/gallery transfer, never for final LFW decisions.",
+  "true_match_rate": 0.9956584659913169,
   "unique_images_embedded": 6083
 }

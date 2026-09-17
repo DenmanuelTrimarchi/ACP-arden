@@ -20,9 +20,9 @@ used exactly as published. What this project supplies is the arrangement
 around them — enrolment, threshold calibration and a small review classifier —
 together with the measurements that show what each addition is actually worth.
 
-Five arrangements are compared on the same BFW protocol. Each adds one
-component to the one before it, so the difference between neighbouring layers
-can be attributed to that component:
+Five arrangements are compared on the same BFW protocol. They show the
+development of the system; adjacent differences can include calibration and
+coverage effects and are not automatically isolated component effects:
 
     1  one enrolled photograph, threshold borrowed from 1:1 verification
     2  three photographs averaged into a template, same borrowed threshold
@@ -55,8 +55,8 @@ than merely promised in prose:
 
     pairsDevTrain.txt -> candidate thresholds only
     pairsDevTest.txt  -> deterministic selection, then freezing
-    pairs.txt         -> final LFW evaluation with the frozen threshold
-    pairs_CPLFW.txt   -> raw CPLFW under that same frozen threshold
+    pairs.txt         -> official ten-fold CV, threshold fitted on nine folds
+    pairs_CPLFW.txt   -> raw CPLFW under the separate frozen development threshold
 
 Run it with the VS Code play button, or:
 
@@ -172,12 +172,14 @@ PREPROCESSING_REVISION = "opencv-yunet-sface-exif-bgr-l2-v1"
 # Author: Wu, W., Peng, H. and Yu, S., Machine Intelligence Research, 20(5), pp. 656-665
 # Date: 2023
 # Availability: https://doi.org/10.1007/s11633-023-1423-y
+# GitHub: https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet
 ##############
 ##############
 # Title: SFace: Sigmoid-Constrained Hypersphere Loss for Robust Face Recognition
 # Author: Zhong, Y., Deng, W., Hu, J., Zhao, D., Li, X. and Wen, D.
 # Date: 2021
 # Availability: https://doi.org/10.1109/TIP.2020.3048632
+# GitHub: https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface
 ##############
 ##############
 # Title: OpenCV Zoo, distributor of the two pinned ONNX weight files
@@ -273,10 +275,9 @@ CPLFW_EXPECTED_PER_CLASS = 3000
 
 SCHEMA_VERSION = 1
 
-# Marks results produced under the corrected gallery accounting, in which a
-# reference image that fails to enrol is recorded rather than dropped. Results
-# carrying this revision are not comparable with the earlier conditional-only
-# duplicate_gallery_metrics.json, which is retained unchanged for provenance.
+# Identifies gallery accounting that retains failed enrolments in the intended
+# population. Conditional metrics count scored probes; end-to-end metrics
+# count every intended probe, including those without an enrolled reference.
 GALLERY_METHODOLOGY_REVISION = "open-set-gallery-accounting-v2"
 
 POLICY_NOTE = (
@@ -1223,7 +1224,9 @@ def parse_lfw_pairs(protocol_path: Path, dataset_root: Path) -> List[Pair]:
                 f"{protocol_path}:{line_number}: expected 3 or 4 columns, got {len(columns)}"
             )
 
-        key = (str(left), str(right))
+        # Reversing a pair does not create an independent comparison.
+        first, second = sorted((str(left), str(right)))
+        key = (first, second)
         if key in seen:
             raise ProtocolError(f"{protocol_path}: duplicate pair detected: {key}")
         seen.add(key)
@@ -1242,6 +1245,26 @@ def parse_lfw_pairs(protocol_path: Path, dataset_root: Path) -> List[Pair]:
 
     _validate_header(header, same_count, diff_count, protocol_path)
     return pairs
+
+
+def lfw_official_fold_indices(protocol_path: Path, pairs: Sequence[Pair]) -> List[List[int]]:
+    """Preserve the ten folds supplied by LFW, including failed extractions.
+
+    A fold contains 300 genuine pairs followed by 300 impostor pairs. Splitting
+    only successfully scored pairs would move the published fold boundaries.
+    This is pair-level cross-validation; it does not assert identity separation.
+    """
+    header = Path(protocol_path).read_text(encoding="utf-8").splitlines()[0].split()
+    if header != ["10", "300"] or len(pairs) != 6000:
+        raise ProtocolError("Final LFW evaluation requires the official 10 x 600-pair protocol.")
+    folds = [list(range(start, start + 600)) for start in range(0, 6000, 600)]
+    for number, indices in enumerate(folds, start=1):
+        labels = [pairs[index].same_identity for index in indices]
+        if labels != [True] * 300 + [False] * 300:
+            raise ProtocolError(
+                f"LFW fold {number} must contain 300 genuine then 300 impostor pairs."
+            )
+    return folds
 
 
 def _cplfw_identity_from_filename(filename: str) -> str:
@@ -1687,8 +1710,8 @@ def select_threshold(
 # 2. select_final_threshold() runs on pairsDevTest.txt, scores every candidate
 #    and selects exactly one by a fixed, fully deterministic rule. Only this
 #    step's output is marked "frozen".
-# 3. require_frozen_threshold() refuses to let a final or held-out evaluation
-#    proceed on anything that has not been through stage 2.
+# 3. require_frozen_threshold() protects CPLFW/gallery transfer evaluations.
+#    Final LFW instead fits thresholds within official ten-fold cross-validation.
 
 VALIDATION_SPLIT = "validation"
 CANDIDATES_STATUS = "candidates"
@@ -2023,6 +2046,145 @@ def summarize_metrics(result: EvaluationResult, threshold: float) -> Dict[str, A
     }
 
 
+def image_content_digest(paths: Iterable[Path]) -> str:
+    """Content fingerprint in caller-defined order; no private path is published."""
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(bytes.fromhex(sha256_of_file(path)))
+    return digest.hexdigest()
+
+
+def select_lfw_training_threshold(scores: ScoreInput, labels: LabelInput) -> float:
+    """Maximum training accuracy, breaking ties towards the stricter threshold."""
+    values, targets = _validate_inputs(scores, labels)
+    order = np.argsort(values, kind="stable")
+    values, targets = values[order], targets[order]
+    starts = np.r_[0, np.flatnonzero(np.diff(values)) + 1]
+    positive_prefix = np.r_[0, np.cumsum(targets)]
+    # Before each threshold, negatives become correct and positives become misses.
+    correct = starts - positive_prefix[starts] + positive_prefix[-1] - positive_prefix[starts]
+    thresholds = np.r_[values[starts], np.nextafter(values[-1], np.inf)]
+    correct = np.r_[correct, len(targets) - positive_prefix[-1]]
+    return float(thresholds[np.flatnonzero(correct == correct.max())[-1]])
+
+
+def summarize_lfw_cross_validation(
+    result: EvaluationResult, folds: Sequence[Sequence[int]],
+) -> Dict[str, Any]:
+    """Fit a threshold on all other folds; score each pair exactly once out of fold."""
+    indices = [i for fold in folds for i in fold]
+    if len(folds) < 2 or any(not fold for fold in folds) or sorted(indices) != list(range(result.total_pairs)):
+        raise ProtocolError("LFW folds must partition every protocol pair exactly once.")
+    result.validate_accounting()
+    fold_results: List[Dict[str, Any]] = []
+    pooled: Dict[str, int] = dict.fromkeys(("true_positive", "false_positive", "true_negative", "false_negative"), 0)
+    for number, fold in enumerate(folds, start=1):
+        excluded = set(fold)
+        training = [row for i, row in enumerate(result.scored_pairs)
+                    if i not in excluded and row.similarity is not None]
+        testing = [result.scored_pairs[i] for i in fold
+                   if result.scored_pairs[i].similarity is not None]
+        if {row.pair.same_identity for row in training} != {False, True} or not testing:
+            raise ProtocolError(f"LFW fold {number} has insufficient scored training or test pairs.")
+        threshold = select_lfw_training_threshold(
+            [cast(float, row.similarity) for row in training],
+            [int(row.pair.same_identity) for row in training],
+        )
+        matrix = confusion_matrix(
+            [cast(float, row.similarity) for row in testing],
+            [int(row.pair.same_identity) for row in testing], threshold,
+        )
+        for key, value in matrix.as_dict().items():
+            pooled[key] += value
+        fold_results.append({
+            "fold": number, "threshold": threshold,
+            "training_pairs": result.total_pairs - len(fold), "training_scored_pairs": len(training),
+            "test_pairs": len(fold), "test_scored_pairs": len(testing),
+            "test_failed_pairs": len(fold) - len(testing),
+            "confusion_matrix": matrix.as_dict(), **rates_from_confusion(matrix),
+        })
+    # AUC/EER are descriptive pooled score summaries, not tuned operating points.
+    summary = summarize_metrics(result, 0.0)
+    summary.pop("threshold")
+    matrix = ConfusionMatrix(**pooled)
+    summary.update(rates_from_confusion(matrix))
+    accuracies = [fold["accuracy"] for fold in fold_results]
+    summary.update({
+        "confusion_matrix": pooled,
+        "evaluation_protocol": "lfw_official_10_fold_cross_validation",
+        "threshold_status": "per_fold_training_only",
+        "threshold_selection": "Maximum accuracy on the other nine folds; stricter threshold on ties",
+        "fold_count": len(folds), "fold_results": fold_results,
+        "mean_fold_accuracy": statistics.fmean(accuracies),
+        "fold_accuracy_std": statistics.stdev(accuracies),
+        "fold_accuracy_standard_error": statistics.stdev(accuracies) / math.sqrt(len(folds)),
+        "pooled_accuracy": summary["accuracy"],
+        "end_to_end_correct_decision_rate": (matrix.true_positive + matrix.true_negative) / result.total_pairs,
+        "metric_note": "Accuracy/rates/confusion are pooled out-of-fold decisions; mean_fold_accuracy weights folds equally. Rates exclude extraction failures; coverage is reported separately. Pooled ROC/EER are descriptive only.",
+        "transfer_threshold_note": "The separate LFW development threshold is used only for CPLFW/gallery transfer, never for final LFW decisions.",
+    })
+    return summary
+
+
+def experiment_lfw_cross_validation(
+    config: EnvironmentConfig, detector: FaceDetector, embedder: FaceEmbedder,
+    *, output_path: Path, description: Optional[PipelineDescription] = None,
+) -> Dict[str, Any]:
+    protocol_path = config.require_protocol_root() / LFW_FINAL_PROTOCOL
+    lfw_root = config.require_lfw_root()
+    pairs = parse_lfw_pairs(protocol_path, lfw_root)
+    folds = lfw_official_fold_indices(protocol_path, pairs)
+    pipeline = pipeline_identity_fields(detector, embedder, description)
+    images = sorted({p.left_path for p in pairs} | {p.right_path for p in pairs})
+    context = {"revision": "lfw-pair-scores-v1", "protocol_sha256": sha256_of_file(protocol_path),
+               "image_content_sha256": image_content_digest(images),
+               "pipeline": pipeline, "software_environment": software_environment_report()}
+    key = context_digest(context)
+    cache_path = RAW_ROOT / "lfw_pair_scores" / f"{key}.json"
+    payload = None
+    if cache_path.is_file():
+        try:
+            candidate = json.loads(cache_path.read_text(encoding="utf-8"))
+            if candidate.get("context") == context and candidate.get("scores_sha256") == context_digest(candidate["data"]):
+                payload = candidate["data"]
+        except (ValueError, KeyError, TypeError):
+            pass
+    if payload is None:
+        announce("Scoring LFW images once; thresholds will be fitted independently within each fold.")
+        result = evaluate_pairs(pairs, detector=detector, embedder=embedder)
+        payload = {"rows": [[r.similarity, r.failure_code.split(":")[0] if r.failure_code else None]
+                            for r in result.scored_pairs],
+                   "failures": result.failures, "timings": result.embedding_times_seconds}
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        _restrict_permissions(cache_path.parent, 0o700)
+        _atomic_private_write(cache_path, json.dumps({"context": context, "data": payload,
+                              "scores_sha256": context_digest(payload)}))
+    else:
+        announce("Reusing verified LFW scores; fitting ten independent training-fold thresholds.")
+        if len(payload["rows"]) != len(pairs):
+            raise ProtocolError("Cached LFW pair count does not match the protocol.")
+        result = EvaluationResult(len(pairs),
+            [PairScore(pair, row[0], row[1]) for pair, row in zip(pairs, payload["rows"])],
+            payload["failures"], payload["timings"])
+    summary = summarize_lfw_cross_validation(result, folds)
+    # Publish aggregate overlap counts to explain why View 1 is not a final holdout.
+    final_keys = {tuple(sorted((p.left_path, p.right_path))) for p in pairs}
+    overlaps: Dict[str, int] = {}
+    for filename in (LFW_CALIBRATION_PROTOCOL, LFW_DEVELOPMENT_PROTOCOL):
+        development = parse_lfw_pairs(config.require_protocol_root() / filename, lfw_root)
+        overlaps[filename] = len(final_keys & {tuple(sorted((p.left_path, p.right_path))) for p in development})
+    write_json_artifact(output_path, {
+        "artifact_type": "lfw_verification_metrics", "split": "final",
+        "protocol_file": LFW_FINAL_PROTOCOL, "protocol_sha256": context["protocol_sha256"],
+        "evaluated_image_set_sha256": sha256_of_evaluated_image_set(images, lfw_root),
+        "image_content_sha256": context["image_content_sha256"],
+        "dataset_archive_md5": LFW_ARCHIVE_MD5, "development_protocol_pair_overlap": overlaps,
+        **summary, **pipeline, "software_environment": software_environment_report(),
+    })
+    announce(f"LFW ten-fold mean accuracy: {summary['mean_fold_accuracy']:.4f}; scored {result.scored_pair_count}/{result.total_pairs}.")
+    return summary
+
+
 # =============================================================================
 # 13. Duplicate-profile gallery evaluation
 # =============================================================================
@@ -2186,8 +2348,8 @@ class GalleryEvaluationResult:
     gallery_size: int
     probe_results: List[ProbeResult]
     search_times_seconds: List[float] = field(default_factory=list)
-    # Enrolment accounting. Defaults keep the dataclass constructible from the
-    # older positional form used by existing tests.
+    # Enrolment accounting is optional when a caller has only scored-gallery
+    # information. Detailed runs retain the outcome of every intended entry.
     intended_gallery_size: Optional[int] = None
     gallery_entry_results: List[GalleryEntryResult] = field(default_factory=list)
 
@@ -2583,7 +2745,8 @@ FAILURE_CATEGORY_PROSE = {
 
 def format_percentage(value: Any) -> str:
     try:
-        return f"{float(value) * 100:.2f}%"
+        number = float(value)
+        return f"{number * 100:.2f}%" if math.isfinite(number) else "n/a"
     except (TypeError, ValueError):
         return "n/a"
 
@@ -2642,7 +2805,7 @@ def render_final_report(
     lines = [
         "# Final evaluation report",
         "",
-        f"Auto-generated by `ACP_arden.py --mode full` on {utc_now_iso()}. Every number below is "
+        f"Generated from saved evaluation results on {utc_now_iso()}. Every number below is "
         "read directly from the corresponding `results/aggregate/*.json` file, each of which "
         "embeds its own software, model and dataset provenance (`software_environment`, "
         "`model_sha256`, `protocol_sha256`, `evaluated_image_set_sha256`, "
@@ -2654,7 +2817,7 @@ def render_final_report(
         f"status `\"candidates\"`; it never selects a winner. Experiment 2 (`pairsDevTest.txt`) "
         f"evaluated every candidate and only then selected and froze "
         f"**{final.get('operating_strategy') or dev.get('selected_candidate', 'n/a')}** "
-        f"at threshold **{format_number(final.get('threshold'), 6)}**, by the rule: "
+        f"at threshold **{format_number(dev.get('threshold'), 6)}**, by the rule: "
         f"\"{dev.get('selection_rule', 'n/a')}\"",
         "",
         "## Experiment 2 — LFW development validation (`pairsDevTest.txt`)",
@@ -2665,11 +2828,13 @@ def render_final_report(
         f"ROC-AUC {format_number(dev.get('roc_auc'))}, "
         f"EER {format_percentage(dev.get('equal_error_rate'))}.",
         "",
-        "## Experiment 3 — final LFW evaluation (`pairs.txt`, frozen threshold, untouched protocol)",
+        "## Experiment 3 — official LFW ten-fold evaluation (`pairs.txt`)",
         "",
         f"Scored {final.get('scored_pairs', 'n/a')} / {final.get('total_pairs', 'n/a')} pairs "
         f"(failure rate {format_percentage(final.get('failure_rate'))}). "
-        f"**Accuracy {format_percentage(final.get('accuracy'))}**, "
+        f"**Mean fold accuracy {format_percentage(final.get('mean_fold_accuracy', final.get('accuracy')))}** "
+        f"(standard error {format_percentage(final.get('fold_accuracy_standard_error'))}); "
+        f"pooled out-of-fold accuracy {format_percentage(final.get('accuracy'))}, "
         f"precision {format_percentage(final.get('precision'))}, "
         f"recall {format_percentage(final.get('recall'))}, "
         f"false match rate {format_percentage(final.get('false_match_rate'))}, "
@@ -2735,13 +2900,11 @@ def render_final_report(
         "",
         gallery_payload.get("policy_note", POLICY_NOTE),
         "",
-        "The false-review rate reflects reusing the 1:1 ownership-verification threshold "
-        "(calibrated for comparing exactly two images) as the 1:N duplicate-review threshold. "
-        f"A {format_percentage(final.get('false_match_rate'))} single-comparison false-match rate "
-        f"(Experiment 3) compounds across {gallery_payload.get('gallery_size', 'n/a')} gallery "
-        "comparisons per probe — direct, quantified evidence that a 1:1-calibrated threshold is "
-        "not fit for 1:N search at this gallery scale without its own calibration, and evidence "
-        "for this project's human-review-not-automatic-sanction policy.",
+        "The gallery uses the development-frozen 1:1 threshold as a transfer control. "
+        "Final LFW uses ten independently fitted fold thresholds; its FMR is not the "
+        "FMR of this transferred policy. The observed gallery false-review rate directly "
+        "measures transfer failure at this gallery size without assuming independent "
+        "pairwise comparisons.",
         "",
         "## Limitations",
         "",
@@ -2769,8 +2932,8 @@ def write_aggregate_reports(
         "lfw_final": read_json_artifact(output_root / "lfw_final_metrics.json"),
         "cplfw": read_json_artifact(output_root / "cplfw_metrics.json"),
     }
-    # The corrected gallery accounting is preferred where present; the earlier
-    # file is read only so an older run can still be summarised.
+    # Prefer complete enrolment accounting; the fallback accepts summaries
+    # that contain only the scored-gallery measurements.
     gallery_v2_path = output_root / "duplicate_gallery_metrics_v2.json"
     gallery_path = (
         gallery_v2_path if gallery_v2_path.is_file() else output_root / "duplicate_gallery_metrics.json"
@@ -2801,6 +2964,8 @@ def write_aggregate_reports(
             "cplfw_image_variant": cplfw_image_variant,
             "output_root": project_relative(output_root),
             "gallery_manifest": project_relative(gallery_manifest_path),
+            "lfw_evaluation_protocol": payloads["lfw_final"].get("evaluation_protocol", "legacy_transferred_threshold"),
+            "frozen_threshold_scope": "CPLFW and gallery transfer only; final LFW has per-fold training thresholds",
             "frozen_threshold": threshold_payload.get("threshold"),
             "frozen_threshold_candidate": threshold_payload.get("operating_strategy"),
             "output_file_sha256": {
@@ -2812,6 +2977,7 @@ def write_aggregate_reports(
 
     summary_field_order = [
         "experiment", "protocol_file", "total_pairs", "scored_pairs", "failure_rate", "threshold",
+        "evaluation_protocol", "mean_fold_accuracy", "fold_accuracy_standard_error",
         "accuracy", "precision", "recall", "f1", "false_match_rate", "false_non_match_rate",
         "roc_auc", "equal_error_rate", "embedding_time_mean_ms", "embedding_time_median_ms",
         "embedding_time_p95_ms", "gallery_size", "duplicate_probe_count", "unknown_probe_count",
@@ -2922,8 +3088,8 @@ def render_results_summary(output_root: Path = AGGREGATE_ROOT) -> str:
     never appears without its false-review rate."""
     final = read_json_artifact(output_root / "lfw_final_metrics.json")
     cplfw = read_json_artifact(output_root / "cplfw_metrics.json")
-    # Prefer the corrected-accounting artefact when it exists; the historical
-    # file remains readable so earlier results stay interpretable.
+    # Complete enrolment accounting supplies both intended and scored counts.
+    # The fallback supports summaries with scored-gallery measurements only.
     gallery_v2_path = output_root / "duplicate_gallery_metrics_v2.json"
     gallery = read_json_artifact(
         gallery_v2_path if gallery_v2_path.is_file() else output_root / "duplicate_gallery_metrics.json"
@@ -2933,12 +3099,12 @@ def render_results_summary(output_root: Path = AGGREGATE_ROOT) -> str:
     lines = [
         f"{PROGRAMME_TITLE} — results summary",
         "",
-        f"Frozen threshold: {format_number(threshold.get('threshold'), 6)} "
+        f"Frozen transfer threshold (CPLFW/gallery): {format_number(threshold.get('threshold'), 6)} "
         f"(candidate: {threshold.get('operating_strategy')}, status: {threshold.get('status')})",
         f"Selection rule: {threshold.get('selection_rule')}",
         "",
-        "Experiment 3 — final LFW (pairs.txt, frozen threshold, no recalibration)",
-        f"  Final LFW accuracy: {format_percentage(final.get('accuracy'))}",
+        "Experiment 3 — final LFW (ten folds; thresholds trained on other folds)",
+        f"  Final LFW mean fold accuracy: {format_percentage(final.get('mean_fold_accuracy', final.get('accuracy')))}",
         f"  Final LFW false-match rate: {format_percentage(final.get('false_match_rate'))}",
         f"  Final LFW false-non-match rate: {format_percentage(final.get('false_non_match_rate'))}",
         f"  Final LFW EER: {format_percentage(final.get('equal_error_rate'))}",
@@ -3199,15 +3365,15 @@ def check_public_outputs(paths: Sequence[Path]) -> bool:
 # 16. Optional human-review interface
 # =============================================================================
 #
-# A local, login-free Streamlit page for manually reviewing anonymised
+# A Streamlit moderation page for manually reviewing anonymised
 # duplicate-profile cases. It never displays a real name, real file path or raw
 # embedding — only opaque identifiers, a similarity score, and the threshold
 # that opened the case. It applies no sanction of any kind.
 
 REVIEW_STATUSES = ["open", "confirmed_duplicate", "false_match", "dismissed"]
 
-# Display wording for the stored status values. The stored strings themselves
-# are unchanged, because the review database schema is part of the artefact.
+# Display wording is separate from stored status values, so the moderation
+# page can display descriptive labels while database records retain their schema.
 REVIEW_STATUS_WORDING = {
     "open": "awaiting review",
     "confirmed_duplicate": "marked for further review",
@@ -3251,7 +3417,7 @@ def _migrate_review_schema(connection: sqlite3.Connection) -> None:
 
 
 def assert_review_database_version(connection: sqlite3.Connection) -> None:
-    """Refuse to mix identifier schemes in one database. The local review
+    """Refuse to mix identifier schemes in one database. The moderation
     database is private and disposable, so the remedy is to delete it."""
     # Every identifier scheme the stored cases were written under.
     versions = {
@@ -3266,7 +3432,7 @@ def assert_review_database_version(connection: sqlite3.Connection) -> None:
     foreign = versions - {OPAQUE_ID_VERSION}
     if foreign:
         raise ReviewDatabaseVersionError(
-            f"The local review database holds cases written under identifier scheme(s) "
+            f"The moderation database holds cases written under identifier scheme(s) "
             f"{sorted(foreign)!r}, but this build emits {OPAQUE_ID_VERSION!r}. Those "
             f"identifiers are not comparable, so the rows cannot be merged. The review "
             f"database is private, disposable local state: delete the file and re-run the "
@@ -3453,12 +3619,12 @@ def render_review_page(db_path: Path) -> None:
     """The Streamlit page itself. Rendered only inside a Streamlit script run."""
     import streamlit as st
 
-    st.set_page_config(page_title="Duplicate-profile review (local only)", layout="wide")
+    st.set_page_config(page_title="Human review moderation", layout="wide")
 
-    st.title("Duplicate-profile review — local demonstration only")
+    st.title("Human review moderation")
     st.error(
         "**These cases are not confirmed duplicate profiles.** They were created by "
-        "Experiment 5 using the original LFW gallery method. That threshold produced a "
+        "Experiment 5 using the LFW gallery method. That threshold produced a "
         "high false-review rate and is included as a research baseline. This page "
         "demonstrates the review workflow, not a production moderation decision."
     )
@@ -3500,7 +3666,7 @@ def render_review_page(db_path: Path) -> None:
         if not cases:
             st.info(
                 "No cases match this filter. Run the complete evaluation "
-                "(`python ACP_arden.py --mode full`) to populate the local review database."
+                "(`python ACP_arden.py --mode full`) to populate the moderation database."
             )
             return
 
@@ -3544,7 +3710,7 @@ def launch_review_interface(db_path: Path) -> int:
     if not db_path.exists():
         announce(
             f"No review database at {project_relative(db_path)} yet. The page will open empty; "
-            f"run option 3 (complete evaluation) first to populate it."
+            f"run option 4 (complete evaluation) first to populate it."
         )
     # Stated before the browser opens, because the queue shown here was built
     # by the deliberately high-false-review Experiment 5 baseline.
@@ -3553,7 +3719,7 @@ def launch_review_interface(db_path: Path) -> int:
     print("")
     child_environment = dict(os.environ)
     child_environment["ACP_ARDEN_REVIEW_CHILD"] = "1"
-    print("Starting the local review interface (Ctrl+C in this terminal to stop it).")
+    print("Starting human review moderation (Ctrl+C in this terminal to stop it).")
     completed = subprocess.run(
         [
             sys.executable,
@@ -4274,10 +4440,9 @@ class OpenSetRunResult:
     stage_times_seconds: Dict[str, List[float]] = field(default_factory=dict)
 
 
-# One template per identity, formed by averaging the enrolled embeddings and
-# renormalising. Averaging moves a template towards the centre of the embedding
-# space, which raises its similarity to everyone, and that is why layer 2
-# detects more duplicates and also refers more innocent registrations.
+# One unit-length template per identity, formed by averaging and renormalising.
+# This changes score distributions; it does not necessarily increase similarity
+# to every other identity. Its benefit must be measured at calibrated thresholds.
 def build_identity_template(
     embeddings: Sequence[np.ndarray],
 ) -> np.ndarray:
@@ -5422,6 +5587,66 @@ def _percentile_interval(values: Sequence[float]) -> Tuple[float, float]:
     return (percentile(ordered, 2.5), percentile(ordered, 97.5))
 
 
+def zero_event_identity_upper_bound(
+    non_mated_counts: Mapping[str, Tuple[int, int]], *, false_referrals: int,
+    confidence: float = 0.95,
+) -> Optional[Dict[str, Any]]:
+    """Supplement a degenerate bootstrap with the correct identity estimand.
+
+    Each independent identity is one Bernoulli trial: did any of its intended
+    probes produce a false referral? Dependence among its images is unrestricted.
+    This is not a binomial bound treating images as independent, and it is not
+    a bound on FPIR conditional on successful extraction.
+    """
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("Confidence must lie strictly between zero and one.")
+    counts = [pair for pair in non_mated_counts.values() if pair[0] > 0]
+    if false_referrals != 0 or not counts:
+        return None
+    if any(scored < 0 or scored > intended for intended, scored in counts):
+        raise ValueError("Scored counts must be between zero and intended counts.")
+    upper = -math.expm1(math.log1p(-confidence) / len(counts))
+    equal_intended = len({intended for intended, _scored in counts}) == 1
+    return {
+        "confidence_level": confidence,
+        "one_sided_upper": upper,
+        "independent_identities": len(counts),
+        "intended_probes": sum(intended for intended, _scored in counts),
+        "scored_probes": sum(scored for _intended, scored in counts),
+        "observed_false_referrals": 0,
+        "estimand": "Probability that an identity has any false referral in its probe set",
+        "dependence_model": (
+            "Independent, exchangeable identities under this fixed gallery and frozen "
+            "policy; arbitrary dependence among images of one identity. Extraction "
+            "failures remain unresolved and do not generate a referral."
+        ),
+        "formula": "1 - (1 - confidence) ** (1 / independent_identities)",
+        "equal_intended_probes_per_identity": equal_intended,
+        "intended_probe_false_referral_rate_upper": upper if equal_intended else None,
+        "conditional_scored_probe_fpir_upper": None,
+        "interpretation": (
+            "For an equal fixed number of intended probes per identity, the false "
+            "referral rate per intended probe is no greater than the probability "
+            "of any referral per identity. This implication does not bound FPIR "
+            "conditional on successful extraction or establish deployment performance."
+        ),
+    }
+
+
+def _attach_zero_event_bound(
+    interval: Dict[str, Any], counts: Mapping[str, Tuple[int, int]], false_referrals: int,
+) -> None:
+    bound = zero_event_identity_upper_bound(counts, false_referrals=false_referrals)
+    if bound is not None:
+        interval["bootstrap_degenerate_zero_events"] = True
+        interval["zero_event_identity_bound"] = bound
+        interval["interval_warning"] = (
+            "The empirical bootstrap cannot generate unobserved events; [0, 0] "
+            "does not bound population FPIR. The supplementary one-sided bound "
+            "concerns any false referral per independent identity, not scored-probe FPIR."
+        )
+
+
 def cluster_bootstrap_intervals(
     results: Sequence[OpenSetSearchResult],
     *,
@@ -5518,6 +5743,17 @@ def cluster_bootstrap_intervals(
             "valid_replicates": len(samples[name]),
             "requested_replicates": replicates,
         }
+    counts = {
+        identity: (len(rows), sum(row.failure_code is None for row in rows))
+        for identity, all_rows in by_identity.items()
+        if (rows := [row for row in all_rows if row.role == "non_mated_probe"])
+    }
+    false_referrals = sum(
+        row.role == "non_mated_probe" and row.failure_code is None
+        and row.top_similarity is not None and row.top_similarity >= threshold
+        for row in results
+    )
+    _attach_zero_event_bound(intervals["fpir"], counts, false_referrals)
     return intervals
 
 
@@ -6466,15 +6702,14 @@ def render_open_set_report(
         f"{format_percentage(primary['fpir'])} | "
         f"{format_percentage(primary['tpir_rank1'])} |",
         "",
-        "Read the middle row before drawing any conclusion about multi-image enrolment. "
-        "Averaging three images raises rank-1 identification, but at a fixed threshold it "
-        "*raises* the false-positive identification rate rather than lowering it: a mean "
-        "template sits nearer the centre of the embedding space and is therefore closer "
-        "to everyone, so more non-mated searches clear the same bar. The reduction in "
-        "false reviews is attributable to the gallery-specific calibration, not to the "
-        "multi-image representation. The two are complementary — enrolment supplies the "
-        "headroom in TPIR that calibration then spends on a stricter threshold — but they "
-        "must not be credited interchangeably.",
+        "The middle row isolates the observed enrolment change at the transferred "
+        "threshold. Averaged templates are renormalised to unit length, so geometry "
+        "alone does not establish whether genuine or impostor scores should increase. "
+        "The final row measures recalibration with the same three-image templates. "
+        "To assess enrolment at an equal development FPIR target, run the comparison "
+        "diagnostics: these calibrate the one-image and three-image methods separately. "
+        "The three rows above alone do not establish which enrolment method is better "
+        "when both receive appropriate calibration.",
         "",
         "## Operating points and the development-to-test gap",
         "",
@@ -6652,6 +6887,7 @@ def report_optional_dataset_status() -> List[str]:
 #         IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
 # Date: 2019
 # Availability: https://doi.org/10.1109/CVPR.2019.00482
+# GitHub: https://github.com/deepinsight/insightface
 ##############
 ##############
 # Title: Sample and Computation Redistribution for Efficient Face Detection (SCRFD)
@@ -6659,6 +6895,7 @@ def report_optional_dataset_status() -> List[str]:
 #         Conference on Learning Representations (ICLR)
 # Date: 2022
 # Availability: https://arxiv.org/abs/2105.04714
+# GitHub: https://github.com/deepinsight/insightface
 ##############
 ##############
 # Title: InsightFace: 2D and 3D Face Analysis Project
@@ -7570,8 +7807,8 @@ def build_review_feature_rows(
     return rows, excluded
 
 
-def _feature_matrix(rows: Sequence[ReviewFeatureRow]) -> Tuple[np.ndarray, np.ndarray]:
-    matrix = np.array([[r.features[name] for name in ML_REVIEW_FEATURES] for r in rows], dtype=float)
+def _feature_matrix(rows: Sequence[ReviewFeatureRow], *, features: Sequence[str] = ML_REVIEW_FEATURES) -> Tuple[np.ndarray, np.ndarray]:
+    matrix = np.array([[r.features[name] for name in features] for r in rows], dtype=float).reshape(len(rows), len(features))
     labels = np.array([r.label for r in rows], dtype=int)
     return matrix, labels
 
@@ -7619,7 +7856,7 @@ class ReviewClassifier:
 # Fitted on the development identities only, and on search-derived features
 # alone. No demographic attribute is a feature, and no held-out identity is seen
 # during fitting or during the probability-threshold calibration that follows.
-def fit_review_classifier(rows: Sequence[ReviewFeatureRow]) -> ReviewClassifier:
+def fit_review_classifier(rows: Sequence[ReviewFeatureRow], *, features: Sequence[str] = ML_REVIEW_FEATURES) -> ReviewClassifier:
     """Fit the logistic regression on training identities only."""
     if not rows:
         raise MlReviewError("No training rows available for the review classifier.")
@@ -7637,7 +7874,9 @@ def fit_review_classifier(rows: Sequence[ReviewFeatureRow]) -> ReviewClassifier:
             "requirements.txt before running --mode ml-review."
         ) from exc
 
-    matrix, labels = _feature_matrix(rows)
+    if not features or len(set(features)) != len(features) or not set(features) <= set(ML_REVIEW_FEATURES):
+        raise MlReviewError("Classifier feature set must be a nonempty unique subset of the declared features.")
+    matrix, labels = _feature_matrix(rows, features=features)
     # Fit the scaler on training identities only; calibration and test rows are
     # transformed with these same parameters.
     scaler = StandardScaler().fit(matrix)
@@ -7655,7 +7894,7 @@ def fit_review_classifier(rows: Sequence[ReviewFeatureRow]) -> ReviewClassifier:
     # A constant feature yields a zero scale; guard so division stays defined.
     scale = np.where(scale == 0.0, 1.0, scale)
     return ReviewClassifier(
-        feature_order=ML_REVIEW_FEATURES,
+        feature_order=tuple(features),
         coefficients=[float(c) for c in np.asarray(model.coef_).ravel()],
         intercept=float(np.asarray(model.intercept_).ravel()[0]),
         scaler_mean=[float(m) for m in np.asarray(scaler.mean_, dtype=float)],
@@ -7955,6 +8194,18 @@ def review_cluster_bootstrap(
             "valid_replicates": len(samples[name]),
             "requested_replicates": replicates,
         }
+    counts = {}
+    if outcomes is not None:
+        counts = {identity: (o.intended_non_mated, o.scored_non_mated)
+                  for identity, o in outcomes.items() if o.intended_non_mated}
+    else:
+        for row in rows:
+            if row.role == "non_mated_probe":
+                n = counts.get(row.identity_hash, (0, 0))[0] + 1
+                counts[row.identity_hash] = (n, n)
+    false_referrals = sum(row.role == "non_mated_probe" and probability >= threshold
+                          for row, probability in zip(rows, probabilities))
+    _attach_zero_event_bound(intervals["fpir"], counts, int(false_referrals))
     return intervals
 
 
@@ -8384,10 +8635,8 @@ def run_ml_review_experiment(
     announce(f"Using canonical primary-pipeline run {canonical_digest[:16]}")
     test_rows, test_excluded = build_review_feature_rows(test_run.search_results)
     test_matrix, _ = _feature_matrix(test_rows)
-    decision_start = time.perf_counter()
     test_probabilities = classifier.probabilities(test_matrix)
-    decision_elapsed = time.perf_counter() - decision_start
-    per_decision_ms = (decision_elapsed / len(test_rows) * 1000.0) if test_rows else float("nan")
+    classifier_timing = measure_classifier_latency(classifier, test_matrix)
 
     coverage = open_set_coverage(test_run)
     # Retain failed probes in the intended denominator.
@@ -8422,8 +8671,7 @@ def run_ml_review_experiment(
         "classifier_hyperparameters": dict(ML_REVIEW_HYPERPARAMETERS),
         "feature_definitions": _feature_definitions(),
         "classifier": classifier_rates,
-        "classifier_decision_latency_mean_ms": per_decision_ms,
-        "classifier_decision_latency_p95_ms": per_decision_ms,
+        **classifier_timing,
         "comparator_three_image_open_set_calibrated": {
             "operating_threshold": baseline_threshold,
             "rates": baseline_rates,
@@ -8579,7 +8827,7 @@ def render_arcface_review_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     compare = _load_optional(root / ARCFACE_REVIEW_DIRNAME, "ml_review_test_metrics.json")
     if not compare:
         return missing_artefact_message(
-            "classifier pipeline comparison", "option 17 (--mode arcface-review)"
+            "classifier pipeline comparison", "option 14 (--mode arcface-review)"
         )
 
     def cells(getter) -> List[str]:
@@ -8658,7 +8906,7 @@ def render_arcface_review_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         lines += ["", wrap_plain(
             f"A rate of zero means no false referral was observed among the "
             f"{scored:,} new profiles scored. It does not establish that the "
-            f"population rate is zero, and the interval around it remains wide."
+            f"population rate is zero. An empirical zero-event bootstrap interval cannot bound population FPIR."
         )]
     lines += ["", wrap_plain(DENOMINATOR_NOTE), "", wrap_plain(REFERRAL_DISCLAIMER)]
     return "\n".join(lines)
@@ -8902,7 +9150,7 @@ def run_mixed_pipeline_matrix(
     """Both crossings, completing the two-by-two against Experiments 6 and 8."""
     results: Dict[str, Any] = {}
     for index, crossing in enumerate(MIXED_CROSSINGS, start=1):
-        announce(f"--- Crossing {index} of {len(MIXED_CROSSINGS)}: {crossing} ---")
+        announce_stage(index, len(MIXED_CROSSINGS), f"Crossed pipeline: {crossing}")
         results[crossing] = run_mixed_pipeline_experiment(
             crossing, output_root, seed=seed, bootstrap_replicates=bootstrap_replicates
         )
@@ -8923,7 +9171,7 @@ def render_mixed_pipeline_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         for name, metrics in held_out.items():
             if fragment in name:
                 rates = metrics.get("rates")
-                return rates if isinstance(rates, Mapping) else None
+                return {**rates, "end_to_end_duplicate_detection_rate": metrics.get("end_to_end_duplicate_detection_rate")} if isinstance(rates, Mapping) else None
         return None
 
     def crossed(crossing: str) -> Optional[Mapping[str, Any]]:
@@ -8935,7 +9183,7 @@ def render_mixed_pipeline_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         point = ((payload.get("methods") or {}).get(METHOD_B) or {}).get(
             "primary_operating_point"
         )
-        return point if isinstance(point, Mapping) else None
+        return {**point, "end_to_end_duplicate_detection_rate": payload["methods"][METHOD_B].get("end_to_end_duplicate_detection_rate")} if isinstance(point, Mapping) else None
 
     cells = {
         ("yunet", "sface"): matched("opencv"),
@@ -8945,7 +9193,7 @@ def render_mixed_pipeline_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     }
     if cells[("scrfd", "sface")] is None and cells[("yunet", "arcface")] is None:
         return missing_artefact_message(
-            "crossed pipelines", "option 19 (--mode mixed-pipelines)"
+            "crossed pipelines", "option 16 (--mode mixed-pipelines)"
         )
 
     def cell(detector: str, embedder: str, render) -> str:
@@ -8978,31 +9226,15 @@ def render_mixed_pipeline_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
                              if isinstance(r.get("false_reviews_per_1000_non_mated"),
                                            (int, float)) else "not available"))
 
-    # The attribution only holds when every cell was measured.
-    def tpir(detector: str, embedder: str) -> Optional[float]:
-        rates = cells[(detector, embedder)]
-        value = rates.get("tpir_rank1") if rates else None
-        return float(value) if isinstance(value, (int, float)) else None
-
-    base = tpir("yunet", "sface")
-    detector_only = tpir("scrfd", "sface")
-    embedder_only = tpir("yunet", "arcface")
-    both = tpir("scrfd", "arcface")
-    if None not in (base, detector_only, embedder_only, both):
-        # mypy cannot narrow a tuple membership test, so the values are re-read.
-        base_v, det_v = float(base), float(detector_only)  # type: ignore[arg-type]
-        emb_v, both_v = float(embedder_only), float(both)  # type: ignore[arg-type]
-        detector_gain = (det_v - base_v) * 100.0
-        embedder_gain = (emb_v - base_v) * 100.0
-        total_gain = (both_v - base_v) * 100.0
-        lines += [wrap_plain(
-            f"Swapping the detector alone moves detection by "
-            f"{detector_gain:+.2f} percentage points, and swapping the embedder "
-            f"alone by {embedder_gain:+.2f}. Swapping both moves it by "
-            f"{total_gain:+.2f}, against {detector_gain + embedder_gain:+.2f} if "
-            f"the two contributions simply added. The difference between those "
-            f"last two figures is what the pairing itself contributes."
-        ), ""]
+    lines += grid("Duplicates detected across ALL intended probes (end-to-end):",
+                  lambda r: _percentage_of(r.get("end_to_end_duplicate_detection_rate")))
+    lines += [wrap_plain(
+        "Conditional TPIR uses each pipeline's successfully scored subset. Differences "
+        "between these rates alone do not isolate component effects. Compare end-to-end "
+        "detection and coverage, then the paired common-success analysis below."
+    ), ""]
+    if (root / "comparative_statistics.json").is_file():
+        lines += [render_paired_comparison_report(root), ""]
 
     lines += [wrap_plain(
         "No threshold is shared between cells. A cosine similarity from a "
@@ -9131,6 +9363,7 @@ def render_ml_review_report(
         f"{format_percentage(intervals['tpir_rank1']['upper_95'])} "
         f"(2,000 identity-cluster replicates).",
         "",
+        format_zero_event_note(intervals["fpir"]) if intervals["fpir"].get("bootstrap_degenerate_zero_events") else "",
         "### Decision counts",
         "",
         f"- Mated probes referred with the correct identity at rank one: "
@@ -9379,6 +9612,14 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
             "canonical_test_context_sha256": context_digest(primary_test_context),
             "cache_schema_version": CANONICAL_CACHE_SCHEMA_VERSION,
         }
+        arcface_development_run, _, _ = canonical_primary_run(
+            protocol, partition="development", detector=arcface_detector,
+            embedder=arcface_embedder, dataset=dataset, base_cache=ARCFACE_RUN_CACHE,
+        )
+        arcface_test_run, _, _ = canonical_primary_run(
+            protocol, partition="test", detector=arcface_detector,
+            embedder=arcface_embedder, dataset=dataset, base_cache=ARCFACE_RUN_CACHE,
+        )
         # Both pipelines traverse the identical protocol: same identities, same
         # split, same roles, same failure taxonomy.
         comparison_metrics = {
@@ -9390,6 +9631,8 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
             arcface_description.pipeline_name: evaluate_one_pipeline_for_comparison(
                 protocol, name=arcface_description.pipeline_name,
                 detector=arcface_detector, embedder=arcface_embedder,
+                canonical_development_run=arcface_development_run,
+                canonical_test_run=arcface_test_run,
             ),
         }
         if not comparison_metrics:
@@ -9949,6 +10192,483 @@ def render_pipeline_comparison_summary(output_root: Path = AGGREGATE_ROOT) -> st
     return "\n".join(lines)
 
 
+# Supplementary paired comparisons; thresholds and galleries remain fixed.
+COMPARISON_PIPELINE_ORDER = ("YuNet + SFace", "SCRFD + SFace", "YuNet + ArcFace", "SCRFD + ArcFace")
+
+
+def paired_pipeline_bootstrap(
+    runs: Mapping[str, OpenSetRunResult], thresholds: Mapping[str, float],
+    *, replicates: int = BOOTSTRAP_REPLICATES, seed: int = DEFAULT_RANDOM_SEED,
+) -> Dict[str, Any]:
+    """Paired, role/subgroup-stratified identity bootstrap of method differences.
+
+    Common-success results use the same successfully extracted probes in every
+    pipeline. End-to-end results always retain every intended mated probe.
+    """
+    if len(runs) < 2 or replicates < 2 or set(runs) != set(thresholds):
+        raise ValueError("At least two aligned runs, their thresholds and two replicates are required.")
+    names = list(runs)
+    keyed = {name: {r.sample_id: r for r in run.search_results} for name, run in runs.items()}
+    reference = keyed[names[0]]
+    if not reference:
+        raise ProtocolError("Paired comparison requires intended probes.")
+    if any(len(keyed[name]) != len(runs[name].search_results) for name in names):
+        raise ProtocolError("Duplicate probe identifiers in paired comparison.")
+    for name in names:
+        if set(keyed[name]) != set(reference):
+            raise ProtocolError("Paired methods must contain exactly the same intended probes.")
+        if not math.isfinite(thresholds[name]):
+            raise ValueError("Paired thresholds must be finite.")
+        for sample, row in keyed[name].items():
+            ref = reference[sample]
+            if (row.identity_hash, row.subgroup, row.role) != (ref.identity_hash, ref.subgroup, ref.role):
+                raise ProtocolError("Paired methods disagree about probe identity, role or subgroup.")
+    identities = sorted({r.identity_hash for r in reference.values()})
+    position = {identity: i for i, identity in enumerate(identities)}
+    identity_strata: Dict[str, Tuple[str, str]] = {}
+    for row in reference.values():
+        value = (row.role, row.subgroup)
+        if identity_strata.setdefault(row.identity_hash, value) != value:
+            raise ProtocolError("An identity crosses roles or subgroups in a paired comparison.")
+    common = {sample for sample in reference
+              if all(keyed[name][sample].failure_code is None for name in names)}
+    strata: Dict[Tuple[str, str], List[int]] = {}
+    for identity in identities:
+        strata.setdefault(identity_strata[identity], []).append(position[identity])
+    rng = np.random.default_rng(seed)
+    weights = np.zeros((replicates, len(identities)), dtype=float)
+    for members in strata.values():
+        weights[:, members] = rng.multinomial(len(members), [1 / len(members)] * len(members), size=replicates)
+    metrics = ("fpir", "tpir_rank1", "end_to_end_duplicate_detection_rate",
+               "mated_extraction_coverage", "non_mated_extraction_coverage")
+
+    def rates(counts: np.ndarray) -> np.ndarray:
+        # Columns: intended mated, scored mated, detected, intended new, scored new, false referrals.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.stack((counts[..., 5] / counts[..., 4], counts[..., 2] / counts[..., 1],
+                             counts[..., 2] / counts[..., 0], counts[..., 1] / counts[..., 0],
+                             counts[..., 4] / counts[..., 3]), axis=-1)
+
+    def interval(values: np.ndarray, estimate: float) -> Dict[str, Any]:
+        valid = values[np.isfinite(values)]
+        low, high = np.percentile(valid, [2.5, 97.5]) if len(valid) else (float("nan"), float("nan"))
+        return {"estimate": float(estimate), "lower_95": float(low), "upper_95": float(high),
+                "valid_replicates": len(valid), "requested_replicates": replicates}
+
+    analyses: Dict[str, Any] = {}
+    for scope in ("full_protocol", "common_success"):
+        observed: Dict[str, np.ndarray] = {}
+        draws: Dict[str, np.ndarray] = {}
+        point_results: Dict[str, Any] = {}
+        for name in names:
+            counts = np.zeros((len(identities), 6), dtype=float)
+            for sample, row in keyed[name].items():
+                if scope == "common_success" and sample not in common:
+                    continue
+                i = position[row.identity_hash]
+                offset = 0 if row.role == "mated_probe" else 3
+                counts[i, offset] += 1
+                if row.failure_code is not None:
+                    continue
+                counts[i, offset + 1] += 1
+                if offset == 0:
+                    counts[i, 2] += int(row.correct_rank == 1 and row.correct_similarity is not None
+                                        and row.correct_similarity >= thresholds[name])
+                else:
+                    counts[i, 5] += int(row.top_similarity is not None and row.top_similarity >= thresholds[name])
+            observed[name] = rates(counts.sum(axis=0))
+            draws[name] = rates(weights @ counts)
+            point_results[name] = {metric: interval(draws[name][:, j], observed[name][j])
+                                   for j, metric in enumerate(metrics)}
+            point_results[name]["counts"] = dict(zip(
+                ("intended_mated", "scored_mated", "detected", "intended_non_mated", "scored_non_mated", "false_referrals"),
+                [int(x) for x in counts.sum(axis=0)]))
+        differences = []
+        for i, left in enumerate(names):
+            for right in names[i + 1:]:
+                differences.append({"left": left, "right": right, "direction": "right minus left",
+                    "metrics": {metric: interval(draws[right][:, j] - draws[left][:, j], observed[right][j] - observed[left][j])
+                                for j, metric in enumerate(metrics)}})
+        analysis: Dict[str, Any] = {"pipelines": point_results, "paired_differences": differences}
+        if all(name in runs for name in COMPARISON_PIPELINE_ORDER):
+            a, b, c, d = COMPARISON_PIPELINE_ORDER
+            analysis["detector_embedder_interaction"] = {
+                "contrast": "(SCRFD+ArcFace - YuNet+ArcFace) - (SCRFD+SFace - YuNet+SFace)",
+                "metrics": {metric: interval(draws[d][:, j] - draws[c][:, j] - draws[b][:, j] + draws[a][:, j],
+                                            observed[d][j] - observed[c][j] - observed[b][j] + observed[a][j])
+                            for j, metric in enumerate(metrics)}}
+        analyses[scope] = analysis
+    return {"artifact_type": "paired_pipeline_comparison", "seed": seed, "replicates": replicates,
+            "independent_identities": len(identities), "intended_probes": len(reference),
+            "common_success_probes": len(common), "thresholds": dict(thresholds), "analyses": analyses,
+            "method": "Paired percentile identity bootstrap stratified by role and subgroup; identical identity draws across methods",
+            "limitations": "Exploratory unadjusted 95% intervals. Fixed galleries and frozen policies; uncertainty excludes model fitting, threshold estimation, gallery selection and population shift. Common-success analysis describes a selected subset only. Zero-event bootstrap intervals cannot bound population FPIR."}
+
+
+def generate_comparative_statistics(output_root: Path = AGGREGATE_ROOT) -> Dict[str, Any]:
+    """Verify canonical records and publish paired comparisons without changing policies."""
+    config = EnvironmentConfig.load()
+    dataset = load_bfw_dataset(*config.require_bfw_roots())
+    protocol = build_open_set_protocol(dataset)
+    yunet, sface = load_models(config.require_model_root())
+    (scrfd, arcface), _description = load_arcface_pipeline(config)
+    specs = (
+        ("YuNet + SFace", CANONICAL_RUN_CACHE, output_root, yunet, sface),
+        ("SCRFD + SFace", mixed_run_cache("scrfd-sface"), output_root / MIXED_PIPELINE_DIRNAME / "scrfd-sface", scrfd, sface),
+        ("YuNet + ArcFace", mixed_run_cache("yunet-arcface"), output_root / MIXED_PIPELINE_DIRNAME / "yunet-arcface", yunet, arcface),
+        ("SCRFD + ArcFace", ARCFACE_RUN_CACHE, output_root / ARCFACE_REVIEW_DIRNAME, scrfd, arcface),
+    )
+    runs: Dict[str, OpenSetRunResult] = {}
+    thresholds: Dict[str, float] = {}
+    provenance: Dict[str, str] = {}
+    for name, base, root, detector, embedder in specs:
+        path = canonical_cache_path("test", base)
+        if not path.is_file():
+            raise PipelineComparisonError("Paired statistics require completed Experiments 6, 8, 11 and 12.")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        context = canonical_run_context(protocol, partition="test", dataset=dataset, detector=detector, embedder=embedder)
+        reason = cache_invalidation_reason(path, context)
+        if reason:
+            raise PipelineComparisonError(f"Paired comparison cache for {name} is stale: {reason}. Rerun that experiment.")
+        policy_path = root / "bfw_open_set_threshold.json"
+        policy = read_json_artifact(policy_path)
+        if policy.get("public_manifest_sha256", policy.get("protocol_digest")) != public_manifest_digest(protocol):
+            raise PipelineComparisonError(f"Frozen policy for {name} belongs to another protocol.")
+        thresholds[name] = require_frozen_open_set_policy(policy)
+        runs[name] = _run_from_cached_payload(payload)
+        provenance[name] = canonical_run_digest(runs[name])
+    result = paired_pipeline_bootstrap(runs, thresholds)
+    result["canonical_run_digests"] = provenance
+    result["public_manifest_sha256"] = public_manifest_digest(protocol)
+    write_json_artifact(output_root / "comparative_statistics.json", result)
+    return result
+
+
+def format_zero_event_note(interval: Mapping[str, Any]) -> str:
+    bound = interval.get("zero_event_identity_bound")
+    if not bound:
+        return "Zero-event bootstrap intervals such as 0%–0% cannot bound population FPIR."
+    return (f"No false referrals were observed across {bound['independent_identities']} independent identity clusters. "
+            f"The 95% one-sided upper bound for an identity having any false referral in its probe set is "
+            f"{format_percentage(bound['one_sided_upper'])}, assuming independent exchangeable identities. "
+            "This is not a bound on conditional per-image FPIR; within-identity image dependence is unrestricted.")
+
+
+def measure_classifier_latency(classifier: ReviewClassifier, matrix: np.ndarray) -> Dict[str, Any]:
+    """Warm single-query timings; exclude feature extraction and model fitting."""
+    if matrix.ndim != 2 or len(matrix) == 0:
+        raise MlReviewError("Cannot time the classifier without a nonempty feature matrix.")
+    for row in matrix[:min(10, len(matrix))]:
+        classifier.probabilities(row[None, :])
+    timings = []
+    for row in matrix:
+        start = time.perf_counter()
+        classifier.probabilities(row[None, :])
+        timings.append((time.perf_counter() - start) * 1000.0)
+    return {"classifier_decision_latency_mean_ms": statistics.fmean(timings),
+            "classifier_decision_latency_p95_ms": percentile(timings, 95),
+            "classifier_latency_measurement": "One warm single-query call per scored probe; inference only; wall-clock milliseconds",
+            "classifier_latency_samples": len(timings)}
+
+
+DIAGNOSTIC_REVISION = "calibrated-controls-gallery-features-quality-v1"
+DIAGNOSTIC_GALLERY_SIZES = (25, 50, 100, 200)
+DIAGNOSTIC_GALLERY_SEEDS = (20260917, 20260918, 20260919)
+DIAGNOSTIC_FEATURE_SETS = {
+    "similarity_only": ("top1_similarity",),
+    "similarity_and_margin": ("top1_similarity", "top1_top2_margin"),
+    "all_features": ML_REVIEW_FEATURES,
+}
+
+
+def gallery_sensitivity_protocol(
+    protocol: OpenSetProtocol, size: int, *, seed: int, probe_core_size: int = 25,
+) -> OpenSetProtocol:
+    """Nested balanced galleries with a fixed probe core; only distractors change."""
+    if size < probe_core_size or probe_core_size < 1:
+        raise ProtocolError("Gallery size must be at least the positive fixed probe-core size.")
+    entries: List[OpenSetEntry] = []
+    for partition in ("development", "test"):
+        source = protocol.partition(partition)
+        subgroup_of = {e.identity: e.subgroup for e in source if e.role == "gallery_enrolment"}
+        buckets: Dict[str, List[str]] = {}
+        for identity in sorted(subgroup_of):
+            buckets.setdefault(subgroup_of[identity], []).append(identity)
+        rng = random.Random(f"{seed}:gallery:{partition}")
+        groups = sorted(buckets)
+        rng.shuffle(groups)
+        for group in groups:
+            rng.shuffle(buckets[group])
+        ordered = [buckets[group][index] for index in range(max(map(len, buckets.values()), default=0))
+                   for group in groups if index < len(buckets[group])]
+        if size > len(ordered):
+            raise ProtocolError(f"Requested gallery size {size} exceeds available {partition} identities.")
+        gallery_ids, probe_ids = set(ordered[:size]), set(ordered[:probe_core_size])
+        entries.extend(e for e in source if e.role == "non_mated_probe"
+                       or (e.role == "gallery_enrolment" and e.identity in gallery_ids)
+                       or (e.role == "mated_probe" and e.identity in probe_ids))
+    _assert_protocol_invariants(entries)
+    return OpenSetProtocol(entries, protocol.seed, {
+        **protocol.provenance, "diagnostic_gallery_size": size,
+        "gallery_sampling_seed": seed, "fixed_mated_probe_core": probe_core_size,
+    })
+
+
+def _diagnostic_metrics(run: OpenSetRunResult, threshold: float) -> Dict[str, Any]:
+    return {"rates": open_set_rates_at_threshold(run.search_results, threshold),
+            "coverage": open_set_coverage(run), **open_set_duplicate_detection(run, threshold)}
+
+
+def classifier_feature_ablation(
+    protocol: OpenSetProtocol, development: OpenSetRunResult, test: OpenSetRunResult,
+    *, target_fpir: float = PRIMARY_FPIR_TARGET,
+) -> Dict[str, Any]:
+    training, calibration = split_development_identities_for_classifier(protocol)
+    train_names, calibration_names = set(training), set(calibration)
+    training_ids = {e.identity_hash for e in protocol.partition("development") if e.identity in train_names}
+    calibration_ids = {e.identity_hash for e in protocol.partition("development") if e.identity in calibration_names}
+    dev_rows, _ = build_review_feature_rows(development.search_results)
+    test_rows, test_excluded = build_review_feature_rows(test.search_results)
+    train_rows = [r for r in dev_rows if r.identity_hash in training_ids]
+    cal_rows = [r for r in dev_rows if r.identity_hash in calibration_ids]
+    outcomes = build_review_identity_outcomes(test.search_results)
+    if training_ids & calibration_ids or (training_ids | calibration_ids) & {r.identity_hash for r in test.search_results}:
+        raise ProtocolError("Classifier ablation partitions share identities.")
+    fitted: Dict[str, Tuple[ReviewClassifier, float, Dict[str, Any]]] = {}
+    # Freeze every variant before inspecting any test prediction.
+    for name, features in DIAGNOSTIC_FEATURE_SETS.items():
+        classifier = fit_review_classifier(train_rows, features=features)
+        cal_matrix, _ = _feature_matrix(cal_rows, features=features)
+        selection = select_review_probability_threshold(cal_rows, classifier.probabilities(cal_matrix), target_fpir=target_fpir)
+        fitted[name] = (classifier, selection["probability_threshold"], selection)
+    result: Dict[str, Any] = {}
+    for name, (classifier, threshold, selection) in fitted.items():
+        matrix, _ = _feature_matrix(test_rows, features=classifier.feature_order)
+        probabilities = classifier.probabilities(matrix)
+        result[name] = {"features": list(classifier.feature_order), "model": classifier.as_dict(),
+            "calibration": selection, "threshold_status": ML_REVIEW_STATUS_FROZEN,
+            "rates": review_rates_at_probability(test_rows, probabilities, threshold, outcomes=outcomes),
+            "training_rows": len(train_rows), "calibration_rows": len(cal_rows),
+            "test_rows": len(test_rows), "test_excluded_records": test_excluded}
+    return result
+
+
+def quality_error_analysis(
+    development: OpenSetRunResult, test: OpenSetRunResult,
+    quality: Mapping[str, Mapping[str, float]], threshold: float,
+) -> Dict[str, Any]:
+    """Observational strata defined from development quartiles, with failures retained."""
+    report: Dict[str, Any] = {}
+    for feature in ("probe_detection_confidence", "probe_face_area_ratio", "image_short_side_pixels", "laplacian_variance"):
+        values = [quality.get(r.sample_id, {}).get(feature, float("nan")) for r in development.search_results]
+        finite = [x for x in values if math.isfinite(x)]
+        if not finite:
+            report[feature] = {"status": "not_measurable"}
+            continue
+        cutoffs = [float(x) for x in np.unique(np.percentile(finite, [25, 50, 75]))]
+        buckets: Dict[str, List[OpenSetSearchResult]] = {str(i): [] for i in range(len(cutoffs) + 1)}
+        buckets["unavailable"] = []
+        for row in test.search_results:
+            value = quality.get(row.sample_id, {}).get(feature, float("nan"))
+            key = str(int(np.searchsorted(cutoffs, value, side="right"))) if math.isfinite(value) else "unavailable"
+            buckets[key].append(row)
+        summaries = {}
+        for label, rows in buckets.items():
+            failures: Dict[str, int] = {}
+            for row in rows:
+                if row.failure_code:
+                    code = row.failure_code.split(":", 1)[0]
+                    failures[code] = failures.get(code, 0) + 1
+            intended_mated = sum(r.role == "mated_probe" for r in rows)
+            detected = sum(r.role == "mated_probe" and r.failure_code is None and r.correct_rank == 1
+                           and r.correct_similarity is not None and r.correct_similarity >= threshold for r in rows)
+            summaries[label] = {"intended_probes": len(rows), "failure_count": sum(failures.values()),
+                "failure_breakdown": failures, "rates": open_set_rates_at_threshold(rows, threshold),
+                "intended_mated": intended_mated,
+                "end_to_end_duplicate_detection_rate": detected / intended_mated if intended_mated else None}
+        report[feature] = {"development_cutoffs": cutoffs, "bins_low_to_high": summaries}
+    return report
+
+
+def run_comparison_diagnostics(output_root: Path = AGGREGATE_ROOT) -> Dict[str, Any]:
+    """Add controls, gallery sensitivity, feature ablations and error analysis.
+
+    These analyses are exploratory: they were designed after the benchmark
+    test results had been inspected. No existing frozen policy is overwritten.
+    """
+    config = EnvironmentConfig.load()
+    dataset = load_bfw_dataset(*config.require_bfw_roots())
+    protocol = build_open_set_protocol(dataset)
+    root = output_root / "comparison_diagnostics"
+    root.mkdir(parents=True, exist_ok=True)
+    plan = {"artifact_type": "comparison_diagnostics_protocol", "revision": DIAGNOSTIC_REVISION,
+        "target_fpir": PRIMARY_FPIR_TARGET, "gallery_sizes": list(DIAGNOSTIC_GALLERY_SIZES),
+        "gallery_sampling_seeds": list(DIAGNOSTIC_GALLERY_SEEDS), "fixed_probe_core_size": 25,
+        "feature_sets": {k: list(v) for k, v in DIAGNOSTIC_FEATURE_SETS.items()},
+        "status": "exploratory_protocol_frozen_before_diagnostic_scoring",
+        "limitations": "Designed after inspection of the benchmark test results. Exploratory analyses without independent confirmatory data. Gallery repeats vary galleries, not the development/test identity split.",
+        "protocol_digest": public_manifest_digest(protocol),
+        "image_content_sha256": image_content_digest([e.image_path for e in protocol.entries]),
+        "software_environment": software_environment_report()}
+    write_json_artifact(root / "protocol.json", plan)
+    pipeline_specs = [("YuNet + SFace", "yunet-sface"), ("SCRFD + ArcFace", "scrfd-arcface")]
+    outputs: Dict[str, Any] = {}
+    for display, slug in pipeline_specs:
+        announce(f"Comparison diagnostics: {display}")
+        if slug == "yunet-sface":
+            detector, embedder = load_models(config.require_model_root())
+            description = primary_pipeline_description(detector, embedder)
+        else:
+            if not pipeline_comparison_status(config)["comparison_run"]:
+                outputs[display] = {"status": "not_run_models_unavailable"}
+                continue
+            (detector, embedder), description = load_arcface_pipeline(config)
+        memory: Dict[str, Any] = {}
+
+        def memo_embed(entry, active_detector, active_embedder):
+            if entry.sample_id not in memory:
+                memory[entry.sample_id] = _embed_open_set_entry(entry, active_detector, active_embedder)
+            return memory[entry.sample_id]
+
+        def score(selected: OpenSetProtocol, partition: str, method: str, label: str) -> OpenSetRunResult:
+            context = canonical_run_context(selected, partition=partition, dataset=dataset, detector=detector, embedder=embedder)
+            context.update({"diagnostic_revision": DIAGNOSTIC_REVISION, "enrolment_method": method,
+                            "image_content_sha256": plan["image_content_sha256"]})
+            path = RAW_ROOT / "comparison_diagnostics" / slug / f"{label}_{partition}.json"
+            if cache_invalidation_reason(path, context) is None:
+                cached = load_canonical_run(path)
+                if cached is not None:
+                    announce(f"  Reusing verified {label} {partition} scores")
+                    return cached
+            announce(f"  Scoring {label}, {partition}")
+            run = run_open_set_method(selected, partition=partition, method=method,
+                                      detector=detector, embedder=embedder, embed_fn=memo_embed)
+            save_canonical_run(run, path, context)
+            return run
+
+        development: Dict[str, OpenSetRunResult] = {}
+        policies: Dict[str, Any] = {}
+        for name, method in (("one_image", METHOD_A), ("three_images", METHOD_B)):
+            development[name] = score(protocol, "development", method, name)
+            policies[name] = select_open_set_threshold(development[name].search_results, target_fpir=PRIMARY_FPIR_TARGET)
+        write_json_artifact(root / f"{slug}_enrolment_policy.json", {
+            "status": OPEN_SET_STATUS_FROZEN, "developed_on": "development identities only",
+            "policies": policies, "diagnostic_revision": DIAGNOSTIC_REVISION})
+        test_runs = {name: score(protocol, "test", method, name)
+                     for name, method in (("one_image", METHOD_A), ("three_images", METHOD_B))}
+        thresholds = {name: policy["threshold"] for name, policy in policies.items()}
+        controls = {name: {"calibration": policies[name], **_diagnostic_metrics(run, thresholds[name])}
+                    for name, run in test_runs.items()}
+        paired = paired_pipeline_bootstrap(test_runs, thresholds)
+        gallery_rows = []
+        for seed in DIAGNOSTIC_GALLERY_SEEDS:
+            for size in DIAGNOSTIC_GALLERY_SIZES:
+                selected = gallery_sensitivity_protocol(protocol, size, seed=seed)
+                label = f"gallery_{size}_seed_{seed}"
+                dev = score(selected, "development", METHOD_B, label)
+                policy = select_open_set_threshold(dev.search_results, target_fpir=PRIMARY_FPIR_TARGET)
+                # Persist the selected policy before test scoring.
+                write_json_artifact(root / f"{slug}_{label}_policy.json", {
+                    "status": OPEN_SET_STATUS_FROZEN, "calibration": policy,
+                    "protocol_digest": public_manifest_digest(selected)})
+                test = score(selected, "test", METHOD_B, label)
+                gallery_rows.append({"gallery_size_intended": size, "gallery_seed": seed,
+                    "calibration": policy, **_diagnostic_metrics(test, policy["threshold"])})
+        announce("  Comparing classifier feature sets on identical training/calibration/test groups")
+        ablations = classifier_feature_ablation(protocol, development["three_images"], test_runs["three_images"])
+        # Image-quality features are observational; no pose or lighting ground truth is invented.
+        quality: Dict[str, Dict[str, float]] = {}
+        for run in (development["three_images"], test_runs["three_images"]):
+            for row in run.search_results:
+                quality[row.sample_id] = {k: float(value) for k in ("probe_detection_confidence", "probe_face_area_ratio")
+                                         if (value := getattr(row, k)) is not None}
+        import cv2
+        announce("  Analysing resolution, blur proxies and extraction failures")
+        for entry in protocol.entries:
+            if entry.role == "gallery_enrolment":
+                continue
+            try:
+                loaded = load_image_bgr(entry.image_path)
+                height, width = loaded.bgr.shape[:2]
+                gray = cv2.cvtColor(loaded.bgr, cv2.COLOR_BGR2GRAY)
+                # Standardised size makes the blur proxy less dependent on raw dimensions.
+                gray = cv2.resize(gray, (128, 128), interpolation=cv2.INTER_AREA)
+                quality[entry.sample_id]["image_short_side_pixels"] = float(min(height, width))
+                quality[entry.sample_id]["laplacian_variance"] = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+            except ImageLoadError:
+                pass
+        outputs[display] = {"status": "evaluated", "pipeline": description.as_dict(),
+            "enrolment_controls": controls, "enrolment_paired_statistics": paired,
+            "gallery_sensitivity": gallery_rows, "feature_ablations": ablations,
+            "quality_analysis": quality_error_analysis(development["three_images"], test_runs["three_images"], quality, thresholds["three_images"]),
+            "quality_note": "Development quartile bins; whole-image Laplacian variance at 128x128 is a blur proxy, not a causal or face-quality label. Missing detection metadata retains unresolved failures. Pose is assessed separately by CPLFW; lighting is not labelled.",
+            "timing_note": "Extraction times originate from the first in-memory extraction per image; each gallery search is timed separately. Gallery-size results describe this Python exact-search implementation."}
+        write_json_artifact(root / f"{slug}_metrics.json", outputs[display])
+        memory.clear()
+    payload = {"artifact_type": "comparison_diagnostics", "protocol": plan, "pipelines": outputs}
+    write_json_artifact(root / "comparison_diagnostics.json", payload)
+    write_markdown_artifact(root / "COMPARISON_DIAGNOSTICS_REPORT.md", render_comparison_diagnostics_summary(output_root))
+    if find_path_leaks(root, forbidden_substrings=default_forbidden_path_substrings()):
+        raise PrivacyLeakError("Private paths detected in comparison diagnostics.")
+    assert_no_identifier_key_leak(root)
+    return payload
+
+
+def render_comparison_diagnostics_summary(output_root: Path = AGGREGATE_ROOT) -> str:
+    path = output_root / "comparison_diagnostics" / "comparison_diagnostics.json"
+    if not path.is_file():
+        return "Comparison diagnostics are not available. Run option 18 or --mode comparison-diagnostics."
+    payload = read_json_artifact(path)
+    lines = ["# Comparison diagnostics", "", payload["protocol"]["limitations"], "",
+             f"All variants use development FPIR target {format_percentage(payload['protocol']['target_fpir'])}; actual test FPIR can differ."]
+    for name in ("YuNet + SFace", "SCRFD + ArcFace"):
+        result = payload["pipelines"][name]
+        lines += ["", f"## {name}", ""]
+        if result["status"] != "evaluated":
+            lines.append(plain_status(result["status"]))
+            continue
+        lines += ["### Calibrated enrolment", "",
+                  "| Images | Test FPIR | Conditional TPIR@1 | End-to-end detection | Mated coverage |",
+                  "| --- | --- | --- | --- | --- |"]
+        for variant, item in result["enrolment_controls"].items():
+            rates, coverage = item["rates"], item["coverage"]
+            lines.append(f"| {variant.replace('_', ' ')} | {format_percentage(rates['fpir'])} | {format_percentage(rates['tpir_rank1'])} | "
+                         f"{format_percentage(item['end_to_end_duplicate_detection_rate'])} | "
+                         f"{format_percentage(1 - coverage['mated_extraction_failure_rate'])} |")
+        delta = result["enrolment_paired_statistics"]["analyses"]["full_protocol"]["paired_differences"][0]["metrics"]["end_to_end_duplicate_detection_rate"]
+        lines += ["", f"Three minus one image, end-to-end difference: {100*delta['estimate']:+.2f} percentage points "
+                  f"(paired 95% CI {100*delta['lower_95']:+.2f} to {100*delta['upper_95']:+.2f}).", "",
+                  "### Gallery size", "", "Fixed 25-identity mated probe core and all protocol non-mated probes within each repeat. Three seeds; ranges are repeat ranges, not confidence intervals.", "",
+                  "| Intended identities | Mean test FPIR (range) | Mean end-to-end detection | Mean search ms |",
+                  "| --- | --- | --- | --- |"]
+        for size in DIAGNOSTIC_GALLERY_SIZES:
+            rows = [r for r in result["gallery_sensitivity"] if r["gallery_size_intended"] == size]
+            fpir = [r["rates"]["fpir"] for r in rows]
+            times = [r["coverage"]["top1_search_time_mean_ms"] for r in rows]
+            lines.append(f"| {size} | {format_percentage(statistics.fmean(fpir))} ({format_percentage(min(fpir))}–{format_percentage(max(fpir))}) | "
+                         f"{format_percentage(statistics.fmean(r['end_to_end_duplicate_detection_rate'] for r in rows))} | {statistics.fmean(times):.3f} |")
+        lines += ["", "### Classifier features", "", "Same train/calibration identities, complete feature rows and fixed hyperparameters; outputs are referral scores, not calibrated real-world probabilities.", "",
+                  "| Features | Test FPIR | Conditional TPIR@1 | End-to-end detection |", "| --- | --- | --- | --- |"]
+        for variant in DIAGNOSTIC_FEATURE_SETS:
+            item = result["feature_ablations"][variant]
+            rates = item["rates"]
+            lines.append(f"| {variant.replace('_', ' ')} | {format_percentage(rates['fpir'])} | {format_percentage(rates['tpir_rank1'])} | {format_percentage(rates['end_to_end_duplicate_detection_rate'])} |")
+        lines += ["", "### Error analysis", "", result["quality_note"], "",
+                  "| Feature | Development-defined range | Intended probes | Processing failures | Conditional TPIR@1 | End-to-end detection |", "| --- | --- | --- | --- | --- | --- |"]
+        for feature, analysis in result["quality_analysis"].items():
+            cutoffs = analysis.get("development_cutoffs", [])
+            for label, item in analysis.get("bins_low_to_high", {}).items():
+                if label == "unavailable":
+                    interval_label = "Measurement unavailable"
+                else:
+                    index = int(label)
+                    low = f"{cutoffs[index - 1]:.3g} ≤ value" if index else "value"
+                    interval_label = low + (f" < {cutoffs[index]:.3g}" if index < len(cutoffs) else "")
+                lines.append(f"| {feature.replace('_', ' ')} | {interval_label} | {item['intended_probes']} | {item['failure_count']} | {format_percentage(item['rates']['tpir_rank1'])} | {format_percentage(item['end_to_end_duplicate_detection_rate'])} |")
+    lines += ["", REFERRAL_DISCLAIMER]
+    return "\n".join(lines) + "\n"
+
+
 # =============================================================================
 # 28. Figure generation
 # =============================================================================
@@ -10072,7 +10792,7 @@ def _write_figure_captions(
         "",
         "### 1. LFW 1:1 verification",
         "",
-        "Pairwise verification with the frozen threshold, reported as accuracy, FMR and "
+        "Official ten-fold pairwise cross-validation with a training-only threshold per fold, reported as accuracy, FMR and "
         "FNMR over scored pairs. A 1:1 quantity that never appears on an FPIR axis: one "
         "comparison, no competing candidates, no ranking. Conditional on scored pairs.",
         "",
@@ -10084,17 +10804,17 @@ def _write_figure_captions(
         "",
         "## Implementation layers (results 3-6)",
         "",
-        "The five layers share the BFW open-set protocol and are directly comparable, in "
-        "the order the project developed them. Each adds one component to the previous "
-        "combination, so the difference between consecutive layers is what that "
-        "component contributes:",
+        "The five layers share the BFW open-set protocol and show the order the project "
+        "developed them. Coverage and calibration can also differ; adjacent contrasts "
+        "are descriptive. The separately calibrated enrolment comparison and the "
+        "crossed detector/recogniser experiment address these confounders:",
         "",
         "3. Single-image gallery, transferred 1:1 threshold",
-        "4. Three-image gallery, transferred 1:1 threshold — higher TPIR but **higher "
-        "FPIR**; a mean template sits nearer the centre of the embedding space and is "
-        "closer to everyone, so this layer is not an improvement",
-        "5. Three-image gallery, BFW development calibration — the reduction in false "
-        "reviews comes from calibration, not from the representation",
+        "4. Three-image gallery, transferred 1:1 threshold — observed TPIR and FPIR both "
+        "increase under this transferred policy; this does not establish an inherent "
+        "disadvantage of averaging normalised embeddings",
+        "5. Three-image gallery, BFW development calibration — isolates the policy "
+        "change while keeping the three-image representation fixed",
         "6. Logistic-regression review classifier, frozen probability threshold",
         "7. SCRFD + ArcFace, its own frozen BFW development calibration",
         "",
@@ -10227,17 +10947,21 @@ def _write_figure_captions(
         "right, for LFW and CPLFW. The two panels move in opposite directions on LFW "
         "and must not be read as one quantity: the accuracy panel is conditional on "
         "scored pairs, while coverage counts every intended pair. The coverage "
-        "difference on LFW follows from the protocol's requirement that exactly one "
-        "face be found, not from a detector failing to find faces.",
+        "difference on LFW includes rejections under the exactly-one-face rule; the "
+        "failure categories do not establish which detections are true faces.",
         "- **detector_embedder_crossed** — the four detector and embedder combinations "
         "on the same held-out identities, each at a threshold frozen on the "
         "development identities. Colour identifies the embedder, so a pair of bars of "
         "one colour shows the detector varied at a fixed embedder. Detection carries "
-        "95% identity-cluster bootstrap bounds; the referral panel does not, because "
-        "every burden interval overlaps every other and drawing them would suggest a "
-        "separation the benchmark does not support. The detection axis begins at 85% "
-        "rather than zero, since all four values exceed 92% and a full range would "
-        "hide the differences. Overlapping intervals are not evidence of equality.",
+        "95% identity-cluster bootstrap bounds. Referral points are descriptive; "
+        "paired referral differences and their intervals appear in the paired report. "
+        "The conditional detection axis starts at 85%, explicitly truncating the "
+        "scale. Scored subsets differ, so read this alongside the next figure.",
+        "- **paired_pipeline_comparison** — all four pipelines on a common 0–100% "
+        "scale: mated extraction coverage, detection across all intended mated probes, "
+        "and TPIR@1 within the common-success subset. Bars show 95% identity-cluster "
+        "intervals. The accompanying paired report estimates differences using the "
+        "same identity draws for every pipeline; interval overlap alone is not a test.",
         "",
         "## Open-set operating points and the review classifier",
         "",
@@ -10310,7 +11034,7 @@ def _write_figure_captions(
 # The five implementation layers, in the order the project developed them.
 # Together they are the experiment behind the research objective: each layer
 # adds one component to the previous combination, so comparing consecutive
-# layers isolates what that component contributes. All five are measured on the
+# layers can also reflect calibration and coverage. All five are measured on the
 # same BFW open-set protocol and are therefore directly comparable. LFW and
 # CPLFW are 1:1 verification and are never mixed into this series: an FMR and
 # an FPIR are not the same quantity.
@@ -10678,75 +11402,41 @@ def write_pipeline_sex_aggregates(
 # quantity.
 
 
-def _intervals_all_overlap(
-    intervals: Sequence[Optional[Tuple[float, float]]]
-) -> bool:
-    """True when no interval in the set is disjoint from any other."""
-    known = [i for i in intervals if i is not None]
-    if len(known) < 2:
-        return False
-    return all(
-        not (left[1] < right[0] or right[1] < left[0])
-        for index, left in enumerate(known) for right in known[index + 1:]
-    )
-
-
-def _interval_separation_lines(
-    cells: Mapping[str, Tuple[Mapping[str, Any], Mapping[str, Any]]]
-) -> List[str]:
-    """Say which of the four comparisons the intervals actually separate.
-
-    Written from the numbers rather than asserted in prose, so the sentence
-    cannot survive unchanged if a later run moves an interval."""
-
-    def bounds(name: str) -> Optional[Tuple[float, float]]:
-        interval = cells[name][1]
-        low, high = interval.get("lower_95"), interval.get("upper_95")
-        if isinstance(low, (int, float)) and isinstance(high, (int, float)):
-            return float(low), float(high)
-        return None
-
-    comparisons = (
-        ("swapping the embedder at the YuNet detector", "YuNet + SFace", "YuNet + ArcFace"),
-        ("swapping the embedder at the SCRFD detector", "SCRFD + SFace", "SCRFD + ArcFace"),
-        ("swapping the detector at the SFace embedder", "YuNet + SFace", "SCRFD + SFace"),
-        ("swapping the detector at the ArcFace embedder",
-         "YuNet + ArcFace", "SCRFD + ArcFace"),
-    )
-    separated: List[str] = []
-    overlapping: List[str] = []
-    for label, left_name, right_name in comparisons:
-        left, right = bounds(left_name), bounds(right_name)
-        if left is None or right is None:
-            continue
-        # Disjoint whenever one interval ends before the other begins.
-        if left[1] < right[0] or right[1] < left[0]:
-            separated.append(label)
-        else:
-            overlapping.append(label)
-
-    lines: List[str] = []
-    if separated:
-        lines.append(
-            "The intervals are disjoint for " + _join_plainly(separated)
-            + (", so that difference is supported." if len(separated) == 1
-               else ", so those differences are supported.")
-        )
-    if overlapping:
-        lines.append(
-            ("They overlap for " if separated else "The intervals overlap for ")
-            + _join_plainly(overlapping)
-            + ", which this benchmark cannot separate."
-        )
-    return lines
-
-
-def _join_plainly(items: Sequence[str]) -> str:
-    """Comma-separated with a final 'and', as the reports are written."""
-    items = list(items)
-    if len(items) == 1:
-        return items[0]
-    return ", ".join(items[:-1]) + " and " + items[-1]
+def render_paired_comparison_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    path = aggregate_root / "comparative_statistics.json"
+    if not path.is_file():
+        return "Paired comparisons are not available. Run option 20 or --mode comparative-statistics."
+    payload = read_json_artifact(path)
+    full = payload["analyses"]["full_protocol"]
+    common = payload["analyses"]["common_success"]
+    lines = ["Same intended identities and pipeline-specific development thresholds. "
+             "End-to-end detection retains failed extraction and failed enrolment in its denominator.", "",
+             "| Pipeline | Conditional TPIR@1 | End-to-end detection | Mated coverage | False reviews / 1,000 scored new probes | Common-success TPIR@1 |",
+             "| --- | --- | --- | --- | --- | --- |"]
+    for name in COMPARISON_PIPELINE_ORDER:
+        metrics = full["pipelines"][name]
+        lines.append(f"| {name} | {format_percentage(metrics['tpir_rank1']['estimate'])} | "
+                     f"{format_percentage(metrics['end_to_end_duplicate_detection_rate']['estimate'])} | "
+                     f"{format_percentage(metrics['mated_extraction_coverage']['estimate'])} | "
+                     f"{1000*metrics['fpir']['estimate']:.2f} | {format_percentage(common['pipelines'][name]['tpir_rank1']['estimate'])} |")
+    lines += ["", f"Common-success subset: {payload['common_success_probes']:,} of {payload['intended_probes']:,} intended probes. "
+              "Conditional comparisons across different surviving subsets cannot isolate a detector effect.", "",
+              "Paired changes below are right minus left in percentage points. Every bootstrap replicate uses the same identity draws across all methods.", "",
+              "| Left → right | End-to-end change (95% CI) | FPIR change (95% CI) |", "| --- | --- | --- |"]
+    def band(entry: Mapping[str, Any]) -> str:
+        return f"{100*entry['estimate']:+.2f} [{100*entry['lower_95']:+.2f}, {100*entry['upper_95']:+.2f}]"
+    for comparison in full["paired_differences"]:
+        metrics = comparison["metrics"]
+        lines.append(f"| {comparison['left']} → {comparison['right']} | {band(metrics['end_to_end_duplicate_detection_rate'])} | {band(metrics['fpir'])} |")
+    interaction = full.get("detector_embedder_interaction")
+    if interaction:
+        lines += ["", "Detector-by-embedder interaction in end-to-end detection: "
+                  + band(interaction["metrics"]["end_to_end_duplicate_detection_rate"]) + " percentage points. "
+                  "Contrast: " + interaction["contrast"] + "."]
+    lines += ["", payload["limitations"], "",
+              "An interval containing zero does not establish equivalence or absence of a contribution. "
+              "The effects describe the complete configured detector, alignment, recogniser and calibrated-policy combinations."]
+    return "\n".join(lines)
 
 
 def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
@@ -10776,23 +11466,24 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "Auto-generated from the published artefacts. Ordered to show what each layer was "
         "intended to improve, and where it did not.",
         "",
-        "**Research objective.** To establish whether a framework combining several "
-        "existing models achieves better results than any one of them used alone. Each "
-        "layer below adds one component to the previous combination, so the difference "
-        "between consecutive layers measures what that component contributes. No "
-        "face-detection or face-recognition network is trained or fine-tuned; the "
-        "contribution under test is the composition, not the models themselves.",
+        "**Research objective.** Assess how detector and recogniser choice, enrolment "
+        "images and threshold calibration affect duplicate detection, false-review "
+        "burden, subgroup performance and computational cost. Controlled comparisons "
+        "separate these factors where the protocol permits. The face networks remain "
+        "pretrained and frozen; only the review classifier is trained here.",
         "",
         "## 1. LFW 1:1 verification",
         "",
     ]
     if final:
         lines += [
-            f"Accuracy {pct(final.get('accuracy'))}, FMR {pct(final.get('false_match_rate'))}, "
+            f"LFW mean fold accuracy {pct(final.get('mean_fold_accuracy', final.get('accuracy')))}, pooled FMR {pct(final.get('false_match_rate'))}, "
             f"FNMR {pct(final.get('false_non_match_rate'))}, EER "
             f"{pct(final.get('equal_error_rate'))}, extraction failure "
             f"{pct(final.get('failure_rate'))}. This is a 1:1 pair task and its FMR is not "
-            f"comparable with the 1:N FPIR figures below.",
+            f"comparable with the 1:N FPIR figures below. The official ten-fold protocol "
+            f"fits a threshold using the other nine folds for each held-out fold; "
+            f"the separate development-frozen transfer threshold is not used here.",
         ]
     lines += ["", "## 2. CPLFW cross-pose transfer", ""]
     if cplfw:
@@ -10817,14 +11508,15 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             "", "## 4. BFW three-image template, same threshold", "",
             f"FPIR {pct(proposed['at_lfw_control_threshold']['fpir'])}, TPIR@1 "
             f"{pct(proposed['at_lfw_control_threshold']['tpir_rank1'])}. Averaging three "
-            f"images raises identification but **raises** FPIR at a fixed threshold: a mean "
-            f"template sits nearer the centre of the embedding space and is closer to "
-            f"everyone. Multi-image enrolment alone did not reduce false reviews.",
+            f"images changes both genuine and impostor score distributions. These "
+            f"renormalised templates do not necessarily become closer to every face. "
+            f"The separately calibrated one-versus-three-image comparison appears in "
+            f"the supplementary diagnostics.",
             "", "## 5. BFW gallery-specific calibration", "",
             f"FPIR {pct(primary['fpir'])}, TPIR@1 {pct(primary['tpir_rank1'])}, "
             f"{format_number(primary['false_reviews_per_1000_non_mated'], 1)} false reviews "
-            f"per 1,000. The reduction is attributable to calibration, not to the "
-            f"representation.",
+            f"per 1,000. Comparing this row with the preceding three-image row isolates "
+            f"the threshold change on the same templates.",
         ]
 
     if review:
@@ -10993,9 +11685,10 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             lines += [
                 "Section 10 compared the pipelines on gallery search alone, so the "
                 "conclusion rested on a single task. Experiments 9 and 10 put the "
-                "comparison pipeline through the same one-to-one chain, each with a "
-                "threshold calibrated on LFW development pairs and frozen before "
-                "either evaluation.",
+                "comparison pipeline through the same one-to-one protocols. LFW uses official "
+                "ten-fold cross-validation, fitting each threshold on the other nine "
+                "folds. CPLFW uses each pipeline's separate frozen LFW development "
+                "threshold. No threshold is shared between pipelines.",
                 "",
                 "| Metric | LFW YuNet+SFace | LFW SCRFD+ArcFace | "
                 "CPLFW YuNet+SFace | CPLFW SCRFD+ArcFace |",
@@ -11014,22 +11707,12 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
                 f"{faces(cplfw, 'multiple_faces'):,} | "
                 f"{faces(comp_cplfw, 'multiple_faces'):,} |",
                 "",
-                "SCRFD + ArcFace is more accurate on both datasets, but it reaches "
-                "comparison on **fewer** LFW pairs than YuNet + SFace and on far more "
-                "CPLFW pairs. The failure breakdown explains the reversal, and it is "
-                "not a detection weakness: SCRFD recorded almost no zero-face "
-                "failures on either dataset, where YuNet failed to find a face in "
-                f"{faces(cplfw, 'zero_faces'):,} CPLFW images. Every one of SCRFD's "
-                "losses comes from finding more than one face.",
-                "",
-                "LFW images are press photographs that frequently contain bystanders. "
-                "The protocol requires exactly one detected face, so a more sensitive "
-                "detector converts additional true detections into rejections. The "
-                "LFW coverage gap is therefore an artefact of that constraint rather "
-                "than evidence about the detector, and coverage should not be "
-                "compared across pipelines on this dataset without stating it. On "
-                "CPLFW, where the difficulty is pose rather than bystanders, the "
-                "comparison is unambiguous.",
+                "Conditional accuracy must be read alongside extraction coverage: the "
+                "pipelines score different subsets of pairs. The exactly-one-face rule "
+                "rejects both zero-face and multiple-face detections. The breakdown "
+                "records these outcomes but cannot establish whether additional detections "
+                "are bystanders or false positives without manual annotation. These "
+                "results compare complete pipelines and do not isolate the recogniser.",
                 "",
             ]
         else:
@@ -11076,7 +11759,7 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
                 "",
                 f"The zero on the second row is an observation over {scored:,} scored "
                 "new profiles, not a demonstration that the population rate is zero; "
-                "the interval around a zero-event rate remains wide. Detection fell "
+                "the empirical zero-event bootstrap interval cannot bound population FPIR. A supplementary identity-level upper bound is reported with its assumptions. Detection fell "
                 f"from {pct(arcface_review['comparator_three_image_open_set_calibrated']['rates'].get('tpir_rank1'))} "
                 f"to {pct(arcface_review['classifier'].get('tpir_rank1'))} in exchange.",
                 "",
@@ -11087,150 +11770,8 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
                 "invented in its place.", "",
             ]
 
-        # --- 10c. Which component carries the gain ---------------------------
-        # Sections 6, 8 and 10b all compare pipelines that differ in both
-        # components at once, so none of them can attribute the difference.
-        lines += ["", "## 10c. Which component carries the gain", ""]
-        crossings = {
-            name: load("bfw_open_set_test_metrics.json",
-                       aggregate_root / MIXED_PIPELINE_DIRNAME / name)
-            for name in ("scrfd-sface", "yunet-arcface")
-        }
-        crossing_intervals = {
-            name: load("bfw_open_set_confidence_intervals.json",
-                       aggregate_root / MIXED_PIPELINE_DIRNAME / name)
-            for name in ("scrfd-sface", "yunet-arcface")
-        }
-        if all(crossings.values()) and pipeline:
-            def crossed_point(name: str) -> Mapping[str, Any]:
-                methods = (crossings[name] or {}).get("methods") or {}
-                return (methods.get(METHOD_B) or {}).get("primary_operating_point") or {}
-
-            def matched_point(fragment: str) -> Mapping[str, Any]:
-                for key, metrics in (pipeline.get("held_out_metrics") or {}).items():
-                    if fragment in key:
-                        return metrics.get("rates") or {}
-                return {}
-
-            def crossed_interval(name: str, metric: str) -> Mapping[str, Any]:
-                return ((crossing_intervals[name] or {}).get("intervals") or {}).get(metric) or {}
-
-            def matched_interval(fragment: str, metric: str) -> Mapping[str, Any]:
-                for key, metrics in (pipeline.get("held_out_metrics") or {}).items():
-                    if fragment in key:
-                        return (metrics.get("confidence_intervals") or {}).get(metric) or {}
-                return {}
-
-            cells = {
-                "YuNet + SFace": (matched_point("opencv"), matched_interval("opencv", "tpir_rank1")),
-                "SCRFD + SFace": (crossed_point("scrfd-sface"),
-                                  crossed_interval("scrfd-sface", "tpir_rank1")),
-                "YuNet + ArcFace": (crossed_point("yunet-arcface"),
-                                    crossed_interval("yunet-arcface", "tpir_rank1")),
-                "SCRFD + ArcFace": (matched_point("insightface"),
-                                    matched_interval("insightface", "tpir_rank1")),
-            }
-
-            def band(interval: Mapping[str, Any]) -> str:
-                low, high = interval.get("lower_95"), interval.get("upper_95")
-                if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
-                    return "not available"
-                return f"{low * 100:.2f}–{high * 100:.2f}%"
-
-            lines += [
-                "Experiments 6, 8 and 11 each change the detector and the embedder "
-                "together, so none of them can say which component earned the "
-                "difference. Experiment 12 runs the two crossings on the same held-out "
-                "identities, each at a threshold frozen on the development identities "
-                "by the same rule.",
-                "",
-                "| Pipeline | Duplicates detected (TPIR@1) | 95% interval | "
-                "Reviews per 1,000 |",
-                "| --- | --- | --- | --- |",
-            ]
-            for name, (point, interval) in cells.items():
-                referrals = point.get("false_reviews_per_1000_non_mated")
-                lines.append(
-                    f"| {name} | {pct(point.get('tpir_rank1'))} | {band(interval)} | "
-                    + (f"{referrals:.1f} |" if isinstance(referrals, (int, float)) else "n/a |")
-                )
-            lines += [""]
-
-            def detection(name: str) -> Optional[float]:
-                value = cells[name][0].get("tpir_rank1")
-                return float(value) if isinstance(value, (int, float)) else None
-
-            sface_yunet = detection("YuNet + SFace")
-            sface_scrfd = detection("SCRFD + SFace")
-            arcface_yunet = detection("YuNet + ArcFace")
-            arcface_scrfd = detection("SCRFD + ArcFace")
-            if (sface_yunet is not None and sface_scrfd is not None
-                    and arcface_yunet is not None and arcface_scrfd is not None):
-                detector_gain = (sface_scrfd - sface_yunet) * 100.0
-                embedder_gain = (arcface_yunet - sface_yunet) * 100.0
-                both_gain = (arcface_scrfd - sface_yunet) * 100.0
-
-                def referral_interval(name: str) -> Optional[Tuple[float, float]]:
-                    source = "opencv" if name == "YuNet + SFace" else (
-                        "insightface" if name == "SCRFD + ArcFace" else None)
-                    interval = (
-                        matched_interval(source, "fpir") if source
-                        else crossed_interval(
-                            "scrfd-sface" if name == "SCRFD + SFace" else "yunet-arcface",
-                            "fpir",
-                        )
-                    )
-                    low, high = interval.get("lower_95"), interval.get("upper_95")
-                    if isinstance(low, (int, float)) and isinstance(high, (int, float)):
-                        return float(low), float(high)
-                    return None
-
-                burden_intervals_overlap = _intervals_all_overlap(
-                    [referral_interval(name) for name in cells]
-                )
-                lines += [
-                    f"Changing the embedder alone moves detection by "
-                    f"{embedder_gain:+.2f} percentage points; changing the detector "
-                    f"alone moves it by {detector_gain:+.2f}. The gain belongs almost "
-                    f"entirely to the embedder.",
-                    "",
-                    "Which of those differences the intervals actually support is "
-                    "stated rather than assumed. Comparing independent intervals is "
-                    "conservative: separation is evidence of a difference, but overlap "
-                    "on its own does not establish that there is none.",
-                    "",
-                    *_interval_separation_lines(cells),
-                    "",
-                    f"The two changes are not additive. Making both moves detection by "
-                    f"{both_gain:+.2f} points, less than the "
-                    f"{detector_gain + embedder_gain:+.2f} the separate gains would "
-                    f"predict, and no better than the embedder alone. The stronger "
-                    f"detector adds nothing once the stronger embedder is in place.",
-                    "",
-                    "This qualifies the project's own objective. Combining components "
-                    "did produce the best result, but not because the combination was "
-                    "greater than its parts: one component carried the improvement and "
-                    "the other contributed within sampling noise. A study that swapped "
-                    "both at once, as sections 8 and 10 do, would have credited the "
-                    "pairing for a gain that one component produced alone.",
-                    "",
-                    "The review burden orders the pipelines differently. The two "
-                    "ArcFace cells refer far fewer profiles than the two SFace cells, "
-                    "but within each embedder the stronger detector refers slightly "
-                    "more, having scored more of the harder photographs rather than "
-                    "failing to extract them. Detection and burden are therefore not "
-                    "improved by the same choice."
-                    + (" Every interval on these burden figures overlaps every other, "
-                       "so that ordering is the direction the point estimates take "
-                       "rather than a difference this benchmark establishes."
-                       if burden_intervals_overlap else ""),
-                    "",
-                ]
-        else:
-            lines += [
-                "Not run in this checkout. No attribution between the detector and "
-                "the embedder is asserted without it.", "",
-            ]
+        lines += ["", "## 10c. Detector, recogniser and coverage contributions", "",
+                  render_paired_comparison_report(aggregate_root)]
 
         lines += [
             "", "## 11. Performance against cost", "",
@@ -11239,6 +11780,13 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             "`implementation_layers_performance_latency` rather than omitted.",
         ]
 
+    diagnostics_path = aggregate_root / "comparison_diagnostics" / "comparison_diagnostics.json"
+    if diagnostics_path.is_file():
+        lines += ["", "## 11a. Additional controlled diagnostics", "",
+                  "The separate COMPARISON_DIAGNOSTICS_REPORT.md reports calibrated one- versus "
+                  "three-image enrolment, gallery-size sensitivity, classifier feature ablations "
+                  "and error analysis. These extensions were designed after the benchmark test "
+                  "results were inspected and are exploratory, not independent confirmation."]
     lines += [
         "", "## 12. Limitations and policy", "",
         "This is a benchmark-validated, human-review-only academic face-comparison "
@@ -12029,7 +12577,7 @@ def generate_figures(
                     ax.bar_label(bars, fmt="%.1f%%", fontsize=8, padding=2)
             for ax, title in (
                 (acc_ax, "Correct decisions among scored pairs"),
-                (cov_ax, "Photographs reaching comparison"),
+                (cov_ax, "Pairs reaching comparison"),
             ):
                 ax.set_xticks(positions); ax.set_xticklabels(datasets, fontsize=10)
                 # Headroom for the printed values; ticks still stop at 100%.
@@ -12149,12 +12697,40 @@ def generate_figures(
             left.legend(handles=legend, fontsize=9, loc="lower left", framealpha=0.95)
             fig.suptitle(
                 "The detector and the embedder varied one at a time\n"
-                "Detection follows the embedder; the detector adds little once "
-                "ArcFace is in place",
+                "Conditional detection and false referrals describe different scored subsets",
                 fontsize=11, y=1.04,
             )
             path = figures_root / "detector_embedder_crossed.png"
             _save_figure(fig, path); plt.close(fig); written.append(path)
+
+    paired = load_from(aggregate_root, "comparative_statistics.json")
+    if paired:
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        for ax, scope, metric, title in zip(
+            axes,
+            ("full_protocol", "full_protocol", "common_success"),
+            ("mated_extraction_coverage", "end_to_end_duplicate_detection_rate", "tpir_rank1"),
+            ("Mated probes reaching comparison", "Duplicates detected / all intended mated probes",
+             "TPIR@1 / common successfully scored probes"),
+        ):
+            rows = [paired["analyses"][scope]["pipelines"][name][metric]
+                    for name in COMPARISON_PIPELINE_ORDER]
+            points = [100 * row["estimate"] for row in rows]
+            errors = [[max(0, point - 100 * row["lower_95"]) for point, row in zip(points, rows)],
+                      [max(0, 100 * row["upper_95"] - point) for point, row in zip(points, rows)]]
+            bars = ax.bar(np.arange(4), points, color=["#4C72B0", "#4C72B0", "#DD8452", "#DD8452"],
+                          yerr=errors, capsize=3)
+            ax.bar_label(bars, fmt="%.1f%%", fontsize=8, padding=5)
+            ax.set_xticks(np.arange(4), [name.replace(" + ", "\n+ ") for name in COMPARISON_PIPELINE_ORDER])
+            ax.set_ylim(0, 110)
+            ax.set_title(title, fontsize=10)
+            ax.set_ylabel("Per cent")
+            ax.grid(axis="y", alpha=0.25)
+        fig.suptitle("Detector and recogniser comparison: coverage, end-to-end detection and common subset\n"
+                     "95% identity-cluster intervals; paired differences are reported separately", fontsize=11)
+        fig.subplots_adjust(top=0.80, wspace=0.30)
+        path = figures_root / "paired_pipeline_comparison.png"
+        _save_figure(fig, path); plt.close(fig); written.append(path)
 
     write_implementation_layer_artefacts(aggregate_root)
     _write_figure_captions(aggregate_root, figures_root, written)
@@ -12599,7 +13175,7 @@ def run_self_tests(verbose: bool = True) -> Tuple[int, int]:
 
 
 ###############################################################################
-# Plain-language presentation layer
+# Results presentation
 ###############################################################################
 #
 # Presentation only. Nothing here computes, recalculates or rounds a scientific
@@ -12626,9 +13202,9 @@ a human moderator review possible duplicate profiles and inconsistent profile
 photographs.
 
 Research objective:
-To establish whether a framework combining several existing models achieves
-better results than any one of those models used on its own. Each experiment
-adds one component to the previous combination and measures what it gains.
+Measure how detector and recogniser choice, enrolment images and threshold
+calibration affect duplicate detection, false reviews, subgroup performance
+and processing cost. Controlled comparisons test the contribution of each change.
 
 The programme does not automatically identify fraud, ban users or prove that
 two profiles belong to the same person.
@@ -12697,7 +13273,7 @@ def _percentage_of(value: Optional[float], *, technical: str = "") -> str:
 
 
 def plain_metric_description(key: str) -> str:
-    """The plain-language meaning of a metric, ahead of its technical name."""
+    """The interpretation of a metric, followed by its technical name."""
     return PLAIN_METRIC_DESCRIPTIONS.get(key, key)
 
 
@@ -12797,7 +13373,7 @@ def render_dataset_overview() -> str:
     return """DATASETS USED
 
 LFW
-Used for one-to-one face comparison and the original gallery experiment.
+Used for one-to-one face comparison and the LFW gallery experiment.
 
 CPLFW
 Used to test cross-pose generalisation.
@@ -12851,10 +13427,10 @@ A range showing the uncertainty in a benchmark result."""
 
 
 def render_ml_review_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
-    """Experiment 7 in plain language, including the negative finding."""
+    """Summary of Experiment 7, including the negative finding."""
     payload = _load_optional(aggregate_root, "ml_review_test_metrics.json")
     if not payload:
-        return missing_artefact_message("Experiment 7", "option 10")
+        return missing_artefact_message("Experiment 7", "option 8")
     classifier = payload["classifier"]
     comparator = payload["comparator_three_image_open_set_calibrated"]["rates"]
 
@@ -12920,7 +13496,7 @@ def render_ml_review_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str
     return "\n".join(lines)
 
 
-# Display wording for the pre-declared criteria. The original keys remain the
+# Display wording for the pre-declared criteria. The stored keys are the
 # machine-readable names inside the JSON artefact.
 PLAIN_CRITERION_WORDING = {
     "criteria_declared_before_test":
@@ -12941,10 +13517,10 @@ PLAIN_CRITERION_WORDING = {
 
 
 def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
-    """Experiment 8 in plain language, as a side-by-side pipeline table."""
+    """Summary of Experiment 8, with a comparative pipeline table."""
     payload = _load_optional(aggregate_root, "pipeline_comparison_metrics.json")
     if not payload:
-        return missing_artefact_message("Experiment 8", "option 12")
+        return missing_artefact_message("Experiment 8", "option 10")
     held_out = payload.get("held_out_metrics") or {}
     if payload.get("evaluated") != "yes" or not held_out:
         return "\n".join([
@@ -13023,7 +13599,7 @@ def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             ["Metric", *[pipeline_display_name(n) for n in names]], rows
         ),
         "",
-        "Plain-language result:",
+        "Result:",
         "",
     ]
     # The conclusion is generated from the values rather than asserted, so it
@@ -13215,6 +13791,158 @@ def render_experiment_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) ->
     ])
 
 
+def render_processing_coverage_explanation(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """Explain processing coverage using saved results without changing artefacts."""
+    root = Path(aggregate_root)
+    pair_specs = (
+        ("LFW 1:1 (Exp 3)", "YuNet + SFace", "lfw_final_metrics.json"),
+        ("LFW 1:1 (Exp 9)", "SCRFD + ArcFace", "verification_comparison/lfw_final_metrics.json"),
+        ("CPLFW 1:1 (Exp 4)", "YuNet + SFace", "cplfw_metrics.json"),
+        ("CPLFW 1:1 (Exp 10)", "SCRFD + ArcFace", "verification_comparison/cplfw_metrics.json"),
+    )
+    pairs = [_load_optional(root, filename) for _, _, filename in pair_specs]
+    gallery = _load_optional(root, "duplicate_gallery_metrics_v2.json")
+    bfw = _load_optional(root, "bfw_open_set_test_metrics.json") or {}
+    comparison = _load_optional(root, "pipeline_comparison_metrics.json") or {}
+    arcface = next((value for key, value in (comparison.get("held_out_metrics") or {}).items()
+                    if "arcface" in key.lower()), None)
+    search_specs = [
+        ("BFW 1:N (Exp 6)", "YuNet + SFace", (bfw.get("methods") or {}).get(METHOD_B)),
+        ("BFW 1:N (Exp 8)", "SCRFD + ArcFace", arcface),
+    ]
+    for experiment, name, crossing in (
+        ("12a", "SCRFD + SFace", "scrfd-sface"),
+        ("12b", "YuNet + ArcFace", "yunet-arcface"),
+    ):
+        saved = _load_optional(root, f"mixed_pipelines/{crossing}/bfw_open_set_test_metrics.json") or {}
+        search_specs.append((f"BFW 1:N (Exp {experiment})", name,
+                             (saved.get("methods") or {}).get(METHOD_B)))
+
+    def count(value: Any) -> str:
+        return f"{value:,}" if isinstance(value, int) else "not available"
+
+    def grouped_failures(breakdown: Mapping[str, int]) -> Dict[str, int]:
+        grouped: Dict[str, int] = {}
+        for reason, number in breakdown.items():
+            reason = re.sub(r"_(left|right|gallery)$", "", reason)
+            label = {"zero_faces": "zero faces", "multiple_faces": "multiple faces",
+                     "gallery_reference_unavailable": "profile missing"}.get(
+                         reason, reason.replace("_", " "))
+            grouped[label] = grouped.get(label, 0) + number
+        return grouped
+
+    def reasons(breakdown: Mapping[str, int]) -> str:
+        return ", ".join(f"{label} {number:,}" for label, number in sorted(
+            grouped_failures(breakdown).items(), key=lambda item: (-item[1], item[0])
+        ) if number) or "none"
+
+    rows: List[List[str]] = []
+    for (label, name, _), payload in zip(pair_specs, pairs):
+        if not payload:
+            rows.append([label, name, *["not available"] * 5])
+            continue
+        total, scored = payload["total_pairs"], payload["scored_pairs"]
+        matrix = payload["confusion_matrix"]
+        correct = matrix["true_positive"] + matrix["true_negative"]
+        rows.append([
+            label, name, f"{total:,} pairs",
+            f"{scored:,} ({_percentage_of(scored / total if total else None)})",
+            f"{total - scored:,}: {reasons(payload['failure_breakdown'])}",
+            f"{_percentage_of(payload.get('accuracy'))} correct",
+            f"{_percentage_of(correct / total if total else None)} correct",
+        ])
+    if gallery:
+        intended = gallery["duplicate_probe_count"] + gallery["unknown_probe_count"]
+        failed = gallery["duplicate_probe_failures"] + gallery["unknown_probe_failures"]
+        rows.append([
+            "LFW gallery 1:N (Exp 5)", "YuNet + SFace",
+            f"{gallery['intended_gallery_size']:,} profiles; {intended:,} search photos",
+            f"{gallery['embedded_gallery_size']:,} profiles; {intended - failed:,} photos",
+            f"{gallery['gallery_entry_failure_count']:,} profiles "
+            f"({reasons(gallery['gallery_failure_breakdown'])}); {failed:,} search photos",
+            f"{_percentage_of(gallery.get('conditional_duplicate_detection_rate'))} detected; "
+            f"{_percentage_of(gallery.get('false_duplicate_review_rate'))} false reviews",
+            f"{_percentage_of(gallery.get('end_to_end_duplicate_detection_rate'))} detected",
+        ])
+    else:
+        rows.append(["LFW gallery 1:N (Exp 5)", "YuNet + SFace", *["not available"] * 5])
+    for label, name, payload in search_specs:
+        if not payload:
+            rows.append([label, name, *["not available"] * 5])
+            continue
+        coverage = payload["coverage"]
+        rates = payload.get("primary_operating_point") or payload.get("rates") or {}
+        intended = coverage["intended_mated_probes"] + coverage["intended_non_mated_probes"]
+        scored = coverage["scored_mated_probes"] + coverage["scored_non_mated_probes"]
+        rows.append([
+            label, name,
+            f"{coverage['intended_gallery_identities']:,} profiles; {intended:,} search photos",
+            f"{coverage['enrolled_gallery_identities']:,} profiles; {scored:,} photos",
+            f"{intended - scored:,} photos: {reasons(coverage['probe_failure_breakdown'])}",
+            f"TPIR@1 {_percentage_of(rates.get('tpir_rank1'))}; FPIR {_percentage_of(rates.get('fpir'))}",
+            f"{_percentage_of(payload.get('end_to_end_duplicate_detection_rate'))} detected",
+        ])
+
+    lfw_failures = grouped_failures(pairs[1]["failure_breakdown"]) if pairs[1] else {}
+    if lfw_failures and lfw_failures.get("multiple faces", 0) == sum(lfw_failures.values()):
+        lfw_note = "On LFW, every SCRFD failure was a multiple-face detection."
+    elif pairs[1]:
+        lfw_note = f"On LFW, SCRFD failures were: {reasons(pairs[1]['failure_breakdown'])}."
+    else:
+        lfw_note = "On LFW, SCRFD failure details are not available."
+    cplfw_failures = grouped_failures(pairs[2]["failure_breakdown"]) if pairs[2] else {}
+    if cplfw_failures.get("zero faces", 0) > sum(cplfw_failures.values()) / 2:
+        cplfw_note = ("On CPLFW, where many faces are turned sideways, most YuNet failures "
+                      "were zero-face detections.")
+    elif pairs[2]:
+        cplfw_note = f"On CPLFW, YuNet failures were: {reasons(pairs[2]['failure_breakdown'])}."
+    else:
+        cplfw_note = "On CPLFW, YuNet failure details are not available."
+    primary_coverage = (search_specs[0][2] or {}).get("coverage") or {}
+    arcface_coverage = (arcface or {}).get("coverage") or {}
+    primary_failures = primary_coverage.get("probe_failure_breakdown")
+    arcface_failures = arcface_coverage.get("probe_failure_breakdown")
+    missed_yunet = count(primary_failures.get("zero_faces", 0) if primary_failures is not None else None)
+    missed_scrfd = count(arcface_failures.get("zero_faces", 0) if arcface_failures is not None else None)
+    return "\n\n".join([
+        section_heading("WHY SOME PHOTOGRAPHS ARE NOT PROCESSED"),
+        wrap_plain(
+            "A photograph is compared only when exactly one face is found in it. No face "
+            "gives a zero-face failure. More than one face gives a multiple-face failure, "
+            "because the programme cannot tell which face belongs to the profile. In "
+            "gallery search, a known-duplicate photograph also fails when none of its "
+            "profile's enrolment photographs could be processed. A failed photograph "
+            "gets no decision, but it is still counted."
+        ),
+        wrap_plain(
+            f"The failures are not the same across datasets. SCRFD runs at a "
+            f"{ARCFACE_DETECTION_THRESHOLD:g} confidence threshold and YuNet at "
+            f"{DETECTOR_SCORE_THRESHOLD:g}. {lfw_note} The extra detections could be "
+            f"people in the background or false detections; nobody checked them by hand. "
+            f"{cplfw_note} On BFW, where the images are small face crops, YuNet works at "
+            f"each photograph's own size and missed {missed_yunet} faces, while SCRFD "
+            f"resizes every image to {ARCFACE_DETECTION_INPUT_SIZE} by "
+            f"{ARCFACE_DETECTION_INPUT_SIZE} pixels first and missed {missed_scrfd}. "
+            "So these results come partly from the settings and the one-face rule, "
+            "not only from the models."
+        ),
+        render_plain_pipeline_table(
+            ["Dataset and experiment", "Pipeline", "Intended", "Processed",
+             "Not processed and reason", "Result on processed", "End-to-end"], rows
+        ),
+        "\n".join([
+            f"- BFW search photos are {count(primary_coverage.get('intended_mated_probes'))} "
+            f"known duplicates and {count(primary_coverage.get('intended_non_mated_probes'))} "
+            "new profiles, and failure types are counted across all of them together.",
+            "- End-to-end detection applies to known duplicates only.",
+            "- The LFW gallery reused the one-to-one threshold, which is why its "
+            "false-review rate is so high.",
+        ]),
+        "These figures only show processing failures. No face-selection rule, threshold "
+        "or image size was changed to reduce them.",
+    ])
+
+
 def render_model_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     """The five models side by side: what each does and what it cost.
 
@@ -13319,7 +14047,7 @@ def render_overall_conclusion(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "OVERALL PROJECT CONCLUSION",
         "",
         wrap_plain(
-            f"1. The original one-to-one threshold was not suitable for searching a "
+            f"1. The transferred one-to-one threshold was not suitable for searching a "
             f"large profile gallery because it produced too many unnecessary reviews "
             f"({control} per 1,000 new profiles)."
         ),
@@ -13362,11 +14090,26 @@ def render_overall_conclusion(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 # --- Previews shown before a long-running option starts -----------------------
 
 EXPERIMENT_PREVIEWS = {
-    "full": """Selected: Experiments 1-5 - the original five-experiment evaluation
+    "all": """Selected: Run all experiments, comparisons and reports
 
 Purpose:
-Choose a one-to-one face-comparison threshold on LFW, test it on unseen LFW
-pairs, test how it transfers when facial pose changes, and then show what
+Run the software and input checks, programme self-tests, Experiments 1-12,
+controlled comparison analyses and paired statistics in dependency order.
+Then refresh the reports and figures and show every experiment at a glance.
+
+Requires the configured LFW, raw CPLFW and BFW datasets, all four pretrained
+models (YuNet, SFace, SCRFD and ArcFace), and their dependencies.
+
+This can take a long time and updates the saved results. Each experiment runs
+once; its action also displays its results. The batch stops at the first failed
+step, so later experiments cannot use incomplete prerequisite results.
+Human review moderation remains a separate interactive option (25).""",
+
+    "full": """Selected: Experiments 1-5 - face verification and gallery evaluation
+
+Purpose:
+Evaluate LFW with its official ten folds. Separately choose a development
+threshold, test its transfer when facial pose changes, and then show what
 happens when that same one-to-one threshold is used to search one photograph
 against many enrolled profiles.
 
@@ -13379,7 +14122,7 @@ YuNet face detector + SFace face-recognition model.
 This evaluation will:
 1. Produce candidate thresholds from the LFW training pairs only.
 2. Select and freeze one threshold using the LFW development pairs.
-3. Evaluate the frozen threshold on the untouched final LFW pairs.
+3. Evaluate LFW's ten folds, fitting each threshold on the other nine folds.
 4. Apply the same frozen threshold to CPLFW without recalibrating it.
 5. Search a 1:N profile gallery under that same one-to-one threshold.
 
@@ -13457,7 +14200,7 @@ run, because both extensions reuse its frozen threshold and its canonical run.
 
 No model will be trained or fine-tuned.""",
 
-    "verification-compare": """Selected: Experiment 9 - both pipelines on 1:1 verification
+    "verification-compare": """Selected: Experiments 9 and 10 - both pipelines on 1:1 verification
 
 Purpose:
 Test whether the advantage SCRFD + ArcFace showed on gallery search also holds
@@ -13473,12 +14216,12 @@ InsightFace SCRFD detector + ArcFace buffalo_l recognition model.
 This experiment will:
 1. Produce candidate thresholds from the LFW training pairs only.
 2. Select and freeze one threshold using the LFW development pairs.
-3. Evaluate the frozen threshold on the untouched final LFW pairs.
+3. Evaluate LFW's ten folds, fitting each threshold on the other nine folds.
 4. Apply that same threshold to CPLFW without recalibrating it.
 
 The baseline threshold is never reused: a similarity from a 512-dimensional
 ArcFace vector does not mean what the same number means for SFace. Results are
-written to a separate directory, so the original five experiments are
+written to a separate directory, so Experiments 1-5 are
 untouched.
 
 No model will be trained or fine-tuned.""",
@@ -13538,14 +14281,38 @@ Neither face network is trained or fine-tuned. Results are written to a
 separate directory and use a separate run cache, so Experiments 6 to 9 are
 untouched.""",
 
-    "review": """LOCAL HUMAN-REVIEW DEMONSTRATION
+    "comparison-diagnostics": """Selected: Additional comparison diagnostics
 
-This interface displays cases created by Experiment 5 using the original LFW
+Purpose:
+Compare separately calibrated one- and three-image enrolment, gallery sizes
+25/50/100/200 with three fixed sampling seeds, classifier feature sets, and
+error rates by image quality. Both available pipelines are evaluated.
+
+Development identities determine thresholds and quality bins. Test identities
+remain separate. These extensions are exploratory because the earlier test
+results were already inspected. Existing policies are preserved.
+
+First runs extract real BFW images and may take several minutes. Later runs
+reuse verified private score caches. Outputs: comparison_diagnostics/.
+No face-recognition model is trained or fine-tuned.""",
+    "comparative-statistics": """Selected: Paired pipeline comparisons
+
+Purpose:
+Compare all four detector/recogniser combinations on the same identities,
+including every intended probe and a common successfully processed subset.
+Report paired confidence intervals and the detector-by-recogniser interaction.
+
+Requires saved canonical runs and policies from Experiments 6, 8, 11 and 12.
+No threshold is selected from test outcomes. No new face extraction runs.""",
+    "review": """HUMAN REVIEW MODERATION
+
+Purpose:
+This interface displays cases created by Experiment 5 using the LFW
 gallery method.
 
 These cases are not confirmed duplicate profiles.
 
-The original Experiment 5 threshold produced a high false-review rate and is
+The Experiment 5 threshold produced a high false-review rate and is
 included as a research baseline. The interface demonstrates the review
 workflow, not a production moderation decision.""",
 }
@@ -13557,30 +14324,27 @@ def render_experiment_preview(key: str) -> str:
 
 
 def announce_stage(step: int, total: int, title: str, detail: str = "") -> None:
-    """Progress in named stages rather than internal method labels, so a reader
-    can follow what the programme is doing while it runs."""
-    announce(f"Step {step} of {total} - {title}")
+    """Display the stage title and progress within the current sequence."""
+    print(section_heading(f"{step}. {title}"))
+    print(f"Step {step} of {total}")
     if detail:
         print(f"  {detail}")
 
 
 def section_heading(title: str) -> str:
-    """A banner separating the plain-language layer from the technical one.
-
-    Both headings come from here, so a summary cannot show one style of banner
-    in one place and a different style in another."""
-    rule = "=" * 78
-    return f"{rule}\n{title}\n{rule}"
+    """Use a consistent separator for menu entries, stages and result sections."""
+    rule = "# " + "=" * 77
+    return f"{rule}\n# {title}\n{rule}"
 
 
 def render_plain_section(body: str) -> str:
-    """The plain-language half of a summary, under its own heading."""
-    return f"{section_heading('PLAIN-LANGUAGE SUMMARY')}\n\n{body}"
+    """Display the summary under its own heading."""
+    return f"{section_heading('Summary')}\n\n{body}"
 
 
 def render_technical_section(body: str) -> str:
     """The technical half: thresholds, FPIR, TPIR, intervals, digests and the
-    pipeline identifier, kept complete and merely moved below the plain text."""
+    pipeline identifier, presented in full after the summary."""
     return f"{section_heading('TECHNICAL DETAILS')}\n\n{body}"
 
 
@@ -13603,7 +14367,7 @@ def missing_artefact_message(what: str, option: str) -> str:
     )
 
 
-# --- Plain-language summaries, read back from the published artefacts ---------
+# --- Summaries read from the published artefacts -----------------------------
 
 
 def _load_optional(aggregate_root: Path, name: str) -> Optional[Dict[str, Any]]:
@@ -13614,17 +14378,17 @@ def _load_optional(aggregate_root: Path, name: str) -> Optional[Dict[str, Any]]:
 
 
 def render_baseline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
-    """Experiments 1-5 in plain language, with every count read from file."""
+    """Summary of Experiments 1-5, with every count read from file."""
     lfw = _load_optional(aggregate_root, "lfw_final_metrics.json")
     cplfw = _load_optional(aggregate_root, "cplfw_metrics.json")
     gallery = _load_optional(aggregate_root, "duplicate_gallery_metrics_v2.json")
     if not lfw:
-        return missing_artefact_message("Experiments 1-5", "option 3")
+        return missing_artefact_message("Experiments 1-5", "option 4")
 
     lines = [
         "WHAT THIS PART OF THE PROJECT TESTED",
         "",
-        "The first experiments tested the original YuNet + SFace pipeline.",
+        "The first experiments tested the YuNet + SFace pipeline.",
         "",
         "LFW was used to choose and test a one-to-one face-comparison threshold.",
         "CPLFW tested how that threshold performed when facial pose changed.",
@@ -13685,7 +14449,7 @@ def render_baseline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         scored_new = intended_new - gallery["unknown_probe_failures"]
         referred = round(gallery["false_duplicate_review_rate"] * scored_new)
         lines += [
-            "ORIGINAL DUPLICATE-PROFILE GALLERY TEST",
+            "DUPLICATE-PROFILE GALLERY TEST",
             "",
             "Known duplicate-profile test cases correctly detected:",
             format_count_and_percentage(
@@ -13703,7 +14467,7 @@ def render_baseline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             ) + ".",
             "",
             "Meaning:",
-            "The original one-to-one threshold detected many known duplicate",
+            "The transferred one-to-one threshold detected many known duplicate",
             "cases, but it also referred far too many genuinely new profiles.",
             "This experiment demonstrates why gallery search needs its own",
             "threshold.",
@@ -13714,11 +14478,11 @@ def render_baseline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 
 
 def render_open_set_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
-    """Experiment 6 in plain language, comparing the transferred threshold with
+    """Summary of Experiment 6, comparing the transferred threshold with
     the gallery-calibrated one side by side."""
     payload = _load_optional(aggregate_root, "bfw_open_set_test_metrics.json")
     if not payload:
-        return missing_artefact_message("Experiment 6", "option 8")
+        return missing_artefact_message("Experiment 6", "option 6")
     proposed = payload["methods"][METHOD_B]
     control = payload["methods"][METHOD_A]["rates"]
     primary = proposed["primary_operating_point"]
@@ -13734,7 +14498,7 @@ def render_open_set_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "YuNet face detector + SFace face-recognition model.",
         "",
         render_plain_pipeline_table(
-            ["", "Old 1:1 threshold", "Gallery-calibrated threshold"],
+            ["", "Transferred 1:1 threshold", "Gallery-calibrated threshold"],
             [
                 ["New profiles incorrectly referred for review (FPIR)",
                  _percentage_of(control.get("fpir")),
@@ -13748,7 +14512,7 @@ def render_open_set_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             ],
         ),
         "",
-        "Plain-language result:",
+        "Result:",
         "",
         wrap_plain(
             f"The gallery-calibrated method reduced unnecessary human reviews from "
@@ -13795,86 +14559,67 @@ def render_open_set_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 # Running this file with no arguments prints a menu rather than starting a
 # multi-minute benchmark, so the VS Code play button is safe to press.
 
-# Grouped by purpose rather than by internal option number, and every entry
-# states what it does in plain language before it is chosen.
+# Consecutive choices follow the evaluation workflow. Each experiment has
+# a run action and a saved-results action, with previews for longer tasks.
 MENU_TEXT = f"""
 {PROGRAMME_TITLE}
 
+Select a number. Run generates results; Show displays saved results.
+
 SETUP AND VALIDATION
-
   1. Check the software environment
-     Confirms that the required Python packages and settings are available.
-
   2. Verify models and datasets
-     Confirms that model files and benchmark protocols are present and unchanged.
+  3. Run programme self-tests
 
-  6. Run quick programme self-tests
-     Tests the calculations using synthetic data. No real face image is processed.
+EXPERIMENTS AND RESULTS
+     Experiments 1-5 — models: YuNet + SFace
+  4. Run Experiments 1-5 — LFW, CPLFW and duplicate-profile gallery
+  5. Show the saved results from Experiments 1-5
 
+     YuNet + SFace on BFW
+  6. Run Experiment 6 — calibrated gallery search
+  7. Show the saved Experiment 6 results
 
-ORIGINAL FIVE EXPERIMENTS          models: YuNet + SFace
+     YuNet + SFace + logistic regression on BFW; requires Experiment 6
+  8. Run Experiment 7 — review classifier
+  9. Show the saved Experiment 7 results
 
-  3. Run Experiments 1-5
-     LFW and CPLFW. Chooses a one-to-one threshold, freezes it, tests it on
-     unseen pairs and under pose change, then reuses it for gallery search.
+     Both pipelines on the same BFW identities: YuNet + SFace / SCRFD + ArcFace
+ 10. Run Experiment 8 — pipeline comparison
+ 11. Show the saved Experiment 8 results
 
-  4. Show the saved results from Experiments 1-5
+     SCRFD + ArcFace through the same one-to-one chain: LFW and CPLFW
+ 12. Run Experiments 9 and 10 — one-to-one verification comparison
+ 13. Show the saved results from Experiments 9 and 10
 
-  5. Open the local human-review demonstration
-     Shows review cases created by the original LFW gallery experiment.
+ 14. Run Experiment 11 — SCRFD + ArcFace review classifier
+ 15. Show the saved Experiment 11 results
 
+ 16. Run Experiment 12 — crossed detectors and recognisers
+ 17. Show the saved Experiment 12 results
 
-BFW EXTENSION EXPERIMENTS
+CONTROLLED COMPARISONS
+ 18. Run enrolment, gallery-size, classifier-feature and image-quality analyses
+ 19. Show the saved comparison analyses
+ 20. Compute paired pipeline differences from saved runs
+ 21. Show paired differences and confidence intervals
 
-  8. Run Experiment 6 - BFW duplicate-profile evaluation
-     YuNet + SFace on BFW. Calibrates a threshold for gallery search instead
-     of borrowing the one-to-one threshold.
+OVERVIEW AND REPORTS
+ 22. Show every experiment at a glance
+ 23. Run Experiments 7 and 8 and generate figures (requires Experiment 6)
+ 24. Generate reports and figures from saved results
+100. Run all experiments, comparisons and reports (includes setup checks)
 
-  9. Show the saved Experiment 6 results
+MODERATION
+ 25. Open human review moderation
 
- 10. Run Experiment 7 - logistic-regression review classifier
-     YuNet + SFace + logistic regression on BFW. The only model trained here.
-
- 11. Show the saved Experiment 7 results
-
- 12. Run Experiment 8 - compare YuNet + SFace with SCRFD + ArcFace
-     Both pipelines on the same BFW identities, each with its own threshold.
-
- 13. Run Experiments 7 and 8, then regenerate all figures
-
- 14. Run Experiment 9 - both pipelines on LFW and CPLFW
-     SCRFD + ArcFace through the same one-to-one chain, to test whether its
-     advantage also holds for pair verification and under pose change.
-
- 15. Show the saved Experiment 9 results
-
- 17. Run Experiment 11 - the review classifier on SCRFD + ArcFace
-     Fits the same classifier on the higher-capacity pipeline, to test whether
-     the framework still helps once the models are better.
-
- 18. Show the saved Experiment 11 results
-
- 19. Run Experiment 12 - cross the detectors and the embedders
-     SCRFD + SFace and YuNet + ArcFace on BFW, each calibrated afresh. Varying
-     one component at a time is what separates the detector's contribution
-     from the embedder's.
-
- 20. Show the saved Experiment 12 results
-
-
-OVERVIEW
-
- 16. Show every experiment at a glance
-     One table: models, dataset, task and headline result for every experiment.
-
-
-  7. Exit
+ 26. Exit (or q)
 """
 
 MODES = (
     "menu", "check", "verify", "full", "summary", "review", "self-test",
     # Supplementary Experiment 6. Deliberately separate from "full", which
-    # continues to mean the original five-experiment evaluation.
+    # continues to mean face verification and gallery evaluation.
     "open-set", "open-set-summary",
     # Experiments 7 and 8. Separate from "full", which remains the five
     # baseline experiments only.
@@ -13889,8 +14634,9 @@ MODES = (
     # contribution can be read separately.
     "mixed-pipelines", "mixed-pipelines-summary",
     # A single table covering every experiment, for orientation.
-    "experiment-table",
-    "extensions",
+    "experiment-table", "comparison-diagnostics", "comparison-diagnostics-summary",
+    "comparative-statistics", "comparative-statistics-summary", "refresh-reports",
+    "extensions", "all",
 )
 
 
@@ -14124,8 +14870,14 @@ def experiment_evaluate_lfw(
 ) -> Dict[str, Any]:
     """split='dev' is selection stage 2: it scores every candidate on
     pairsDevTest.txt, selects one by SELECTION_RULE and rewrites the threshold
-    artifact as frozen. split='final' is experiment 3: it evaluates the frozen
-    threshold on the untouched pairs.txt and never changes it."""
+    artifact as frozen for CPLFW/gallery transfer. Final LFW uses the official
+    ten folds, fitting each threshold on the other nine folds only."""
+    if split == "final":
+        return experiment_lfw_cross_validation(
+            config, detector, embedder, output_path=output_path, description=description
+        )
+    if split != "dev":
+        raise ProtocolError(f"Unknown LFW split: {split!r}")
     protocol_filename = (
         LFW_DEVELOPMENT_PROTOCOL if split == "dev" else LFW_FINAL_PROTOCOL
     )
@@ -14368,7 +15120,7 @@ def experiment_duplicate_gallery(
 # The existing experiment functions are reused unchanged. They already take a
 # detector, an embedder and an output location, so the only difference is which
 # models are supplied and where the artefacts are written. Writing into a
-# sub-directory keeps the original five experiments untouched: the two chains
+# sub-directory keeps Experiments 1-5 untouched: the two chains
 # cannot overwrite one another's threshold.
 
 VERIFICATION_COMPARISON_DIRNAME = "verification_comparison"
@@ -14381,7 +15133,7 @@ def run_verification_comparison(
 
     The same three-stage separation the baseline obeys is enforced here too:
     candidates from pairsDevTrain only, selection and freezing on pairsDevTest,
-    then the frozen threshold applied unchanged to pairs.txt and to CPLFW. A
+    then ten-fold LFW evaluation and development-threshold transfer to CPLFW. A
     threshold calibrated for SFace is never reused, because a cosine similarity
     from a 512-dimensional ArcFace vector does not mean what the same number
     means in SFace's 128-dimensional space."""
@@ -14409,8 +15161,8 @@ def run_verification_comparison(
         description=description,
     )
 
-    announce_stage(3, 4, "Evaluating the untouched LFW pairs",
-                   "The frozen threshold is applied and never changed.")
+    announce_stage(3, 4, "Evaluating LFW with ten-fold cross-validation",
+                   "Each threshold is fitted on the other nine folds only.")
     experiment_evaluate_lfw(
         config, detector, embedder, split="final",
         threshold_artifact=threshold_artifact,
@@ -14453,7 +15205,7 @@ def render_verification_comparison_summary(output_root: Path = AGGREGATE_ROOT) -
     compare_cplfw = _load_optional(sub_root, "cplfw_metrics.json")
     if not compare_final or not compare_cplfw:
         return missing_artefact_message(
-            "1:1 pipeline comparison", "option 14 (--mode verification-compare)"
+            "1:1 pipeline comparison", "option 12 (--mode verification-compare)"
         )
 
     def row(label: str, getter) -> List[str]:
@@ -14468,9 +15220,9 @@ def render_verification_comparison_summary(output_root: Path = AGGREGATE_ROOT) -
         "Datasets:",
         "LFW pairs.txt and CPLFW pairs_CPLFW.txt, raw images, 6,000 pairs each.",
         "",
-        "Each pipeline uses its own threshold, calibrated on LFW development",
-        "pairs and frozen before either evaluation. No threshold is shared",
-        "between pipelines.",
+        "LFW uses official ten-fold cross-validation with training-only thresholds.",
+        "CPLFW uses each pipeline's separate frozen LFW development threshold.",
+        "No threshold is shared between pipelines.",
         "",
         render_plain_pipeline_table(
             ["Metric", "LFW: YuNet+SFace", "LFW: SCRFD+ArcFace",
@@ -14478,7 +15230,7 @@ def render_verification_comparison_summary(output_root: Path = AGGREGATE_ROOT) -
             [
                 row("Correct decisions among scored pairs",
                     lambda d: _percentage_of(d.get("accuracy"))),
-                row("Photographs reaching comparison",
+                row("Pairs reaching comparison",
                     lambda d: _percentage_of(1.0 - d.get("failure_rate", float("nan")))),
                 row("Pairs scored",
                     lambda d: f"{d.get('scored_pairs', 0):,} of {d.get('total_pairs', 0):,}"),
@@ -14486,17 +15238,21 @@ def render_verification_comparison_summary(output_root: Path = AGGREGATE_ROOT) -
                     lambda d: _percentage_of(d.get("false_match_rate"))),
                 row("Wrongly rejected (FNMR)",
                     lambda d: _percentage_of(d.get("false_non_match_rate"))),
-                row("Frozen threshold",
-                    lambda d: f"{d.get('threshold', float('nan')):.6f}"),
+                row("Threshold protocol",
+                    lambda d: "10 training-only folds" if d.get("fold_results")
+                    else "Frozen development threshold"),
+                row("Frozen threshold (CPLFW)",
+                    lambda d: "Per-fold thresholds" if d.get("fold_results")
+                    else format_number(d.get("threshold"), 6)),
             ],
         ),
         "",
         wrap_plain(DENOMINATOR_NOTE),
         "",
         wrap_plain(
-            "CPLFW is the harder test. Where the two pipelines differ most in the "
-            "share of photographs reaching comparison, the difference is attributable "
-            "to face detection rather than to face comparison."
+            "Coverage includes detection, alignment and embedding failures. Conditional "
+            "accuracy describes the scored subset, which differs between pipelines; "
+            "it cannot alone establish which complete pipeline works better."
         ),
     ]
     return "\n".join(lines)
@@ -14523,16 +15279,16 @@ def action_run_complete_evaluation(
     output_root.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
 
-    print("[1/7] Verifying the pinned models")
+    announce_stage(1, 7, "Verifying the pinned models")
     detector, embedder = load_models(config.require_model_root())
     print(f"  OK   {YUNET_FILENAME} and {SFACE_FILENAME} match their pinned SHA-256 digests")
 
     print("")
-    print("[2/7] Experiment 1 — threshold candidates (pairsDevTrain.txt, validation only)")
+    announce_stage(2, 7, "Experiment 1 — threshold candidates (pairsDevTrain.txt, validation only)")
     threshold_artifact = experiment_calibrate(config, detector, embedder, output_root)
 
     print("")
-    print("[3/7] Experiment 2 — development selection and freezing (pairsDevTest.txt)")
+    announce_stage(3, 7, "Experiment 2 — development selection and freezing (pairsDevTest.txt)")
     experiment_evaluate_lfw(
         config,
         detector,
@@ -14543,7 +15299,7 @@ def action_run_complete_evaluation(
     )
 
     print("")
-    print("[4/7] Experiment 3 — final LFW evaluation (pairs.txt, frozen threshold)")
+    announce_stage(4, 7, "Experiment 3 — official LFW ten-fold evaluation")
     experiment_evaluate_lfw(
         config,
         detector,
@@ -14554,7 +15310,7 @@ def action_run_complete_evaluation(
     )
 
     print("")
-    print("[5/7] Experiment 4 — raw CPLFW cross-pose generalisation (same frozen threshold)")
+    announce_stage(5, 7, "Experiment 4 — raw CPLFW cross-pose generalisation (same frozen threshold)")
     experiment_evaluate_cplfw(
         config,
         detector,
@@ -14565,7 +15321,7 @@ def action_run_complete_evaluation(
     )
 
     print("")
-    print("[6/7] Experiment 5 — 1:N duplicate-profile gallery (real LFW images)")
+    announce_stage(6, 7, "Experiment 5 — 1:N duplicate-profile gallery (real LFW images)")
     experiment_duplicate_gallery(
         config,
         detector,
@@ -14580,7 +15336,7 @@ def action_run_complete_evaluation(
     )
 
     print("")
-    print("[7/7] Aggregate outputs and privacy validation")
+    announce_stage(7, 7, "Aggregate outputs and privacy validation")
     write_aggregate_reports(output_root, manifest_path, cplfw_image_variant)
 
     elapsed = time.perf_counter() - started
@@ -14596,7 +15352,7 @@ def action_run_complete_evaluation(
 
 def action_show_summary(output_root: Path = AGGREGATE_ROOT) -> int:
     try:
-        # Plain language first, then the technical block, then the reference
+        # Summary first, followed by technical details and reference
         # material. The formal reports keep their own unchanged wording.
         print(render_plain_section(render_baseline_plain_summary(output_root)))
         print("")
@@ -14605,7 +15361,7 @@ def action_show_summary(output_root: Path = AGGREGATE_ROOT) -> int:
         print(render_reference_section())
     except ArtifactError:
         print(
-            "No results are available yet. Run option 3 (the complete five-experiment "
+            "No results are available yet. Run option 4 (the complete five-experiment "
             "evaluation) first, or `python ACP_arden.py --mode full`.",
             file=sys.stderr,
         )
@@ -14643,6 +15399,8 @@ def _run_action(action: Callable[[], int]) -> int:
         MlReviewError,
         OpenSetProtocolError,
         PipelineUnavailableError,
+        PipelineComparisonError,
+        MetricsError,
         PrivacyLeakError,
         ProtocolError,
         ReviewDatabaseVersionError,
@@ -14707,14 +15465,14 @@ def action_show_ml_review_summary(output_root: Path = AGGREGATE_ROOT) -> int:
 
 
 def action_run_pipeline_comparison(output_root: Path = AGGREGATE_ROOT) -> int:
-    run_pipeline_comparison(output_root=output_root)
+    result = run_pipeline_comparison(output_root=output_root)
     print("")
     print(render_plain_section(render_pipeline_plain_summary(output_root)))
     print("")
     print(render_technical_section(render_pipeline_comparison_summary(output_root)))
     print("")
     print(render_reference_section())
-    return 0
+    return 0 if result["evaluated"] == "yes" else 1
 
 
 def action_show_pipeline_comparison_summary(output_root: Path = AGGREGATE_ROOT) -> int:
@@ -14781,6 +15539,8 @@ def action_show_mixed_pipeline_summary(output_root: Path = AGGREGATE_ROOT) -> in
 def action_show_experiment_table(output_root: Path = AGGREGATE_ROOT) -> int:
     print(render_experiment_comparison_table(output_root))
     print("")
+    print(render_processing_coverage_explanation(output_root))
+    print("")
     print(render_model_comparison_table(output_root))
     return 0
 
@@ -14823,57 +15583,153 @@ def action_run_extensions(output_root: Path = AGGREGATE_ROOT) -> int:
     return 0 if status else 1
 
 
+def action_run_comparison_diagnostics(output_root: Path = AGGREGATE_ROOT) -> int:
+    run_comparison_diagnostics(output_root)
+    print(render_comparison_diagnostics_summary(output_root))
+    return 0
+
+
+def action_run_comparative_statistics(output_root: Path = AGGREGATE_ROOT) -> int:
+    generate_comparative_statistics(output_root)
+    text = render_paired_comparison_report(output_root)
+    write_markdown_artifact(output_root / "COMPARATIVE_STATISTICS_REPORT.md", text)
+    print(text)
+    return 0
+
+
+def action_refresh_reports(output_root: Path = AGGREGATE_ROOT) -> int:
+    baseline = ("lfw_development_metrics.json", "lfw_final_metrics.json", "cplfw_metrics.json", "calibrated_threshold.json")
+    if all((output_root / name).is_file() for name in baseline) and any(
+        (output_root / name).is_file() for name in ("duplicate_gallery_metrics_v2.json", "duplicate_gallery_metrics.json")
+    ):
+        write_aggregate_reports(output_root, DEFAULT_GALLERY_MANIFEST, "raw")
+    open_set = ("bfw_open_set_protocol_summary.json", "bfw_open_set_development_metrics.json", "bfw_open_set_test_metrics.json",
+                "open_set_confidence_intervals.json", "bfw_subgroup_confidence_intervals.json")
+    if all((output_root / name).is_file() for name in open_set):
+        protocol, development, test, ci, subgroups = [read_json_artifact(output_root / name) for name in open_set]
+        groups = subgroups["subgroups"]
+        write_markdown_artifact(output_root / "OPEN_SET_EVALUATION_REPORT.md", render_open_set_report(
+            protocol_summary=protocol, development=development, test=test, intervals=ci["intervals"],
+            per_subgroup=groups, disparity=subgroup_disparity_summary(groups)))
+    if (output_root / "comparative_statistics.json").is_file():
+        write_markdown_artifact(output_root / "COMPARATIVE_STATISTICS_REPORT.md", render_paired_comparison_report(output_root))
+    if (output_root / "comparison_diagnostics" / "comparison_diagnostics.json").is_file():
+        write_markdown_artifact(output_root / "comparison_diagnostics" / "COMPARISON_DIAGNOSTICS_REPORT.md", render_comparison_diagnostics_summary(output_root))
+    written = generate_figures(aggregate_root=output_root)
+    announce(f"Refreshed reports and {len(written)} figures from saved results.")
+    return 0
+
+
+def action_run_all(output_root: Path = AGGREGATE_ROOT) -> int:
+    """Run the complete workflow once, stopping if any prerequisite fails."""
+    steps: List[Tuple[str, Callable[[], int]]] = [
+        ("Check the software environment", action_check_environment),
+        ("Verify models and datasets", action_verify_inputs),
+        ("Run programme self-tests", action_self_test),
+        ("Experiments 1-5 — LFW, CPLFW and duplicate-profile gallery",
+         lambda: action_run_complete_evaluation(output_root)),
+        ("Experiment 6 — calibrated gallery search",
+         lambda: action_run_open_set_evaluation(output_root)),
+        ("Experiment 7 — review classifier",
+         lambda: action_run_ml_review(output_root)),
+        ("Experiment 8 — pipeline comparison",
+         lambda: action_run_pipeline_comparison(output_root)),
+        ("Experiments 9 and 10 — one-to-one verification comparison",
+         lambda: action_run_verification_comparison(output_root)),
+        ("Experiment 11 — SCRFD + ArcFace review classifier",
+         lambda: action_run_arcface_review(output_root)),
+        ("Experiment 12 — crossed detectors and recognisers",
+         lambda: action_run_mixed_pipelines(output_root)),
+        ("Controlled comparison analyses",
+         lambda: action_run_comparison_diagnostics(output_root)),
+        ("Paired pipeline differences and confidence intervals",
+         lambda: action_run_comparative_statistics(output_root)),
+        ("Refresh reports and figures",
+         lambda: action_refresh_reports(output_root)),
+        ("Show every experiment at a glance",
+         lambda: action_show_experiment_table(output_root)),
+    ]
+    for index, (title, action) in enumerate(steps, start=1):
+        print("")
+        announce_stage(index, len(steps), title)
+        status = _run_action(action)
+        if status != 0:
+            announce(f"Run all stopped at step {index} of {len(steps)}: {title}.")
+            return status
+    announce("Run all complete: all experiments, comparisons and reports finished.")
+    return 0
+
+
 # Which preview belongs to which menu option. Options that only display saved
 # results need no preview, because nothing long-running is about to start.
 MENU_PREVIEW_KEYS = {
-    "3": "full",
-    "5": "review",
-    "8": "open-set",
-    "10": "ml-review",
-    "12": "pipeline-compare",
-    "13": "extensions",
-    "14": "verification-compare",
-    "17": "arcface-review",
-    "19": "mixed-pipelines",
+    "100": "all",
+    "4": "full",
+    "6": "open-set",
+    "8": "ml-review",
+    "10": "pipeline-compare",
+    "12": "verification-compare",
+    "14": "arcface-review",
+    "16": "mixed-pipelines",
+    "18": "comparison-diagnostics",
+    "20": "comparative-statistics",
+    "23": "extensions",
+    "25": "review",
 }
 
 
-def run_menu() -> int:
+def _print_saved_summary(renderer: Callable[[Path], str], output_root: Path) -> int:
+    print(renderer(output_root))
+    return 0
+
+
+def run_menu(output_root: Path = AGGREGATE_ROOT) -> int:
     """Interactive menu. Nothing long-running starts until an option is chosen."""
     actions: Dict[str, Callable[[], int]] = {
         "1": action_check_environment,
         "2": action_verify_inputs,
-        "3": action_run_complete_evaluation,
-        "4": action_show_summary,
-        "5": lambda: launch_review_interface(DEFAULT_REVIEW_DB),
-        "6": action_self_test,
-        "8": action_run_open_set_evaluation,
-        "9": action_show_open_set_summary,
-        "10": action_run_ml_review,
-        "11": action_show_ml_review_summary,
-        "12": action_run_pipeline_comparison,
-        "13": action_run_extensions,
-        "14": action_run_verification_comparison,
-        "15": action_show_verification_comparison_summary,
-        "16": action_show_experiment_table,
-        "17": action_run_arcface_review,
-        "18": action_show_arcface_review_summary,
-        "19": action_run_mixed_pipelines,
-        "20": action_show_mixed_pipeline_summary,
+        "3": action_self_test,
+        "4": lambda: action_run_complete_evaluation(output_root),
+        "5": lambda: action_show_summary(output_root),
+        "6": lambda: action_run_open_set_evaluation(output_root),
+        "7": lambda: action_show_open_set_summary(output_root),
+        "8": lambda: action_run_ml_review(output_root),
+        "9": lambda: action_show_ml_review_summary(output_root),
+        "10": lambda: action_run_pipeline_comparison(output_root),
+        "11": lambda: action_show_pipeline_comparison_summary(output_root),
+        "12": lambda: action_run_verification_comparison(output_root),
+        "13": lambda: action_show_verification_comparison_summary(output_root),
+        "14": lambda: action_run_arcface_review(output_root),
+        "15": lambda: action_show_arcface_review_summary(output_root),
+        "16": lambda: action_run_mixed_pipelines(output_root),
+        "17": lambda: action_show_mixed_pipeline_summary(output_root),
+        "18": lambda: action_run_comparison_diagnostics(output_root),
+        "19": lambda: _print_saved_summary(render_comparison_diagnostics_summary, output_root),
+        "20": lambda: action_run_comparative_statistics(output_root),
+        "21": lambda: _print_saved_summary(render_paired_comparison_report, output_root),
+        "22": lambda: action_show_experiment_table(output_root),
+        "23": lambda: action_run_extensions(output_root),
+        "24": lambda: action_refresh_reports(output_root),
+        "25": lambda: launch_review_interface(DEFAULT_REVIEW_DB),
+        "100": lambda: action_run_all(output_root),
     }
     # The scope of the artefact is stated before any option is offered.
     print("")
     print(PROGRAMME_INTRODUCTION)
     last_status = 0
     while True:
-        print(MENU_TEXT)
+        print(re.sub(
+            r"(?m)^ *(\d+\. .+)$",
+            lambda match: "\n" + section_heading(match.group(1)),
+            MENU_TEXT,
+        ))
         try:
             choice = input("Select an option: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("")
             return last_status
 
-        if choice in {"7", "q", "quit", "exit"}:
+        if choice in {"26", "q", "quit", "exit"}:
             return last_status
         action = actions.get(choice)
         if action is None:
@@ -14909,9 +15765,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
         choices=MODES,
         default="menu",
         help=(
-            "menu (default): interactive launcher. check: environment and dependencies. "
+            "menu (default): interactive launcher. all: checks, Experiments 1-12, "
+            "comparisons and reports. check: environment and dependencies. "
             "verify: models and benchmark datasets. full: the complete five-experiment "
-            "evaluation. summary: the existing results. review: the local human-review "
+            "evaluation. summary: the existing results. review: human review moderation "
             "interface. self-test: deterministic synthetic tests. open-set: the "
             "supplementary BFW open-set duplicate-profile experiment (Experiment 6). "
             "open-set-summary: the existing open-set results. ml-review: the "
@@ -14929,7 +15786,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--review-db",
         type=Path,
         default=DEFAULT_REVIEW_DB,
-        help="Local review database (default: results/raw/review.sqlite; never committed).",
+        help="Moderation database (default: results/raw/review.sqlite; never committed).",
     )
     parser.add_argument("--version", action="version", version=f"{PROGRAMME_NAME} {PROGRAMME_VERSION}")
     return parser
@@ -14946,7 +15803,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     if args.mode == "menu":
-        return run_menu()
+        return run_menu(args.results_root)
+    if args.mode == "all":
+        return _run_action(lambda: action_run_all(args.results_root))
     if args.mode == "check":
         return _run_action(action_check_environment)
     if args.mode == "verify":
@@ -14987,6 +15846,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_action(lambda: action_show_mixed_pipeline_summary(args.results_root))
     if args.mode == "experiment-table":
         return _run_action(lambda: action_show_experiment_table(args.results_root))
+    if args.mode == "comparison-diagnostics":
+        return _run_action(lambda: action_run_comparison_diagnostics(args.results_root))
+    if args.mode == "comparison-diagnostics-summary":
+        return _run_action(lambda: _print_saved_summary(render_comparison_diagnostics_summary, args.results_root))
+    if args.mode == "comparative-statistics":
+        return _run_action(lambda: action_run_comparative_statistics(args.results_root))
+    if args.mode == "comparative-statistics-summary":
+        return _run_action(lambda: _print_saved_summary(render_paired_comparison_report, args.results_root))
+    if args.mode == "refresh-reports":
+        return _run_action(lambda: action_refresh_reports(args.results_root))
     if args.mode == "extensions":
         return _run_action(lambda: action_run_extensions(args.results_root))
 

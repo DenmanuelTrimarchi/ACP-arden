@@ -15,14 +15,14 @@ Everything lives in one executable Python file, [ACP_arden.py](ACP_arden.py).
 > duplicate-detection performance in an open-set face-verification proof of
 > concept evaluated on real public benchmark datasets?
 
-The five baseline experiments below answer the original, narrower question and
-are retained unchanged as the **baseline study**:
+Experiments 1–5 form the **baseline study**, using the official ten-fold LFW
+protocol to investigate:
 
 > How effectively can a pretrained face-embedding model verify whether two
 > unconstrained facial images belong to the same person and identify potential
 > duplicate profiles under a human-review decision policy?
 
-The baseline study establishes the problem the revised question addresses: a
+The baseline study establishes the problem the research question addresses: a
 threshold calibrated for 1:1 verification transfers badly to 1:N search,
 referring a large share of genuinely new identities for review. The
 supplementary experiment evaluates whether gallery-specific calibration and
@@ -56,15 +56,21 @@ Five experiments, run in a fixed order:
 2. **Development selection and freezing** on LFW `pairsDevTest.txt`. Exactly
    one candidate is selected by a fixed deterministic rule and the artefact is
    marked `frozen`.
-3. **Final LFW evaluation** on the untouched `pairs.txt`, using the frozen
-   threshold with no recalibration.
-4. **Raw CPLFW cross-pose generalisation** using that same frozen threshold.
+3. **Final LFW evaluation** using the official ten folds in `pairs.txt`. Each
+   fold is scored with a threshold fitted on the other nine folds; failed
+   extractions retain their original fold positions and denominators.
+4. **Raw CPLFW cross-pose generalisation** using the separate frozen threshold
+   from step 2, with no recalibration.
 5. **1:N duplicate-profile gallery** built deterministically from real LFW
    images, with calibration images excluded and opaque identifiers throughout.
 
-A final evaluation refuses to run against a threshold whose status is not
-`frozen`. That refusal is the held-out boundary, enforced in code rather than
-only described in prose.
+CPLFW and gallery transfer controls refuse an unfrozen development threshold.
+Final LFW uses a separate cross-validation protocol: the local development
+files overlap `pairs.txt` by 758 pairs (525 train and 233 development-test), so
+applying their threshold to all 6,000 pairs would not be a held-out LFW test.
+The report gives mean fold accuracy, fold variability, pooled conditional
+metrics and extraction coverage. These are pair-disjoint folds, not an
+identity-disjoint or pretrained-model training-contamination guarantee.
 
 ## Quick start
 
@@ -80,35 +86,69 @@ with a plain-language section before the technical figures.
 ```text
 COM7014 Advanced Computing Project — Face Verification
 
-SETUP AND VALIDATION
+Select a number. Run generates results; Show displays saved results.
 
+SETUP AND VALIDATION
   1. Check the software environment
   2. Verify models and datasets
-  6. Run quick programme self-tests
+  3. Run programme self-tests
 
-ORIGINAL FIVE EXPERIMENTS
+EXPERIMENTS AND RESULTS
+     Experiments 1-5 — models: YuNet + SFace
+  4. Run Experiments 1-5 — LFW, CPLFW and duplicate-profile gallery
+  5. Show the saved results from Experiments 1-5
 
-  3. Run Experiments 1-5
-  4. Show the saved results from Experiments 1-5
-  5. Open the local human-review demonstration
+     YuNet + SFace on BFW
+  6. Run Experiment 6 — calibrated gallery search
+  7. Show the saved Experiment 6 results
 
-BFW EXTENSION EXPERIMENTS
+     YuNet + SFace + logistic regression on BFW; requires Experiment 6
+  8. Run Experiment 7 — review classifier
+  9. Show the saved Experiment 7 results
 
-  8. Run Experiment 6 - BFW duplicate-profile evaluation
-  9. Show the saved Experiment 6 results
- 10. Run Experiment 7 - logistic-regression review classifier
- 11. Show the saved Experiment 7 results
- 12. Run Experiment 8 - compare YuNet + SFace with SCRFD + ArcFace
- 13. Run Experiments 7 and 8, then regenerate all figures
+     Both pipelines on the same BFW identities: YuNet + SFace / SCRFD + ArcFace
+ 10. Run Experiment 8 — pipeline comparison
+ 11. Show the saved Experiment 8 results
 
-  7. Exit
+     SCRFD + ArcFace through the same one-to-one chain: LFW and CPLFW
+ 12. Run Experiments 9 and 10 — one-to-one verification comparison
+ 13. Show the saved results from Experiments 9 and 10
 
-Select an option:
+ 14. Run Experiment 11 — SCRFD + ArcFace review classifier
+ 15. Show the saved Experiment 11 results
+
+ 16. Run Experiment 12 — crossed detectors and recognisers
+ 17. Show the saved Experiment 12 results
+
+CONTROLLED COMPARISONS
+ 18. Run enrolment, gallery-size, classifier-feature and image-quality analyses
+ 19. Show the saved comparison analyses
+ 20. Compute paired pipeline differences from saved runs
+ 21. Show paired differences and confidence intervals
+
+OVERVIEW AND REPORTS
+ 22. Show every experiment at a glance
+ 23. Run Experiments 7 and 8 and generate figures (requires Experiment 6)
+ 24. Generate reports and figures from saved results
+100. Run all experiments, comparisons and reports (includes setup checks)
+
+MODERATION
+ 25. Open human review moderation
+
+ 26. Exit (or q)
 ```
 
-Option 13 runs Experiments 7 and 8 and rebuilds the figures. It does not run
+Option 23 runs Experiments 7 and 8 and rebuilds the figures. It does not run
 Experiment 6, which must already have been completed because both extensions
 reuse its frozen threshold and its canonical run.
+
+Option 100 runs the environment and input checks, programme self-tests, all
+twelve experiments, controlled comparison analyses and paired statistics in
+dependency order, then refreshes the reports and figures and displays the
+experiment overview. It runs each experiment once and stops at the first
+failed step. It requires LFW, raw CPLFW, BFW, and both pretrained model pairs,
+can take a long time, and updates the saved results. Human review moderation
+remains a separate interactive choice (option 25).
 
 ### Setup
 
@@ -131,11 +171,12 @@ equivalent:
 
 ```bash
 python ACP_arden.py --mode menu       # the default
+python ACP_arden.py --mode all        # option 100: checks, all experiments, comparisons and reports
 python ACP_arden.py --mode check      # interpreter, pinned dependencies, configuration
 python ACP_arden.py --mode verify     # model digests, LFW and raw CPLFW protocols
 python ACP_arden.py --mode full       # the complete five-experiment evaluation
 python ACP_arden.py --mode summary    # headline figures from the existing results
-python ACP_arden.py --mode review     # the local human-review interface
+python ACP_arden.py --mode review     # human review moderation
 python ACP_arden.py --mode self-test  # deterministic synthetic tests, no data needed
 
 # Supplementary Experiment 6 (needs the official BFW dataset)
@@ -157,10 +198,16 @@ python ACP_arden.py --mode arcface-review-summary        # the classifier on bot
 python ACP_arden.py --mode mixed-pipelines               # 12: the detectors and embedders crossed
 python ACP_arden.py --mode mixed-pipelines-summary       # the two-by-two table
 python ACP_arden.py --mode experiment-table              # every experiment at a glance
+
+# Additional controlled comparisons and saved reports
+python ACP_arden.py --mode comparison-diagnostics          # enrolment, gallery size, features, errors
+python ACP_arden.py --mode comparison-diagnostics-summary  # show their saved results
+python ACP_arden.py --mode comparative-statistics           # paired analysis of four saved pipeline runs
+python ACP_arden.py --mode comparative-statistics-summary   # show paired differences
+python ACP_arden.py --mode refresh-reports                  # rebuild reports and figures from saved metrics
 ```
 
-`--mode full` continues to mean exactly the original five-experiment
-evaluation. The open-set experiment is separate and never alters it.
+`--mode full` runs Experiments 1–5. The open-set experiment is separate and never alters it.
 
 `--mode self-test` and the pytest suite need no dataset, no model file and no
 network, so the code can be checked before any biometric data is touched.
@@ -219,9 +266,9 @@ figure below is read from `results/aggregate/*.json` by `--mode summary`; none
 is transcribed by hand.
 
 ```text
-Final LFW accuracy: 99.09%
-Final LFW false-match rate: 0.11%
-Final LFW false-non-match rate: 1.71%
+Final LFW mean fold accuracy: 99.28%
+Final LFW false-match rate: 0.33%
+Final LFW false-non-match rate: 1.11%
 Final LFW EER: 0.78%
 Final LFW extraction-failure rate: 10.02%
 
@@ -242,7 +289,7 @@ Rank-1 identification rate: 97.98%
 False duplicate-review rate: 52.56%
 ```
 
-Two figures must never be quoted alone:
+The following results must be quoted with their denominators:
 
 - The **CPLFW accuracy is conditional** on the 3,515 pairs that yielded exactly
   one detectable face on both sides. The other 41.42% of the protocol never
@@ -261,11 +308,11 @@ Two figures must never be quoted alone:
   were actually scored, **89.40% end-to-end** over every intended probe. The
   code refuses to print either alone.
 - The **gallery detection rate is also inseparable from the 52.56% false
-  duplicate-review rate**. A 0.11% single-comparison false-match rate compounds
-  across 986 gallery comparisons per probe. That is direct, quantified evidence
-  that a threshold calibrated for 1:1 verification is not fit for 1:N search at
-  this scale without its own calibration — and the evidence base for this
-  project's human-review-only policy.
+  duplicate-review rate**. This is the measured result of transferring the
+  separate LFW development threshold to 986 enrolled gallery identities.
+  It supports calibrating gallery search on its own development protocol.
+  It is not calculated by compounding cross-validation FMR or assuming
+  independent comparisons within a gallery.
 
 Full write-up: [results/aggregate/FINAL_EVALUATION_REPORT.md](results/aggregate/FINAL_EVALUATION_REPORT.md).
 
@@ -651,7 +698,7 @@ could be attributed to the embedding model alone.
 
 ### Figures
 
-`results/figures/` holds 17 figures, each in PNG (300 dpi) and SVG,
+`results/figures/` holds 18 figures, each in PNG (300 dpi) and SVG,
 generated from the published JSON and CSV artefacts rather than typed values,
 with PNG text metadata stripped and the privacy scan applied:
 
@@ -669,6 +716,7 @@ male_subgroup_pipeline_comparison
 mated_non_mated_similarity_distributions
 ml_review_classifier_coefficients
 open_set_operating_curve
+paired_pipeline_comparison
 pipeline_across_datasets
 pipeline_coverage_and_latency
 profile_photo_consistency_outcomes
@@ -690,11 +738,11 @@ overwrite a baseline artefact or a cached run.
 > Does the advantage SCRFD + ArcFace showed on gallery search also hold for
 > one-to-one verification, and under the pose variation of CPLFW?
 
-The same three-stage separation the baseline obeys: candidates from
-`pairsDevTrain.txt` only, selection and freezing on `pairsDevTest.txt`, then the
-frozen threshold applied unchanged to `pairs.txt` and to CPLFW. Reported per
-dataset, because the two pose different problems and the coverage difference
-runs in opposite directions.
+Both pipelines use official ten-fold cross-validation on `pairs.txt`, fitting
+each threshold on nine folds and evaluating the remaining fold. The separate
+threshold selected using `pairsDevTrain.txt` and `pairsDevTest.txt` is transferred
+unchanged to CPLFW. Results include extraction coverage because conditional
+accuracy uses different successfully processed subsets across pipelines.
 
 ### Experiment 11 — the review classifier on the comparison pipeline
 
@@ -722,6 +770,50 @@ reusing another pipeline's would produce a control that means nothing.
 
 Neither crossing is a new model. Both halves of each are pretrained and used as
 published; only the arrangement is new.
+
+## Additional comparison diagnostics
+
+Options 18–21 provide controlled analyses for the MSc comparison:
+
+- **Enrolment:** one versus three images, each calibrated on BFW development
+  identities to the same 0.3% FPIR target. Includes paired identity-bootstrap
+  differences, conditional detection, end-to-end detection and coverage.
+- **Gallery size:** 25, 50, 100 and 200 intended identities under three fixed
+  sampling seeds. Within each repeat, the same 25 mated identities and all
+  non-mated probes are retained; larger galleries add distractor identities.
+  Every configuration gets its own development-only threshold. Reported
+  ranges describe these three repeats, not independent confidence intervals.
+- **Classifier features:** similarity only, similarity plus top-two margin,
+  and the full feature set. Training/calibration identity groups, complete
+  feature rows and hyperparameters are held fixed. All variants are frozen
+  before test predictions are evaluated.
+- **Error analysis:** detector confidence, face-area ratio, image resolution
+  and a blur proxy, using development-defined bins. Failures and missing
+  measurements are retained. These observational strata do not establish
+  causal effects of pose, lighting or image quality.
+- **Crossed components:** paired bootstrap differences for all four detector/
+  recogniser combinations, including all intended probes and a common-success
+  subset, plus a detector-by-recogniser interaction contrast. Independent
+  interval overlap is not used as a significance test.
+
+These extensions were designed after the benchmark test results were viewed;
+**they are exploratory, not independent confirmatory validation**. The
+BFW identity split remains fixed. Test results are not used to select thresholds.
+Intervals condition on fitted models, frozen policies and fixed galleries;
+they exclude population shift and training/calibration uncertainty.
+
+Zero false referrals can produce an empirical bootstrap interval of 0%–0%.
+That is not evidence of zero population risk. Supplementary zero-event bounds
+count independent identity clusters, not correlated images: the one-sided 95%
+upper bound is `1 - 0.05**(1/n)` for an identity having at least one false
+referral in its intended probe set. It is not a bound on conditional scored-probe
+FPIR. Classifier timing now measures actual single-query latency samples,
+including their p95, rather than labelling a batch mean as p95.
+
+Reports:
+[controlled diagnostics](results/aggregate/comparison_diagnostics/COMPARISON_DIAGNOSTICS_REPORT.md),
+[paired differences](results/aggregate/COMPARATIVE_STATISTICS_REPORT.md), and
+[research report](results/aggregate/RESEARCH_REPORT.md).
 
 ## Reproducibility and the canonical run
 

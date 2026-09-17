@@ -1,6 +1,6 @@
 {
   "artifact_type": "ml_review_confidence_intervals",
-  "created_at": "2026-09-10T08:03:01.127215+00:00",
+  "created_at": "2026-09-17T14:02:43.549767+00:00",
   "dataset_name": "BFW",
   "dataset_provenance": {
     "dataset_name": "BFW",
@@ -68,10 +68,27 @@
       "valid_replicates": 2000
     },
     "fpir": {
+      "bootstrap_degenerate_zero_events": true,
+      "interval_warning": "The empirical bootstrap cannot generate unobserved events; [0, 0] does not bound population FPIR. The supplementary one-sided bound concerns any false referral per independent identity, not scored-probe FPIR.",
       "lower_95": 0.0,
       "requested_replicates": 2000,
       "upper_95": 0.0,
-      "valid_replicates": 2000
+      "valid_replicates": 2000,
+      "zero_event_identity_bound": {
+        "conditional_scored_probe_fpir_upper": null,
+        "confidence_level": 0.95,
+        "dependence_model": "Independent, exchangeable identities under this fixed gallery and frozen policy; arbitrary dependence among images of one identity. Extraction failures remain unresolved and do not generate a referral.",
+        "equal_intended_probes_per_identity": true,
+        "estimand": "Probability that an identity has any false referral in its probe set",
+        "formula": "1 - (1 - confidence) ** (1 / independent_identities)",
+        "independent_identities": 200,
+        "intended_probe_false_referral_rate_upper": 0.014867039231272054,
+        "intended_probes": 3000,
+        "interpretation": "For an equal fixed number of intended probes per identity, the false referral rate per intended probe is no greater than the probability of any referral per identity. This implication does not bound FPIR conditional on successful extraction or establish deployment performance.",
+        "observed_false_referrals": 0,
+        "one_sided_upper": 0.014867039231272054,
+        "scored_probes": 2987
+      }
     },
     "mated_extraction_coverage": {
       "lower_95": 0.9968907869170984,
