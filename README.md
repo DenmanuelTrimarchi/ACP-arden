@@ -10,10 +10,16 @@ Everything lives in one executable Python file, [ACP_arden.py](ACP_arden.py).
 
 ## Research question
 
-> To what extent can gallery-specific threshold calibration and multi-image
-> profile enrolment reduce false duplicate-profile reviews while retaining
-> duplicate-detection performance in an open-set face-verification proof of
-> concept evaluated on real public benchmark datasets?
+**Contribution.** A deployment oriented evaluation methodology for duplicate
+face detection, which counts unprocessed images, human review workload and
+computational cost when comparing detector and recogniser pipelines. The
+novelty is the evaluation, not a new model.
+
+> How effectively can pretrained face models screen new profile photographs
+> for duplicate identities under a human review policy, once unprocessed
+> photographs are counted, and which combination of detector and recogniser
+> best balances duplicates detected, moderator workload and computational
+> cost?
 
 Experiments 1–5 form the **baseline study**, using the official ten-fold LFW
 protocol to investigate:
