@@ -346,6 +346,40 @@ Date: 2025
 Availability: https://docs.python.org/3/library/hmac.html
 ```
 
+## Literature positioning for the dissertation
+
+The [report-writing guide](REPORT_WRITING_GUIDE.md#1-academic-contribution-and-relationship-to-previous-research)
+distinguishes this project's empirical contribution from existing methods.
+Attribution of original project code above is not evidence that an evaluation
+concept is new to the literature.
+
+The guide uses Huang et al. (2007) for verification protocol context, Zheng and
+Deng (2018) for cross-pose verification, Deng et al. (2019) for ArcFace, and
+Robinson et al. (2020) for BFW subgroup verification and threshold analysis.
+It also acknowledges that NIST already reports identification errors,
+human-review scenarios and resource costs:
+
+- NIST, *Face Recognition Technology Evaluation (FRTE), 1:N Identification*,
+  [evaluation definitions and resources](https://pages.nist.gov/frvt/html/frvt1N.html).
+- Robinson, J.P., Livitz, G., Henon, Y., Qin, C., Fu, Y. and Timoner, S. (2020),
+  *Face Recognition: Too Bias, or Not Too Bias?*, CVPR Workshops,
+  [primary paper](https://openaccess.thecvf.com/content_CVPRW_2020/papers/w1/Robinson_Face_Recognition_Too_Bias_or_Not_Too_Bias_CVPRW_2020_paper.pdf).
+- Huang, G.B., Ramesh, M., Berg, T. and Learned-Miller, E. (2007),
+  *Labeled Faces in the Wild: A Database for Studying Face Recognition in
+  Unconstrained Environments*, Technical Report 07-49,
+  [author-hosted copy](https://people.cs.umass.edu/~elm/papers/lfw.pdf).
+- Zheng, T. and Deng, W. (2018), *Cross-Pose LFW: A Database for Studying
+  Cross-Pose Face Recognition in Unconstrained Environments*,
+  [author-hosted paper](https://www.whdeng.cn/CPLFW/Cross-Pose-LFW.pdf).
+- Deng, J., Guo, J., Xue, N. and Zafeiriou, S. (2019), *ArcFace: Additive
+  Angular Margin Loss for Deep Face Recognition*, CVPR, pp. 4690–4699,
+  [published paper](https://openaccess.thecvf.com/content_CVPR_2019/html/Deng_ArcFace_Additive_Angular_Margin_Loss_for_Deep_Face_Recognition_CVPR_2019_paper.html).
+
+Links checked 4 October 2026. These sources support methodological positioning;
+they do not supply any of the project's measured performance values. The
+comparison is a focused literature discussion, not a systematic review proving
+that no prior study used a similar combination of measures.
+
 ## A note on spelling
 
 Prose and comments throughout this project use British English. Cited titles

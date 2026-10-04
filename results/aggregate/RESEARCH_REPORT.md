@@ -4,6 +4,12 @@ Auto-generated from the published artefacts. Ordered to show what each layer was
 
 **Research objective.** Assess how detector and recogniser choice, enrolment images and threshold calibration affect duplicate detection, false-review burden, subgroup performance and computational cost. Controlled comparisons separate these factors where the protocol permits. The face networks remain pretrained and frozen; only the review classifier is trained here.
 
+**Academic contribution.** A reproducible empirical comparison of four configured detector–recogniser pipelines, combining processing coverage, review referrals, calibration transfer and computational cost. These are established evaluation concepts, not new metrics. The contribution is the controlled application and the resulting evidence about these combinations.
+
+[NIST FRTE](https://pages.nist.gov/frvt/html/frvt1N.html) already evaluates identification errors, human-review scenarios and resource use. [Robinson et al. (2020)](https://openaccess.thecvf.com/content_CVPRW_2020/papers/w1/Robinson_Face_Recognition_Too_Bias_or_Not_Too_Bias_CVPRW_2020_paper.pdf) study BFW subgroup verification and threshold differences. This project applies those established concerns to its own identity-disjoint gallery protocol, crossed components and explicit failed-processing denominators. It does not claim that deployment-oriented evaluation was absent from prior work.
+
+See the [report-writing guide](../../REPORT_WRITING_GUIDE.md) for the requirement-to-evidence map, literature positioning and limits on interpretation.
+
 ## 1. LFW 1:1 verification
 
 LFW mean fold accuracy 99.28%, pooled FMR 0.33%, FNMR 1.11%, EER 0.78%, extraction failure 10.02%. This is a 1:1 pair task and its FMR is not comparable with the 1:N FPIR figures below. The official ten-fold protocol fits a threshold using the other nine folds for each held-out fold; the separate development-frozen transfer threshold is not used here.
@@ -137,7 +143,43 @@ An interval containing zero does not establish equivalence or absence of a contr
 
 ## 11. Performance against cost
 
-A stronger pipeline is not free. Where it improves extraction and identification it also costs disk and latency, and the trade-off is shown in `implementation_layers_performance_latency` rather than omitted.
+The following summary reads the saved measurements. Mixed-pipeline times are estimates assembled from measured stages, not direct timings. Storage covers weight files only; gallery templates, runtime memory and reviewer minutes were not measured. Scaling examples assume the same benchmark rates and sequential processing on the measured machine, not observed deployment throughput or total moderation demand.
+
+```text
+WHAT EACH COMBINATION COSTS AND WHAT IT BUYS
+
+  Combination      End to end detection (95% CI)  False reviews per 1,000 (95% CI)  Detection and embedding, ms  Model storage, MB
+  ---------------  -----------------------------  --------------------------------  ---------------------------  -----------------
+  YuNet + SFace    87.20% (84.30 to 90.00)        5.25 (1.77 to 9.11)               20.79                        37.1
+  SCRFD + SFace    94.90% (93.30 to 96.30)        6.36 (2.68 to 11.04)              44.32 (estimated)            53.0
+  YuNet + ArcFace  91.60% (89.40 to 93.60)        1.75 (0.35 to 3.49)               55.68 (estimated)            166.5
+  SCRFD + ArcFace  96.70% (95.40 to 97.90)        1.34 (0.00 to 3.69)               79.21                        182.4
+
+End to end detection counts every intended known duplicate, including
+photographs that could not be processed. False reviews are counted per 1,000
+new profile photographs that were processed. Times are the mean detection plus
+the mean embedding per image from the pipeline comparison run. The two crossed
+combinations were not timed in that run, so their time adds one pipeline's
+detection to the other's embedding and is marked (estimated). Storage is the
+size of the two weight files. The saved MB fields use binary megabytes (MiB);
+gallery templates and runtime memory are not included.
+
+Starting from YuNet + SFace, swapping YuNet for SCRFD adds 23.52 ms per image
+and 15.9 MB of storage, and raises end to end detection from 87.20% to 94.90%.
+
+Swapping SFace for ArcFace adds 34.89 ms per image and 129.4 MB of storage,
+and cuts false reviews from 5.25 to 1.75 per 1,000 new profiles.
+
+YuNet + SFace is the cheapest combination and SCRFD + ArcFace detects the most
+duplicates. For 100,000 uploads, YuNet + SFace would need about 36 minutes of
+processing, and SCRFD + ArcFace about 2 hours 15 minutes. These use the
+complete time per image measured on the machine used for these runs, which
+also counts loading the photograph. For every 100,000 new profiles processed,
+SCRFD + ArcFace would raise roughly 390 fewer false reviews. Of every 1,000
+known duplicates, it would find about 95 more. Reviewer cost and the harm of a
+missed duplicate were not measured, so these figures cannot say which
+combination is worth its cost.
+```
 
 ## 11a. Additional controlled diagnostics
 
@@ -164,4 +206,87 @@ No face-detection or face-recognition network is trained or fine-tuned. Experime
 - Confidence intervals describe sampling uncertainty over these benchmark identities only. They do not extend to any other population.
 - Benchmark demographics do not represent any real deployed user population, so subgroup figures must not be read as deployment estimates.
 - The review classifier was fitted separately on each pipeline and moved the review burden in opposite directions on the two. Its contribution therefore depends on the components underneath it, and neither result should be read as a general property of the method.
-- Coverage differences between the two detectors are shaped by this protocol's requirement that exactly one face be found. A detector that recovers faint faces also recovers bystanders, so a coverage loss is not on its own evidence of weaker detection.
+- Coverage differences between the two detectors are shaped by this protocol's requirement that exactly one face be found. Extra detections may be bystanders or false positives; they were not manually annotated. A coverage loss is not on its own evidence of weaker detection.
+
+### Dataset scope
+
+LFW was collected from news photographs of public figures. CPLFW keeps the LFW
+identities, so both verification datasets share one population. BFW also shows
+public figures, and its gallery search split was designed by this project
+rather than published with the dataset. None of the datasets was validated
+here as representative of dating uploads, including selfies, filters, group
+photographs and edited images. Some identities may appear in the web
+collections used to train the pretrained models, which could make the results
+look better than they would be for unseen people.
+
+The gallery holds only 200 identities, so a service with many more profiles
+would offer more chances of a false match.
+
+So these results show how the combinations compare under the same conditions.
+They cannot show how any combination would perform on a real dating service.
+
+## 13. Threshold calibration and validation
+
+```text
+HOW EVERY THRESHOLD WAS CALIBRATED AND VALIDATED
+
+Each combination has its own threshold, because SFace and ArcFace give
+similarity scores on different scales. Every threshold was fitted on
+development data, frozen, and only then applied to test data. No threshold is
+shared between combinations or between tasks, with one deliberate exception:
+BFW layers 1 and 2 and the LFW gallery reuse the YuNet + SFace one to one
+threshold as a control, to show why a borrowed threshold fails.
+
+  Task and dataset                        Calibration data                                   Selection rule                                 Validation data               Frozen threshold
+  --------------------------------------  -------------------------------------------------  ---------------------------------------------  ----------------------------  ----------------------------------
+  LFW one to one, YuNet + SFace           9 folds of LFW pairs.txt                           highest accuracy on those 9 folds              each held out fold in turn    0.318371 to 0.335979 over 10 folds
+  LFW one to one, SCRFD + ArcFace         9 folds of LFW pairs.txt                           highest accuracy on those 9 folds              each held out fold in turn    0.272602 to 0.274292 over 10 folds
+  CPLFW one to one, YuNet + SFace         LFW pairsDevTrain.txt                              highest balanced accuracy on pairsDevTest.txt  CPLFW pairs_CPLFW.txt         0.363012
+  CPLFW one to one, SCRFD + ArcFace       LFW pairsDevTrain.txt                              highest balanced accuracy on pairsDevTest.txt  CPLFW pairs_CPLFW.txt         0.329049
+  BFW gallery search, YuNet + SFace       BFW development identities                         highest detection with FPIR at most 0.30%      BFW held out test identities  0.477118
+  BFW gallery search, SCRFD + SFace       BFW development identities                         highest detection with FPIR at most 0.30%      BFW held out test identities  0.471432
+  BFW gallery search, YuNet + ArcFace     BFW development identities                         highest detection with FPIR at most 0.30%      BFW held out test identities  0.391290
+  BFW gallery search, SCRFD + ArcFace     BFW development identities                         highest detection with FPIR at most 0.30%      BFW held out test identities  0.393958
+  BFW review classifier, YuNet + SFace    BFW development identities kept back from fitting  highest detection with FPIR at most 0.30%      BFW held out test identities  0.571467 (probability)
+  BFW review classifier, SCRFD + ArcFace  BFW development identities kept back from fitting  highest detection with FPIR at most 0.30%      BFW held out test identities  0.845732 (probability)
+
+Development FPIR against test FPIR: YuNet + SFace 0.28% against 0.52%;
+SCRFD + SFace 0.27% against 0.64%; YuNet + ArcFace 0.10% against 0.17%;
+SCRFD + ArcFace 0.13% against 0.13%.
+
+Test FPIR rose above the 0.30% development target for YuNet + SFace and
+SCRFD + SFace. The target guides the choice of threshold, but it does not
+guarantee the rate on new identities.
+```
+
+## 14. Detector settings and failure interpretation
+
+```text
+HOW DETECTOR SETTINGS SHAPE THE FAILURES
+
+  Detector  Confidence threshold  Input size                  Dominant failure and counts
+  --------  --------------------  --------------------------  ----------------------------------------------------------------------
+  YuNet     0.9                   each photograph's own size  zero faces: CPLFW 2,321 pairs, BFW 189 photographs
+  SCRFD     0.5                   320 by 320 pixels           multiple faces: LFW 1,794 pairs, CPLFW 1,008 pairs, BFW 12 photographs
+
+On LFW, YuNet lost 540 pairs to multiple faces and SCRFD lost 1,794. On CPLFW,
+YuNet lost 2,321 pairs to zero faces and SCRFD lost 57.
+
+The one face rule directly explains why zero or multiple detections produce no
+comparison. Within a fixed detector, changing the confidence cutoff changes
+which candidates can pass; lowering it can admit both difficult faces and
+unwanted detections. YuNet and SCRFD scores are not calibrated on a common
+scale, so 0.9 versus 0.5 alone cannot explain their different failure counts.
+SCRFD resizes while preserving aspect ratio and pads to a 320 by 320 pixel
+canvas. The extra LFW detections were not checked by hand, so they may be
+background faces or false detections.
+
+These are observed outcomes of complete configurations. No controlled
+confidence or input size sweep was published, so the separate effects of those
+settings are not established. The crossed experiments compare configured
+components, including alignment and separately calibrated recognition
+thresholds. A causal settings study would vary one setting within each
+detector on fixed development images, record zero, one and multiple
+detections, annotate extra detections, freeze the configuration and evaluate
+it on new held out identities.
+```

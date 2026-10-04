@@ -66,7 +66,7 @@ def test_processing_coverage_reads_saved_values_and_handles_missing_files(tmp_pa
         assert "profile missing 1" in row and "zero faces 1" in row
         assert "TPIR@1 75.00%; FPIR 20.00% 50.00% detected" in row
     flat = " ".join(text.split())
-    assert "missed 1 faces" in flat and "pixels first and missed 1." in flat
+    assert "missed 1 faces" in flat and "pixel canvas first and missed 1." in flat
     assert "BFW search photos are 4 known duplicates and 6 new profiles" in flat
     assert "most YuNet failures were zero-face detections" not in flat
     assert {name: (tmp_path / name).read_bytes() for name in files} == before

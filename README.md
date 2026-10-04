@@ -13,7 +13,17 @@ Everything lives in one executable Python file, [ACP_arden.py](ACP_arden.py).
 **Contribution.** A deployment oriented evaluation methodology for duplicate
 face detection, which counts unprocessed images, human review workload and
 computational cost when comparing detector and recogniser pipelines. The
-novelty is the evaluation, not a new model.
+contribution is the reproducible empirical comparison; no new model or metric
+is claimed. Established identification evaluation already considers errors and
+resource use. This project adds evidence from four configured pipeline
+combinations, explicit processing-failure accounting, threshold transfer and
+review-referral trade-offs under one reproducible gallery protocol.
+
+The [report-writing guide](REPORT_WRITING_GUIDE.md) maps every supervisor
+requirement to the evidence, compares the contribution with prior research and
+provides a bounded conclusion for the dissertation. The generated
+[research report](results/aggregate/RESEARCH_REPORT.md) includes the calibration,
+dataset, cost and detector discussions alongside the results.
 
 > How effectively can pretrained face models screen new profile photographs
 > for duplicate identities under a human review policy, once unprocessed
@@ -579,12 +589,14 @@ not used, because it resolves models through a cache directory and fetches the
 pack over the network when that directory is empty — which would both download
 automatically and evaluate files other than the pinned ones.
 
-One preprocessing note: SCRFD rescales input to a fixed square, and InsightFace's
-default of 640 detects nothing on BFW's ~100-pixel crops. The input size is
-pinned to 320; the detection threshold stays at the published default, so
-coverage is not inflated by lowering the decision bar.
+SCRFD resizes while preserving aspect ratio and pads to a 320 × 320 canvas,
+with a detection threshold of 0.5. YuNet uses each image's own dimensions and
+a threshold of 0.9. These scores are not calibrated on a common scale.
+The published results do not include a controlled 320-versus-640 comparison
+or a detector-threshold sweep; they support the evaluated configurations,
+without establishing the separate causal effects of those settings.
 
-#### Held-out outcome — extraction, not ranking
+#### Held-out outcome — coverage, recognition and cost
 
 Status **`evaluated_non_commercial_academic_research`**. Both pipelines were evaluated on the held-out identities under thresholds frozen using development data. The evaluation was repeated only to test computational reproducibility; no repeated held-out result influenced model selection, threshold selection or reported policy. Each pipeline
 was evaluated under its own frozen development threshold:
@@ -597,15 +609,26 @@ was evaluated under its own frozen development threshold:
 | False reviews / 1,000 | 5.25 | **1.34** |
 | End-to-end detection | 87.20% | **96.70%** |
 | Gallery coverage | 99.00% | **100.00%** |
-| Complete-pipeline latency | **22.0 ms** | 96.0 ms |
+| Complete-pipeline latency, mean | **21.72 ms** | 80.73 ms |
+| Detector + recogniser weight files, approximately | **37.1 MiB** | 182.4 MiB |
 
-**The difference is extraction, not ranking.** YuNet failed to detect a face in
-189 images; SCRFD failed in
-2. CMC rank-1 is near-identical
-(98.09% against 98.40%), so both
-models rank about equally well *given* an embedding. ArcFace's advantage comes
-overwhelmingly from succeeding on BFW's small, awkward crops — bought with
-roughly 4.4× the per-image cost and five times the disk.
+**Both configured components contribute.** Holding SFace fixed, replacing
+YuNet with SCRFD raises end-to-end detection by 7.70 percentage points
+(paired 95% CI 5.80–9.90). Holding YuNet fixed, replacing SFace with ArcFace
+raises it by 4.40 points (2.80–6.20). These effects are not additive: the
+detector-by-recogniser interaction is −2.60 points (−3.90 to −1.50).
+The [paired report](results/aggregate/COMPARATIVE_STATISTICS_REPORT.md)
+conditions on frozen policies and fixed galleries and labels these intervals
+exploratory. Recognition thresholds and alignment belong to the configured
+components, so these contrasts do not isolate network architecture alone.
+
+YuNet produced 189 zero-face failures on BFW, versus 2 for SCRFD. Similar
+conditional CMC rank-1 values (98.09% and 98.40%) describe different surviving
+subsets and do not establish equivalence. The complete SCRFD + ArcFace pipeline
+costs approximately 3.72 times the per-image processing time and 4.92 times the
+weight-file storage of YuNet + SFace in the saved comparison. The source
+artefacts label binary megabytes as MB; MiB above makes the 1,048,576-byte unit
+explicit. Storage excludes gallery templates and runtime memory.
 
 It also fails differently: 12
 multiple-face detections where YuNet had

@@ -1642,16 +1642,19 @@ def test_the_canonical_cache_round_trips_without_storing_embeddings(partition: s
 def test_the_readme_reports_the_experiment_eight_outcome() -> None:
     """The README described the comparison's setup but not its result, which
     invites the reader to infer one. It must state the outcome and the
-    mechanism behind it."""
+    evidence behind it without attributing the gain to extraction alone."""
     metrics = _AGG / "pipeline_comparison_metrics.json"
     if not metrics.is_file() or json.loads(metrics.read_text())["evaluated"] != "yes":
         pytest.skip("comparison not evaluated")
     readme = _project_file("README.md")
     assert "evaluated_non_commercial_academic_research" in readme
-    assert "extraction, not ranking" in readme
+    assert "Both configured components contribute" in readme
     # The stronger pipeline's cost must be stated, not just its benefit.
     assert "Complete-pipeline latency" in readme
     payload = json.loads(metrics.read_text())["held_out_metrics"]
+    for pipeline in payload.values():
+        latency = pipeline["coverage"]["complete_pipeline_latency_mean_ms"]
+        assert f"{latency:.2f} ms" in readme
     arcface = payload["insightface-scrfd-arcface-buffalo_l"]["rates"]
     assert f"{arcface['fpir'] * 100:.2f}%" in readme
 

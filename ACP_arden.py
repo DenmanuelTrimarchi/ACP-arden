@@ -20,7 +20,8 @@ that may already be registered?
 The contribution is a deployment oriented evaluation methodology for duplicate
 face detection, which counts unprocessed images, human review workload and
 computational cost when comparing detector and recogniser pipelines. The
-novelty is the evaluation, not a new model.
+contribution is the reproducible empirical comparison; no new model or metric
+is claimed. The report-writing guide positions this contribution against prior work.
 
 The research question is:
 
@@ -6993,12 +6994,10 @@ class PipelineComparisonError(RuntimeError):
     """Raised when a comparison would be recorded without real held-out metrics."""
 
 
-# SCRFD rescales the input to a fixed square before detection. InsightFace
-# defaults to 640, which detects nothing on BFW's face crops: their longest
-# side is around one hundred pixels, so a 640 canvas leaves the face far below
-# the smallest anchor. A 320 canvas detects reliably. This is a preprocessing
-# scale, not a decision threshold; the detection threshold stays at the
-# published default so coverage is not inflated by lowering the bar.
+# SCRFD preserves aspect ratio while resizing into a square, padded canvas.
+# The evaluated configuration uses 320 pixels and a 0.5 detection threshold.
+# No published controlled 320-versus-640 experiment isolates the scale effect;
+# the saved outcomes support this configuration only, not a causal size claim.
 ARCFACE_DETECTION_INPUT_SIZE = 320
 ARCFACE_DETECTION_THRESHOLD = 0.5
 
@@ -11491,6 +11490,23 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "separate these factors where the protocol permits. The face networks remain "
         "pretrained and frozen; only the review classifier is trained here.",
         "",
+        "**Academic contribution.** A reproducible empirical comparison of four "
+        "configured detector–recogniser pipelines, combining processing coverage, "
+        "review referrals, calibration transfer and computational cost. These are "
+        "established evaluation concepts, not new metrics. The contribution is the "
+        "controlled application and the resulting evidence about these combinations.",
+        "",
+        "[NIST FRTE](https://pages.nist.gov/frvt/html/frvt1N.html) already evaluates "
+        "identification errors, human-review scenarios and resource use. "
+        "[Robinson et al. (2020)](https://openaccess.thecvf.com/content_CVPRW_2020/papers/w1/Robinson_Face_Recognition_Too_Bias_or_Not_Too_Bias_CVPRW_2020_paper.pdf) "
+        "study BFW subgroup verification and threshold differences. This project "
+        "applies those established concerns to its own identity-disjoint gallery "
+        "protocol, crossed components and explicit failed-processing denominators. "
+        "It does not claim that deployment-oriented evaluation was absent from prior work.",
+        "",
+        "See the [report-writing guide](../../REPORT_WRITING_GUIDE.md) for the "
+        "requirement-to-evidence map, literature positioning and limits on interpretation.",
+        "",
         "## 1. LFW 1:1 verification",
         "",
     ]
@@ -11794,9 +11810,13 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 
         lines += [
             "", "## 11. Performance against cost", "",
-            "A stronger pipeline is not free. Where it improves extraction and "
-            "identification it also costs disk and latency, and the trade-off is shown in "
-            "`implementation_layers_performance_latency` rather than omitted.",
+            "The following summary reads the saved measurements. Mixed-pipeline "
+            "times are estimates assembled from measured stages, not direct timings. "
+            "Storage covers weight files only; gallery templates, runtime memory "
+            "and reviewer minutes were not measured. Scaling examples assume the "
+            "same benchmark rates and sequential processing on the measured machine, "
+            "not observed deployment throughput or total moderation demand.",
+            "", "```text", render_cost_and_workload_part(aggregate_root), "```",
         ]
 
     diagnostics_path = aggregate_root / "comparison_diagnostics" / "comparison_diagnostics.json"
@@ -11840,9 +11860,15 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "depends on the components underneath it, and neither result should be read as "
         "a general property of the method.",
         "- Coverage differences between the two detectors are shaped by this protocol's "
-        "requirement that exactly one face be found. A detector that recovers faint "
-        "faces also recovers bystanders, so a coverage loss is not on its own evidence "
-        "of weaker detection.",
+        "requirement that exactly one face be found. Extra detections may be "
+        "bystanders or false positives; they were not manually annotated. A coverage "
+        "loss is not on its own evidence of weaker detection.",
+        "", "### Dataset scope", "",
+        render_dataset_limits_part(aggregate_root).split("\n\n", 1)[1],
+        "", "## 13. Threshold calibration and validation", "",
+        "```text", render_threshold_validation_part(aggregate_root), "```",
+        "", "## 14. Detector settings and failure interpretation", "",
+        "```text", render_detector_settings_part(aggregate_root), "```",
     ]
     return "\n".join(lines) + "\n"
 
@@ -13940,10 +13966,13 @@ def render_processing_coverage_explanation(aggregate_root: Path = AGGREGATE_ROOT
             f"people in the background or false detections; nobody checked them by hand. "
             f"{cplfw_note} On BFW, where the images are small face crops, YuNet works at "
             f"each photograph's own size and missed {missed_yunet} faces, while SCRFD "
-            f"resizes every image to {ARCFACE_DETECTION_INPUT_SIZE} by "
-            f"{ARCFACE_DETECTION_INPUT_SIZE} pixels first and missed {missed_scrfd}. "
-            "So these results come partly from the settings and the one-face rule, "
-            "not only from the models."
+            f"resizes with aspect ratio preserved and pads to a "
+            f"{ARCFACE_DETECTION_INPUT_SIZE} by {ARCFACE_DETECTION_INPUT_SIZE} pixel "
+            f"canvas first and missed {missed_scrfd}. "
+            "The one-face rule directly determines whether those detections are "
+            "accepted. The effects of confidence threshold and input size were not "
+            "isolated experimentally, and the two detectors' scores are not calibrated "
+            "on a common scale."
         ),
         render_plain_pipeline_table(
             ["Dataset and experiment", "Pipeline", "Intended", "Processed",
@@ -13974,8 +14003,8 @@ def render_processing_coverage_explanation(aggregate_root: Path = AGGREGATE_ROOT
 DEPLOYMENT_CONTRIBUTION = (
     "A deployment oriented evaluation methodology for duplicate face detection, "
     "which counts unprocessed images, human review workload and computational "
-    "cost when comparing detector and recogniser pipelines. The novelty is the "
-    "evaluation, not a new model."
+    "cost when comparing detector and recogniser pipelines. The contribution is "
+    "the reproducible empirical comparison; no new model or metric is claimed."
 )
 
 DEPLOYMENT_RESEARCH_QUESTION = (
@@ -14001,7 +14030,9 @@ DEPLOYMENT_SCALE_UPLOADS = 100_000
 STATISTICAL_SUPPORT_CAVEAT = (
     "These intervals are exploratory and are not adjusted for making several "
     "comparisons. A zero event interval, from a run with no false reviews, "
-    "cannot bound the population FPIR."
+    "cannot bound the population FPIR. They condition on fitted models, frozen "
+    "thresholds and fixed galleries, excluding fitting, calibration, gallery "
+    "selection and population shift uncertainty."
 )
 
 
@@ -14324,12 +14355,13 @@ def render_dataset_limits_part(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             "the LFW identities, so both verification datasets share one population. "
             "BFW also shows public figures, and its gallery search split was designed "
             "by this project rather than published with the dataset. None of the "
-            "datasets contains typical dating uploads, such as selfies, filtered "
-            "images, group photographs or edited images. Some identities may appear in "
+            "datasets was validated here as representative of dating uploads, including "
+            "selfies, filters, group photographs and edited images. Some identities "
+            "may appear in "
             "the web collections used to train the pretrained models, which could make "
-            "the results look better than they would be for unseen people. "
-            + gallery_sentence
+            "the results look better than they would be for unseen people."
         ),
+        _wrap_keeping_names(gallery_sentence),
         _wrap_keeping_names(
             "So these results show how the combinations compare under the same "
             "conditions. They cannot show how any combination would perform on a real "
@@ -14506,7 +14538,9 @@ def render_cost_and_workload_part(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             "detection plus the mean embedding per image from the pipeline comparison "
             "run. The two crossed combinations were not timed in that run, so their "
             "time adds one pipeline's detection to the other's embedding and is marked "
-            "(estimated). Storage is the size of the two weight files."
+            "(estimated). Storage is the size of the two weight files. The saved MB "
+            "fields use binary megabytes (MiB); gallery templates and runtime memory "
+            "are not included."
         ),
         _wrap_keeping_names(detector_sentence),
         _wrap_keeping_names(recogniser_sentence),
@@ -14597,15 +14631,25 @@ def render_detector_settings_part(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             f"faces and SCRFD lost {count('SCRFD', 'CPLFW', 'zero faces')}."
         ),
         _wrap_keeping_names(
-            f"A higher confidence threshold rejects weak candidates. YuNet, at "
-            f"{DETECTOR_SCORE_THRESHOLD:g}, therefore returns a second face less often than "
-            "SCRFD, but more often returns none when a face is turned or small. A lower "
-            "threshold finds difficult faces, but it also accepts faint faces in the "
-            "background, which the one face rule then rejects. SCRFD, at "
-            f"{ARCFACE_DETECTION_THRESHOLD:g}, also enlarges small images to "
-            f"{ARCFACE_DETECTION_INPUT_SIZE} by {ARCFACE_DETECTION_INPUT_SIZE} pixels "
-            "before searching them. The extra LFW detections from SCRFD were not checked "
-            "by hand, so they may be real people in the background or false detections."
+            "The one face rule directly explains why zero or multiple detections "
+            "produce no comparison. Within a fixed detector, changing the confidence "
+            "cutoff changes which candidates can pass; lowering it can admit both "
+            "difficult faces and unwanted detections. YuNet and SCRFD scores are not "
+            "calibrated on a common scale, so 0.9 versus 0.5 alone cannot explain "
+            "their different failure counts. SCRFD resizes while preserving aspect "
+            f"ratio and pads to a {ARCFACE_DETECTION_INPUT_SIZE} by "
+            f"{ARCFACE_DETECTION_INPUT_SIZE} pixel canvas. The extra LFW detections "
+            "were not checked by hand, so they may be background faces or false detections."
+        ),
+        _wrap_keeping_names(
+            "These are observed outcomes of complete configurations. No controlled "
+            "confidence or input size sweep was published, so the separate effects "
+            "of those settings are not established. The crossed experiments compare "
+            "configured components, including alignment and separately calibrated "
+            "recognition thresholds. A causal settings study would vary one setting "
+            "within each detector on fixed development images, record zero, one and "
+            "multiple detections, annotate extra detections, freeze the configuration "
+            "and evaluate it on new held out identities."
         ),
     ])
 
