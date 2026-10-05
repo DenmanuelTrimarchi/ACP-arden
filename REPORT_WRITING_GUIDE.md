@@ -1,8 +1,8 @@
 # Report evidence and response to supervisor feedback
 
 This guide addresses the feedback dated 29 September 2026. It interprets the
-saved evaluation artefacts from 3 October 2026; the reporting revision does not
-introduce new experimental measurements. Use the generated
+saved main evaluation artefacts from 3 October 2026 and the additional controlled
+detector-settings experiment completed on 5 October 2026. Use the generated
 [research report](results/aggregate/RESEARCH_REPORT.md) for results and the
 [reference register](REFERENCES.md) for component attribution.
 
@@ -127,11 +127,36 @@ Pair counts and probe-image counts are different denominators; do not pool
 them. A failed pair receives the first terminal error in left-to-right
 processing, not a count of every defective image in the pair.
 
-Input scaling and confidence filtering are plausible contributors, but the
-published experiments do not isolate their effects. Extra detections were not
-annotated, so they cannot be called confirmed bystanders or confirmed false
-positives. The earlier assertion that a 640-pixel setting detects nothing is
-not supported by a published controlled comparison and has been removed.
+The [controlled detector-settings study](results/aggregate/detector_settings/DETECTOR_SETTINGS_REPORT.md)
+now tests the effects of confidence and input canvas within each detector on
+identical images, holding weights, NMS and the exactly-one-face rule fixed.
+It evaluates 14 preset configurations across four cohorts, each containing
+256 images from 128 identities: LFW development, raw CPLFW, BFW development
+and BFW test. BFW development and test identities are disjoint. Settings and
+cohort fingerprints were saved before measurement; no configuration was selected
+to replace the main pipeline. Independent detector instances with identical
+baseline settings provide repeat controls.
+
+The interventions show why the processing trade-off depends on the images:
+
+- On LFW development images, lowering YuNet confidence from 0.9 to 0.8 increased
+  multiple detections from 14 to 37 and reduced one-face coverage by 8.98
+  percentage points (95% CI −12.89 to −5.47).
+- On raw CPLFW images, the same confidence change reduced zero detections from
+  70 to 9 and increased one-face coverage by 21.48 points (15.62–26.95).
+- On the BFW test cohort, changing SCRFD's canvas from 320 to 640 pixels reduced
+  one-face coverage from 256/256 to 14/256, a change of −94.53 points
+  (−97.27 to −91.80). This directly measures sensitivity to the canvas setting
+  on these images; it does not establish a universal disadvantage of 640 pixels.
+
+The study reports all preset variants, paired image transitions, unresolved
+images per 1,000 intended images, detector mean/p95 latency and 2,000-replicate
+paired identity-bootstrap intervals. Model bytes stay fixed within a detector.
+These are controlled processing outcomes, not recognition accuracy or false
+duplicate referrals. Extra detections remain unannotated, so they cannot be
+called confirmed bystanders or confirmed false positives. Intervals are
+exploratory and unadjusted, and the cohorts are samples rather than full pair
+protocols or a new deployment population.
 
 The crossed experiment supports comparisons of **configured components**:
 with SFace held fixed, replacing YuNet with SCRFD raises end-to-end detection
@@ -140,10 +165,11 @@ SFace with ArcFace raises it by 4.40 points (2.80–6.20). Alignment and separat
 calibrated recognition thresholds remain part of those configurations. The
 effects are not additive; the interaction is −2.60 points (−3.90 to −1.50).
 
-A causal settings study remains future work: vary one detector's confidence
-or canvas size at a time on fixed development images, record zero/one/multiple
-outcomes, manually annotate ambiguous detections, then freeze settings before
-evaluating new held-out identities. This is a proposed experiment, not a result.
+Future work concerns annotation and adoption: manually label ambiguous
+detections, choose any replacement setting using development data only, then
+recalibrate recognition and evaluate duplicate identification, false referrals
+and total computational cost on new held-out identities. Increased one-face
+coverage alone does not justify changing the main recognition pipeline.
 
 ## 6. Statistical support and report conclusion
 
@@ -176,7 +202,9 @@ indicated contributions from both configured detector and recogniser changes.
 The study demonstrates why conditional recognition accuracy alone is
 insufficient for selecting a duplicate-profile screening pipeline; it does
 not establish universal superiority, an economically optimal deployment,
-setting-specific causal effects, or proof of fraudulent activity.
+or proof of fraudulent activity. The separate controlled settings study
+establishes processing effects on fixed benchmark images; it does not establish
+that those settings improve duplicate identification in a deployment population.
 
 ## Requirement-to-evidence map
 
@@ -186,7 +214,7 @@ setting-specific causal effects, or proof of fraudulent activity.
 | Clarify threshold calibration and validation | Section 2; generated report section 13; saved threshold JSON | Development targets can be missed on test; transfer differs from recalibration. |
 | Discuss the three datasets' generalisability | Section 3; generated report dataset scope | No independent deployment-population validation. |
 | Analyse accuracy, latency and storage | Section 4; generated report section 11 | Estimated crossed timings, weight-only storage and referral-based workload. |
-| Explain detector failures in relation to settings | Section 5; generated report section 14 | Exact-one policy mechanism established; individual settings' causal effects untested. |
+| Explain detector failures in relation to settings | Section 5; generated report section 14; controlled detector-settings report | Within-detector processing interventions measured; extra detections unannotated and replacement recognition policies unvalidated. |
 | Support the conclusion with uncertainty | Section 6; paired statistical report | Exploratory paired intervals with stated conditioning and no multiplicity adjustment. |
 
 Primary-source links were checked on 4 October 2026. The linked FRTE page is

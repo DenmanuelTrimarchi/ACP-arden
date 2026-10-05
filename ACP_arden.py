@@ -6996,8 +6996,8 @@ class PipelineComparisonError(RuntimeError):
 
 # SCRFD preserves aspect ratio while resizing into a square, padded canvas.
 # The evaluated configuration uses 320 pixels and a 0.5 detection threshold.
-# No published controlled 320-versus-640 experiment isolates the scale effect;
-# the saved outcomes support this configuration only, not a causal size claim.
+# The separate detector-settings experiment tests scale interventions without
+# replacing this frozen configuration or recalibrating a main operating policy.
 ARCFACE_DETECTION_INPUT_SIZE = 320
 ARCFACE_DETECTION_THRESHOLD = 0.5
 
@@ -10686,6 +10686,464 @@ def render_comparison_diagnostics_summary(output_root: Path = AGGREGATE_ROOT) ->
 
 
 # =============================================================================
+# Controlled detector settings: separate from every recognition operating policy
+# =============================================================================
+
+DETECTOR_ABLATION_DIR = "detector_settings"
+DETECTOR_ABLATION_REVISION = "fixed-images-one-factor-v1"
+DETECTOR_ABLATION_SEED = 20261004
+DETECTOR_ABLATION_IDENTITIES = 128
+DETECTOR_ABLATION_IMAGES = 2
+DETECTOR_OUTCOMES = ("zero_faces", "one_face", "multiple_faces", "load_failure")
+
+
+@dataclass(frozen=True)
+class DetectorAblationSetting:
+    name: str
+    detector: str
+    confidence: float
+    canvas: Optional[int]
+    factor: str
+
+
+def detector_ablation_settings() -> List[DetectorAblationSetting]:
+    """Preset contrasts, never selected using recognition or detection results."""
+    settings = []
+    for detector, confidence, canvas, cutoffs, sizes in (
+        ("YuNet", 0.9, None, (0.7, 0.8, 0.95), (320, 640)),
+        ("SCRFD", 0.5, 320, (0.3, 0.7, 0.9), (160, 640)),
+    ):
+        settings.append(DetectorAblationSetting(f"{detector}_baseline", detector, confidence, canvas, "baseline"))
+        settings.extend(DetectorAblationSetting(f"{detector}_confidence_{v:g}", detector, v, canvas, "confidence") for v in cutoffs)
+        settings.extend(DetectorAblationSetting(f"{detector}_canvas_{v}", detector, confidence, v, "canvas") for v in sizes)
+        settings.append(DetectorAblationSetting(f"{detector}_repeat", detector, confidence, canvas, "repeat_control"))
+    return settings
+
+
+def validate_detector_ablation_settings(settings: Sequence[DetectorAblationSetting]) -> None:
+    if not settings:
+        raise ProtocolError("At least one baseline and its planned contrasts are required.")
+    if len({s.name for s in settings}) != len(settings):
+        raise ProtocolError("Detector sensitivity configuration names must be unique.")
+    for detector in {s.detector for s in settings}:
+        base = [s for s in settings if s.detector == detector and s.factor == "baseline"]
+        if len(base) != 1:
+            raise ProtocolError("Each detector needs exactly one baseline.")
+        for setting in (s for s in settings if s.detector == detector):
+            if not 0 < setting.confidence < 1 or (setting.canvas is not None and setting.canvas <= 0):
+                raise ProtocolError("Invalid detector sensitivity setting.")
+            changed = (setting.confidence != base[0].confidence, setting.canvas != base[0].canvas)
+            expected = {"baseline": (False, False), "repeat_control": (False, False),
+                        "confidence": (True, False), "canvas": (False, True)}
+            if setting.factor not in expected or changed != expected[setting.factor]:
+                raise ProtocolError("Sensitivity contrasts must change exactly their declared factor.")
+
+
+@dataclass(frozen=True)
+class DetectorAblationSample:
+    image_path: Path  # private; never serialised into a published artefact
+    identity: str
+    stratum: str
+
+
+def select_detector_ablation_cohort(
+    samples: Sequence[DetectorAblationSample], *, identities: int = DETECTOR_ABLATION_IDENTITIES,
+    images_per_identity: int = DETECTOR_ABLATION_IMAGES, seed: int = DETECTOR_ABLATION_SEED,
+) -> List[DetectorAblationSample]:
+    """Equal images per identity, balanced strata, outcome-independent selection."""
+    if identities < 2 or images_per_identity < 1:
+        raise ProtocolError("A sensitivity cohort needs at least two identities and one image each.")
+    grouped: Dict[str, Dict[Path, DetectorAblationSample]] = {}
+    strata: Dict[str, str] = {}
+    for sample in samples:
+        if strata.setdefault(sample.identity, sample.stratum) != sample.stratum:
+            raise ProtocolError("An identity crosses sensitivity strata.")
+        grouped.setdefault(sample.identity, {})[sample.image_path] = sample
+    buckets: Dict[str, List[str]] = {}
+    for identity, images in sorted(grouped.items()):
+        if len(images) >= images_per_identity:
+            buckets.setdefault(strata[identity], []).append(identity)
+    if sum(map(len, buckets.values())) < identities:
+        raise ProtocolError("Insufficient eligible identities for the preset sensitivity cohort.")
+    rng = random.Random(seed)
+    for names in buckets.values():
+        rng.shuffle(names)
+    ordered = [names[i] for i in range(max(map(len, buckets.values())))
+               for _, names in sorted(buckets.items()) if i < len(names)]
+    selected = []
+    for identity in ordered[:identities]:
+        images = sorted(grouped[identity].values(), key=lambda s: str(s.image_path))
+        random.Random(f"{seed}:{identity}").shuffle(images)
+        selected.extend(images[:images_per_identity])
+    rng.shuffle(selected)
+    return selected
+
+
+def detector_ablation_cohorts(config: EnvironmentConfig) -> Dict[str, List[DetectorAblationSample]]:
+    pools: Dict[str, List[DetectorAblationSample]] = {}
+    for name, pairs in (
+        ("LFW_development", parse_lfw_pairs(config.require_protocol_root() / LFW_DEVELOPMENT_PROTOCOL, config.require_lfw_root())),
+        ("CPLFW_raw", parse_cplfw_pairs(config.require_protocol_root() / CPLFW_PROTOCOL, config.require_cplfw_raw_root())),
+    ):
+        pools[name] = [DetectorAblationSample(path, identity, "all") for pair in pairs
+                       for path, identity in ((pair.left_path, pair.left_identity), (pair.right_path, pair.right_identity))]
+    dataset = load_bfw_dataset(*config.require_bfw_roots())
+    protocol = build_open_set_protocol(dataset)
+    for partition in ("development", "test"):
+        pools[f"BFW_{partition}"] = [DetectorAblationSample(e.image_path, e.identity, f"{e.subgroup}:{e.role}")
+                                    for e in protocol.partition(partition) if e.role != "gallery_enrolment"]
+    cohorts = {name: select_detector_ablation_cohort(samples) for name, samples in pools.items()}
+    if {s.identity for s in cohorts["BFW_development"]} & {s.identity for s in cohorts["BFW_test"]}:
+        raise ProtocolError("BFW sensitivity development and test identities overlap.")
+    return cohorts
+
+
+def detector_canvas(bgr: np.ndarray, size: int) -> np.ndarray:
+    """Aspect-preserving resize and bottom/right zero padding; no face selection."""
+    import cv2
+    height, width = bgr.shape[:2]
+    if size <= 0 or height <= 0 or width <= 0:
+        raise ValueError("Positive image and canvas dimensions are required.")
+    scale = size / max(height, width)
+    resized = cv2.resize(bgr, (max(1, int(width * scale)), max(1, int(height * scale))))
+    canvas = np.zeros((size, size, 3), dtype=bgr.dtype)
+    canvas[:resized.shape[0], :resized.shape[1]] = resized
+    return canvas
+
+
+def load_detector_ablation_counter(config: EnvironmentConfig, setting: DetectorAblationSetting) -> Callable[[np.ndarray], int]:
+    """Isolated detector instance; no baseline global or recognition model is changed."""
+    if setting.detector == "YuNet":
+        wrapper = YuNetDetector(config.require_model_root() / YUNET_FILENAME, YUNET_SHA256,
+                                DetectorSettings(score_threshold=setting.confidence))
+        def count_yunet(bgr: np.ndarray) -> int:
+            image = detector_canvas(bgr, setting.canvas) if setting.canvas is not None else bgr
+            wrapper._detector.setInputSize((image.shape[1], image.shape[0]))
+            _, faces = wrapper._detector.detect(image)
+            return 0 if faces is None else len(faces)
+        return count_yunet
+    if setting.detector != "SCRFD" or setting.canvas is None:
+        raise ProtocolError("Unknown detector or missing SCRFD canvas.")
+    description = arcface_pipeline_description(config)
+    root = cast(Path, config.arcface_model_root)
+    verify_model_file(root / ARCFACE_DETECTOR_FILENAME, description.model_sha256["detector"])
+    model = _quiet_scrfd_detector(root / ARCFACE_DETECTOR_FILENAME)
+    size = (setting.canvas, setting.canvas)
+    model.prepare(ctx_id=-1, input_size=size, det_thresh=setting.confidence, nms_thresh=0.4)
+    if tuple(model.input_size) != size or float(model.det_thresh) != setting.confidence:
+        raise ProtocolError("SCRFD did not apply the requested sensitivity settings.")
+    def count_scrfd(bgr: np.ndarray) -> int:
+        boxes, _ = model.detect(bgr, input_size=size, max_num=0, metric="default")
+        return 0 if boxes is None else len(boxes)
+    return count_scrfd
+
+
+def measure_detector_ablation_cohort(
+    samples: Sequence[DetectorAblationSample], counters: Mapping[str, Callable[[np.ndarray], int]],
+    *, seed: int = DETECTOR_ABLATION_SEED,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Same pixels for all treatments, randomised order, load failures retained."""
+    rows: Dict[str, List[Dict[str, Any]]] = {name: [] for name in counters}
+    rng = random.Random(seed)
+    for i, sample in enumerate(samples):
+        image = None
+        try:
+            image = load_image_bgr(sample.image_path).bgr
+        except ImageLoadError:
+            pass
+        order = list(counters)
+        rng.shuffle(order)
+        for name in order:
+            count, elapsed = None, None
+            if image is not None:
+                start = time.perf_counter()
+                count = counters[name](image)
+                elapsed = (time.perf_counter() - start) * 1000
+                if not isinstance(count, int) or count < 0:
+                    raise ProtocolError("A detector returned an invalid face count.")
+            outcome = ("load_failure" if count is None else "zero_faces" if count == 0
+                       else "one_face" if count == 1 else "multiple_faces")
+            rows[name].append({"sample_id": opaque_id(f"detector-ablation:{sample.image_path.name}:{sample.identity}"),
+                               "identity_hash": opaque_id(sample.identity), "stratum": sample.stratum,
+                               "outcome": outcome, "face_count": count, "detector_ms": elapsed})
+        if (i + 1) % 64 == 0:
+            announce(f"Detector sensitivity: {i + 1}/{len(samples)} images across {len(counters)} settings")
+    return rows
+
+
+def summarise_detector_ablation(
+    rows: Mapping[str, Sequence[Mapping[str, Any]]], settings: Sequence[DetectorAblationSetting],
+    *, replicates: int = BOOTSTRAP_REPLICATES, seed: int = DETECTOR_ABLATION_SEED,
+) -> Dict[str, Any]:
+    """Paired identity bootstrap; a failed decode remains an intended image."""
+    validate_detector_ablation_settings(settings)
+    if set(rows) != {s.name for s in settings} or replicates < 2:
+        raise ProtocolError("Every planned setting and at least two resamples are required.")
+    reference = list(rows[settings[0].name])
+    keys = [(r['sample_id'], r['identity_hash'], r['stratum']) for r in reference]
+    if not keys or len({k[0] for k in keys}) != len(keys):
+        raise ProtocolError("Sensitivity images must be nonempty and unique.")
+    identities = sorted({k[1] for k in keys})
+    positions = {identity: i for i, identity in enumerate(identities)}
+    strata: Dict[str, List[int]] = {}
+    for identity in identities:
+        groups = {r['stratum'] for r in reference if r['identity_hash'] == identity}
+        if len(groups) != 1:
+            raise ProtocolError("An identity crosses sensitivity strata.")
+        strata.setdefault(next(iter(groups)), []).append(positions[identity])
+    rng = np.random.default_rng(seed)
+    weights = np.zeros((replicates, len(identities)))
+    for members in strata.values():
+        weights[:, members] = rng.multinomial(len(members), [1/len(members)] * len(members), size=replicates)
+    intended = np.bincount([positions[r['identity_hash']] for r in reference], minlength=len(identities))
+    summaries, draws = {}, {}
+    for setting in settings:
+        values = list(rows[setting.name])
+        if [(r['sample_id'], r['identity_hash'], r['stratum']) for r in values] != keys:
+            raise ProtocolError("Every setting must score exactly the same ordered images and identities.")
+        if any(r['outcome'] not in DETECTOR_OUTCOMES for r in values):
+            raise ProtocolError("Unknown detector outcome.")
+        counts = {key: sum(r['outcome'] == key for r in values) for key in DETECTOR_OUTCOMES}
+        success = np.bincount([positions[r['identity_hash']] for r in values if r['outcome'] == 'one_face'], minlength=len(identities))
+        draws[setting.name] = (weights @ success) / (weights @ intended)
+        times = [float(r['detector_ms']) for r in values if r['detector_ms'] is not None]
+        summaries[setting.name] = {"setting": asdict(setting), "intended_images": len(values), "outcomes": counts,
+            "one_face_coverage": counts['one_face']/len(values),
+            "unprocessed_per_1000_intended": 1000*(len(values)-counts['one_face'])/len(values),
+            "detector_latency_mean_ms": statistics.fmean(times) if times else None,
+            "detector_latency_p95_ms": percentile(times, 95) if times else None,
+            "timed_images": len(times)}
+    comparisons = []
+    for setting in settings:
+        if setting.factor == 'baseline':
+            continue
+        baseline = next(s for s in settings if s.detector == setting.detector and s.factor == 'baseline')
+        difference = draws[setting.name] - draws[baseline.name]
+        low, high = np.percentile(difference, [2.5, 97.5])
+        transitions = {f"{before}->{after}": sum(a['outcome'] == before and b['outcome'] == after
+                                               for a, b in zip(rows[baseline.name], rows[setting.name]))
+                       for before in DETECTOR_OUTCOMES for after in DETECTOR_OUTCOMES}
+        comparisons.append({"baseline": baseline.name, "variant": setting.name, "factor": setting.factor,
+            "coverage_change": summaries[setting.name]['one_face_coverage']-summaries[baseline.name]['one_face_coverage'],
+            "lower_95": float(low), "upper_95": float(high), "transitions": transitions,
+            "changed_outcomes": sum(v for key, v in transitions.items() if len(set(key.split('->'))) > 1)})
+    return {"intended_images": len(reference), "independent_identities": len(identities),
+            "replicates": replicates, "settings": summaries, "paired_comparisons": comparisons}
+
+
+def render_detector_ablation_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    path = Path(aggregate_root) / DETECTOR_ABLATION_DIR / "detector_settings_metrics.json"
+    if not path.is_file():
+        return "Controlled detector settings have not been evaluated. Run --mode detector-settings.\n"
+    payload = read_json_artifact(path)
+    lines = ["# Controlled detector-settings sensitivity", "",
+        "Preset settings were compared on identical image cohorts, changing confidence or input canvas within one detector at a time. "
+        "Weights, NMS and the exactly-one-face rule were held fixed. Each configuration used its own detector instance; "
+        "execution order was randomised per image. Identical-setting repeat controls quantify observed run variation. "
+        "The plan and cohort fingerprints were saved before detector evaluation; all planned settings are reported, with no winner selected.", "",
+        "This is an exploratory intervention on benchmark processing, designed after the original results were inspected. "
+        "BFW development/test cohorts are identity-disjoint; these are existing benchmark partitions, not new independent confirmation. "
+        "LFW and CPLFW are not independent populations. Cohorts sample identities with at least two eligible images; "
+        "they are not the full pair protocols or representative deployment samples.", "",
+        "**Denominators:** every intended image, including decode failures. One detected face means eligibility for recognition, "
+        "not correct identity or successful embedding. Unprocessed images per 1,000 are unresolved workload, not false duplicate referrals. "
+        "Review time and the correctness of extra detections were not annotated. No recognition threshold, main model or gallery was changed.", "",
+        "**Cost:** warm wall-clock detection calls, including resizing, inference and NMS, excluding decoding, recognition and gallery search. "
+        "Model bytes are identical across settings of one detector. Times describe this run and machine; they are not a latency confidence interval.", "",
+        f"**Uncertainty:** {payload['bootstrap_replicates']} paired percentile identity-bootstrap replicates, stratified by cohort group. "
+        "The same identity draws are used across settings. Intervals are exploratory and unadjusted for multiple comparisons, "
+        "conditional on these weights, cohorts and settings. A zero repeat-control difference cannot prove numerical determinism.", ""]
+    for name, result in payload['cohorts'].items():
+        lines += [f"## {name}", "", f"{result['intended_images']} images from {result['independent_identities']} identities.", "",
+            "| Setting | Confidence | Canvas | Zero | One | Multiple | Decode failure | Unprocessed / 1,000 | Detection mean / p95 ms |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+        for label, row in result['settings'].items():
+            setting, counts = row['setting'], row['outcomes']
+            mean, p95 = row['detector_latency_mean_ms'], row['detector_latency_p95_ms']
+            timing = f"{mean:.2f} / {p95:.2f}" if mean is not None and p95 is not None else "not measured"
+            lines.append(f"| {label} | {setting['confidence']:g} | {setting['canvas'] or 'native'} | {counts['zero_faces']} | {counts['one_face']} | {counts['multiple_faces']} | {counts['load_failure']} | {row['unprocessed_per_1000_intended']:.1f} | {timing} |")
+        lines += ["", "Changes below are variant minus the same detector's baseline. Transitions describe the same images, not different surviving subsets.", "",
+            "| Variant | One-face coverage change, percentage points (95% CI) | Zero → one | One → multiple | One → zero | Changed outcomes |",
+            "| --- | --- | --- | --- | --- | --- |"]
+        for change in result['paired_comparisons']:
+            t = change['transitions']
+            lines.append(f"| {change['variant']} | {100*change['coverage_change']:+.2f} [{100*change['lower_95']:+.2f}, {100*change['upper_95']:+.2f}] | {t['zero_faces->one_face']} | {t['one_face->multiple_faces']} | {t['one_face->zero_faces']} | {change['changed_outcomes']} |")
+        lines += ["", "### What the interventions changed", ""]
+        for change in result['paired_comparisons']:
+            if change['variant'] not in {'YuNet_confidence_0.8', 'SCRFD_confidence_0.7', 'YuNet_canvas_320', 'SCRFD_canvas_640'}:
+                continue
+            before, after = (result['settings'][change[k]] for k in ('baseline', 'variant'))
+            field = 'confidence' if change['factor'] == 'confidence' else 'canvas'
+            old_value = before['setting'][field] or 'native'
+            new_value = after['setting'][field] or 'native'
+            b, a = before['outcomes'], after['outcomes']
+            supported = ('excludes zero' if change['lower_95'] > 0 or change['upper_95'] < 0 else 'includes zero')
+            lines += [f"Changing {after['setting']['detector']} {field} from {old_value} to {new_value} "
+                      f"changed zero detections from {b['zero_faces']} to {a['zero_faces']} and multiple "
+                      f"detections from {b['multiple_faces']} to {a['multiple_faces']}. The net one-face "
+                      f"coverage change was {100*change['coverage_change']:+.2f} percentage points "
+                      f"(95% CI {100*change['lower_95']:+.2f} to {100*change['upper_95']:+.2f}; {supported}). "
+                      f"Unresolved images changed from {before['unprocessed_per_1000_intended']:.1f} "
+                      f"to {after['unprocessed_per_1000_intended']:.1f} per 1,000 intended images.", ""]
+    lines += ["## Interpretation", "",
+        "Within-detector interventions establish how the tested settings change this pipeline's processing outcomes on fixed images. "
+        "A confidence change can admit a previously rejected face or create a multiple-detection rejection; input resizing changes the detector's effective image scale. "
+        "Use the measured transition counts and intervals to determine which effect occurred. Do not compare YuNet and SCRFD confidence numbers as a common scale. "
+        "The study does not identify every cause of the original whole-dataset failure gap, label extra detections as true faces, or establish that higher coverage improves recognition. "
+        "Any adoption of a changed setting requires development-only recalibration and subsequent evaluation of coverage, duplicate detection, false referrals and total cost.", ""]
+    return "\n".join(lines)
+
+
+def render_detector_ablation_brief(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    path = Path(aggregate_root) / DETECTOR_ABLATION_DIR / 'detector_settings_metrics.json'
+    if not path.is_file():
+        return ("The effects of confidence and input size have not yet been isolated in this checkout. "
+                "Run the controlled detector settings experiment before attributing the failure gap to a setting.")
+    payload = read_json_artifact(path)
+    lines = ["Controlled settings evidence", "",
+        "The experiment changes one setting within a detector on identical images, with fixed weights, "
+        "NMS and face acceptance rule. The preset comparisons below connect processing failures to "
+        "unresolved workload and detector time. All variants and transition counts appear in the separate "
+        "detector settings report; none was chosen to replace a main pipeline.", ""]
+    rows = []
+    def timing(value: Any) -> str:
+        return f"{float(value):.2f}" if _is_number(value) else "not measured"
+    contrasts = {'YuNet_confidence_0.8', 'YuNet_canvas_320', 'SCRFD_confidence_0.7', 'SCRFD_canvas_640'}
+    for cohort, result in payload['cohorts'].items():
+        for change in result['paired_comparisons']:
+            if change['variant'] not in contrasts:
+                continue
+            before, after = (result['settings'][change[k]] for k in ('baseline','variant'))
+            rows.append([cohort.replace('_',' '), change['variant'].replace('_',' '),
+                f"{100*change['coverage_change']:+.2f} ({100*change['lower_95']:+.2f} to {100*change['upper_95']:+.2f})",
+                f"{before['unprocessed_per_1000_intended']:.1f} to {after['unprocessed_per_1000_intended']:.1f}",
+                f"{timing(before['detector_latency_mean_ms'])} to {timing(after['detector_latency_mean_ms'])}"])
+    lines += [render_plain_pipeline_table(
+        ['Cohort', 'Setting', 'Coverage change, points (95% CI)', 'Unprocessed per 1,000', 'Detector mean ms'], rows), '',
+        "Cohorts use a preset equal number of images per sampled identity. "
+        "BFW development and test use disjoint identities. The interventions establish processing effects "
+        "on these sampled images; they do not prove the correctness of detections or the cause of the "
+        "entire original dataset gap. Intervals use paired identity resampling and are exploratory, "
+        "without adjustment for multiple comparisons. These are image counts, not failed pair counts.", '',
+        "One detected face is eligibility for recognition, not identification accuracy. Unprocessed images "
+        "are unresolved cases, not false duplicate referrals. No annotation establishes whether extra "
+        "detections are real background faces. Model storage is fixed within each detector; only the "
+        "configured processing and detector runtime change. Recognition must be recalibrated and evaluated "
+        "before any alternative setting could replace the frozen main pipeline."]
+    return '\n'.join(lines)
+
+
+def write_detector_ablation_outputs(aggregate_root: Path, figures_root: Path) -> Optional[Path]:
+    path = Path(aggregate_root) / DETECTOR_ABLATION_DIR / 'detector_settings_metrics.json'
+    if not path.is_file():
+        return None
+    payload = read_json_artifact(path)
+    write_markdown_artifact(path.parent/'DETECTOR_SETTINGS_REPORT.md', render_detector_ablation_report(aggregate_root))
+    rows = []
+    for cohort, result in payload['cohorts'].items():
+        for label, item in result['settings'].items():
+            rows.append({'cohort':cohort, 'setting':label, 'intended_images':item['intended_images'],
+                         **item['outcomes'], 'unprocessed_per_1000':item['unprocessed_per_1000_intended'],
+                         'detector_mean_ms':item['detector_latency_mean_ms'], 'detector_p95_ms':item['detector_latency_p95_ms']})
+    write_csv_artifact(path.parent/'detector_settings_summary.csv',rows,fieldnames=list(rows[0]))
+    plt = _figure_backend()
+    fig, axes = plt.subplots(2,2,figsize=(15,12),sharex=True)
+    colours = {'one_face':'#4C956C','zero_faces':'#DD8452','multiple_faces':'#8172B3','load_failure':'#777777'}
+    for ax, (cohort, result) in zip(axes.flat,payload['cohorts'].items()):
+        items=list(result['settings'].items())
+        left=np.zeros(len(items))
+        for outcome in ('one_face','zero_faces','multiple_faces','load_failure'):
+            values=np.array([100*r['outcomes'][outcome]/r['intended_images'] for _,r in items])
+            ax.barh(np.arange(len(items)),values,left=left,color=colours[outcome],label=outcome.replace('_',' '))
+            left+=values
+        ax.set_yticks(np.arange(len(items)),[n.replace('_',' ') for n,_ in items],fontsize=8)
+        ax.invert_yaxis()
+        ax.set_xlim(0,100)
+        ax.set_xlabel('Percentage of all intended images')
+        ax.set_title(f"{cohort.replace('_',' ')}: {result['intended_images']} images, {result['independent_identities']} identities")
+    handles,labels=axes.flat[0].get_legend_handles_labels()
+    fig.legend(handles,labels,loc='lower center',ncol=4)
+    fig.suptitle('Controlled detector settings: processing outcomes on identical images\nOne detected face means eligibility for recognition, not a correct identity decision',fontsize=13)
+    fig.tight_layout(rect=(0,.04,1,.94))
+    output=Path(figures_root)/'detector_settings_sensitivity.png'
+    _save_figure(fig,output)
+    plt.close(fig)
+    return output
+
+
+def run_detector_ablation(output_root: Path = AGGREGATE_ROOT) -> Dict[str, Any]:
+    """Separate output namespace and fresh instances protect every main result."""
+    import inspect
+    check_dependency_contract(strict=True)
+    execution = configure_deterministic_opencv()
+    config = EnvironmentConfig.load()
+    settings = detector_ablation_settings()
+    validate_detector_ablation_settings(settings)
+    cohorts = detector_ablation_cohorts(config)
+    description = arcface_pipeline_description(config)
+    yunet_hash = verify_model_file(config.require_model_root() / YUNET_FILENAME, YUNET_SHA256)
+    root = Path(output_root) / DETECTOR_ABLATION_DIR
+    root.mkdir(parents=True, exist_ok=True)
+    protected = {p: sha256_of_file(p) for p in Path(output_root).rglob('*') if p.is_file() and root not in p.parents}
+    from insightface.model_zoo.scrfd import SCRFD  # type: ignore[import-not-found]
+    plan = {"artifact_type": "detector_settings_plan", "revision": DETECTOR_ABLATION_REVISION,
+        "seed": DETECTOR_ABLATION_SEED, "settings": [asdict(s) for s in settings],
+        "images_per_identity": DETECTOR_ABLATION_IMAGES, "identities_per_cohort": DETECTOR_ABLATION_IDENTITIES,
+        "selection": "Seeded, outcome-independent, equal images per identity; balanced BFW subgroup/role strata; at least two eligible images required",
+        "cohorts": {name: {"images": len(samples), "identities": len({s.identity for s in samples}),
+                           "image_content_sha256": image_content_digest(s.image_path for s in samples)} for name, samples in cohorts.items()},
+        "model_sha256": {"YuNet": yunet_hash, "SCRFD": description.model_sha256['detector']},
+        "detector_model_bytes": {"YuNet": (config.require_model_root()/YUNET_FILENAME).stat().st_size,
+                                 "SCRFD": (cast(Path, config.arcface_model_root)/ARCFACE_DETECTOR_FILENAME).stat().st_size},
+        "scrfd_implementation_sha256": sha256_of_text(inspect.getsource(SCRFD)),
+        "study_implementation_sha256": sha256_of_text(inspect.getsource(load_detector_ablation_counter)
+                                                     + inspect.getsource(measure_detector_ablation_cohort)
+                                                     + inspect.getsource(summarise_detector_ablation)),
+        "execution": execution,
+        "yunet_nms": DETECTOR_NMS_THRESHOLD, "yunet_top_k": DETECTOR_TOP_K, "scrfd_nms": 0.4,
+        "software_environment": software_environment_report(),
+        "scope": "Exploratory fixed-image detector intervention; main recognition policies unchanged; no configuration selected",
+        "status": "frozen_before_measurement"}
+    plan_hash = write_json_artifact(root/'detector_settings_plan.json', plan)
+    counters = {s.name: load_detector_ablation_counter(config, s) for s in settings}
+    # Warm all instances before measured calls, including the independent repeat.
+    probe = np.zeros((256, 256, 3), dtype=np.uint8)
+    for counter in counters.values():
+        for _ in range(3):
+            counter(probe)
+    results = {}
+    raw_root = RAW_ROOT / DETECTOR_ABLATION_DIR
+    for name, samples in cohorts.items():
+        announce(f"Controlled detector settings: {name}")
+        rows = measure_detector_ablation_cohort(samples, counters)
+        # Private per-image records carry only opaque identifiers, no images or embeddings.
+        write_json_artifact(raw_root/f'{name}.json', {"plan_sha256": plan_hash, "settings": rows})
+        results[name] = summarise_detector_ablation(rows, settings)
+    if any(sha256_of_file(p) != digest for p, digest in protected.items()):
+        raise ArtifactError("A main result changed during the detector sensitivity run.")
+    payload = {"artifact_type": "detector_settings_metrics", "revision": DETECTOR_ABLATION_REVISION,
+               "plan_sha256": plan_hash, "bootstrap_replicates": BOOTSTRAP_REPLICATES, "cohorts": results,
+               "main_results_unchanged": True, "protected_artefacts": len(protected)}
+    write_json_artifact(root/'detector_settings_metrics.json', payload)
+    write_markdown_artifact(root/'DETECTOR_SETTINGS_REPORT.md', render_detector_ablation_report(output_root))
+    if find_path_leaks(root, forbidden_substrings=default_forbidden_path_substrings()):
+        raise PrivacyLeakError("Detector sensitivity publication contains private paths.")
+    return payload
+
+
+def action_run_detector_ablation(output_root: Path = AGGREGATE_ROOT) -> int:
+    run_detector_ablation(output_root)
+    figure = write_detector_ablation_outputs(output_root, FIGURES_ROOT)
+    written = sorted(FIGURES_ROOT.glob("*.png")) if figure else []
+    if written:
+        _write_figure_captions(output_root, FIGURES_ROOT, written)
+    write_markdown_artifact(Path(output_root)/'RESEARCH_REPORT.md', render_research_report(output_root))
+    write_markdown_artifact(Path(output_root)/'SUPERVISOR_FEEDBACK_RESPONSE.md', render_feedback_response(output_root))
+    announce("Controlled detector settings complete; reports updated without changing main policies.")
+    return 0
+
+
+# =============================================================================
 # 28. Figure generation
 # =============================================================================
 #
@@ -11043,6 +11501,15 @@ def _write_figure_captions(
             f"its place.",
         ]
 
+    if (aggregate_root / DETECTOR_ABLATION_DIR / "detector_settings_metrics.json").is_file():
+        lines += ["", "## Controlled detector settings", "",
+                  "**detector_settings_sensitivity** shows zero, one, multiple detections and decode failures "
+                  "for every preset setting on each fixed cohort of 256 images from 128 identities. "
+                  "Bars divide by all intended images, not successful extractions. One detected face "
+                  "indicates eligibility for recognition, not a correct identity decision. The identical "
+                  "setting repeats check observed execution variation. Paired identity-bootstrap changes "
+                  "and timing costs are in the detector-settings report; the figure itself shows observed "
+                  "counts, not uncertainty bounds. Cohorts are exploratory benchmark samples."]
     (figures_root / "FIGURE_CAPTIONS.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -11869,6 +12336,11 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "```text", render_threshold_validation_part(aggregate_root), "```",
         "", "## 14. Detector settings and failure interpretation", "",
         "```text", render_detector_settings_part(aggregate_root), "```",
+        "", ("Full controlled settings, paired transitions, timings and the frozen experiment plan: "
+              "[detector settings report](detector_settings/DETECTOR_SETTINGS_REPORT.md). "
+              "This sensitivity study preserves all original recognition policies and main results."
+              if (aggregate_root / DETECTOR_ABLATION_DIR / "detector_settings_metrics.json").is_file()
+              else "The controlled detector settings experiment has not been run in this checkout."),
     ]
     return "\n".join(lines) + "\n"
 
@@ -12777,11 +13249,15 @@ def generate_figures(
         path = figures_root / "paired_pipeline_comparison.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)
 
+    detector_figure = write_detector_ablation_outputs(aggregate_root, figures_root)
+    if detector_figure is not None:
+        written.append(detector_figure)
     write_implementation_layer_artefacts(aggregate_root)
     _write_figure_captions(aggregate_root, figures_root, written)
     (aggregate_root / "RESEARCH_REPORT.md").write_text(
         render_research_report(aggregate_root), encoding="utf-8"
     )
+    write_markdown_artifact(aggregate_root / "SUPERVISOR_FEEDBACK_RESPONSE.md", render_feedback_response(aggregate_root))
 
     # Figures are published artefacts and are scanned like any other.
     leaks = find_path_leaks(figures_root, forbidden_substrings=default_forbidden_path_substrings())
@@ -13970,9 +14446,9 @@ def render_processing_coverage_explanation(aggregate_root: Path = AGGREGATE_ROOT
             f"{ARCFACE_DETECTION_INPUT_SIZE} by {ARCFACE_DETECTION_INPUT_SIZE} pixel "
             f"canvas first and missed {missed_scrfd}. "
             "The one-face rule directly determines whether those detections are "
-            "accepted. The effects of confidence threshold and input size were not "
-            "isolated experimentally, and the two detectors' scores are not calibrated "
-            "on a common scale."
+            "accepted. The separate controlled settings report tests confidence and "
+            "input size interventions when available. The two detectors' scores are "
+            "not calibrated on a common scale."
         ),
         render_plain_pipeline_table(
             ["Dataset and experiment", "Pipeline", "Intended", "Processed",
@@ -14641,16 +15117,7 @@ def render_detector_settings_part(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             f"{ARCFACE_DETECTION_INPUT_SIZE} pixel canvas. The extra LFW detections "
             "were not checked by hand, so they may be background faces or false detections."
         ),
-        _wrap_keeping_names(
-            "These are observed outcomes of complete configurations. No controlled "
-            "confidence or input size sweep was published, so the separate effects "
-            "of those settings are not established. The crossed experiments compare "
-            "configured components, including alignment and separately calibrated "
-            "recognition thresholds. A causal settings study would vary one setting "
-            "within each detector on fixed development images, record zero, one and "
-            "multiple detections, annotate extra detections, freeze the configuration "
-            "and evaluate it on new held out identities."
-        ),
+        render_detector_ablation_brief(aggregate_root),
     ])
 
 
@@ -14768,6 +15235,33 @@ def render_deployment_evaluation_summary(aggregate_root: Path = AGGREGATE_ROOT) 
         render_detector_settings_part(root),
         render_statistical_support_part(root),
     ])
+
+
+def render_feedback_response(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """Five supervisor requests, each supported by the same saved evidence as the report."""
+    parts = (
+        ("1. Threshold calibration and validation across datasets", render_threshold_validation_part),
+        ("2. Dataset limitations and generalisability", render_dataset_limits_part),
+        ("3. Accuracy, latency, storage and review workload", render_cost_and_workload_part),
+        ("4. Detector settings and processing failures", render_detector_settings_part),
+        ("5. Statistical support for the main conclusion", render_statistical_support_part),
+    )
+    lines = ["# Evidence addressing supervisor feedback", "",
+             "**Research objective:** A deployment-oriented evaluation methodology for duplicate face detection "
+             "that incorporates unprocessed images, human-review workload and computational cost into "
+             "the comparison of detector–recogniser pipelines.", "",
+             "This response is generated from the saved results. The main research report contains the "
+             "experimental results and their limitations; the sections below make each feedback point explicit.", ""]
+    for title, renderer in parts:
+        lines += [f"## {title}", "", "```text", renderer(aggregate_root), "```", ""]
+    lines += ["The detector sensitivity study measures controlled processing interventions on fixed "
+              "benchmark images. Its configurations do not replace the main frozen recognition policies. "
+              "Higher one-face coverage is not evidence of better duplicate identification by itself. "
+              "All comparisons remain limited to the evaluated benchmark populations and protocols.", "",
+              "Sources: [main research report](RESEARCH_REPORT.md), "
+              "[paired pipeline statistics](COMPARATIVE_STATISTICS_REPORT.md), "
+              "[full detector sensitivity study](detector_settings/DETECTOR_SETTINGS_REPORT.md).", ""]
+    return "\n".join(lines)
 
 
 def render_model_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) -> str:
@@ -15430,6 +15924,8 @@ CONTROLLED COMPARISONS
  19. Show the saved comparison analyses
  20. Compute paired pipeline differences from saved runs
  21. Show paired differences and confidence intervals
+ 27. Run controlled detector confidence and input-size comparisons
+ 28. Show the detector-settings results
 
 OVERVIEW AND REPORTS
  22. Show every experiment at a glance
@@ -15463,7 +15959,7 @@ MODES = (
     # A single table covering every experiment, for orientation.
     "experiment-table", "comparison-diagnostics", "comparison-diagnostics-summary",
     "comparative-statistics", "comparative-statistics-summary", "refresh-reports",
-    "extensions", "all",
+    "extensions", "all", "detector-settings", "detector-settings-summary",
 )
 
 
@@ -16473,6 +16969,8 @@ def action_run_all(output_root: Path = AGGREGATE_ROOT) -> int:
          lambda: action_run_comparison_diagnostics(output_root)),
         ("Paired pipeline differences and confidence intervals",
          lambda: action_run_comparative_statistics(output_root)),
+        ("Controlled detector settings sensitivity",
+         lambda: action_run_detector_ablation(output_root)),
         ("Refresh reports and figures",
          lambda: action_refresh_reports(output_root)),
         ("Show every experiment at a glance",
@@ -16540,6 +17038,8 @@ def run_menu(output_root: Path = AGGREGATE_ROOT) -> int:
         "23": lambda: action_run_extensions(output_root),
         "24": lambda: action_refresh_reports(output_root),
         "25": lambda: launch_review_interface(DEFAULT_REVIEW_DB),
+        "27": lambda: action_run_detector_ablation(output_root),
+        "28": lambda: _print_saved_summary(render_detector_ablation_report, output_root),
         "100": lambda: action_run_all(output_root),
     }
     # The scope of the artefact is stated before any option is offered.
@@ -16683,6 +17183,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_action(lambda: action_run_comparative_statistics(args.results_root))
     if args.mode == "comparative-statistics-summary":
         return _run_action(lambda: _print_saved_summary(render_paired_comparison_report, args.results_root))
+    if args.mode == "detector-settings":
+        return _run_action(lambda: action_run_detector_ablation(args.results_root))
+    if args.mode == "detector-settings-summary":
+        return _run_action(lambda: _print_saved_summary(render_detector_ablation_report, args.results_root))
     if args.mode == "refresh-reports":
         return _run_action(lambda: action_refresh_reports(args.results_root))
     if args.mode == "extensions":

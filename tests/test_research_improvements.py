@@ -228,7 +228,7 @@ def test_feature_ablation_retains_failed_probes_in_end_to_end_denominator():
 def test_menu_preserves_workflow_numbers_and_adds_run_all():
     import re
     numbers = [int(value) for value in re.findall(r"^\s*(\d+)\.", acp.MENU_TEXT, re.MULTILINE)]
-    assert numbers == [*range(1, 25), 100, 25, 26]
+    assert numbers == [*range(1, 22), 27, 28, 22, 23, 24, 100, 25, 26]
     assert "human review moderation" in acp.MENU_TEXT.lower()
     for label in ("original", "new experiment", "updated", "local"):
         assert label not in acp.MENU_TEXT.lower()

@@ -1,0 +1,2520 @@
+{
+  "artifact_type": "detector_settings_metrics",
+  "bootstrap_replicates": 2000,
+  "cohorts": {
+    "BFW_development": {
+      "independent_identities": 128,
+      "intended_images": 256,
+      "paired_comparisons": [
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 10,
+          "coverage_change": 0.0390625,
+          "factor": "confidence",
+          "lower_95": 0.01953125,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 246,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 10,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.0625,
+          "variant": "YuNet_confidence_0.7"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 10,
+          "coverage_change": 0.0390625,
+          "factor": "confidence",
+          "lower_95": 0.01953125,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 246,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 10,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.0625,
+          "variant": "YuNet_confidence_0.8"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 240,
+          "coverage_change": -0.9375,
+          "factor": "confidence",
+          "lower_95": -0.96484375,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 6,
+            "one_face->zero_faces": 240,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 10
+          },
+          "upper_95": -0.90625,
+          "variant": "YuNet_confidence_0.95"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 9,
+          "coverage_change": 0.03125,
+          "factor": "canvas",
+          "lower_95": 0.01171875,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 246,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 1,
+            "zero_faces->one_face": 8,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": 0.05078125,
+          "variant": "YuNet_canvas_320"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 165,
+          "coverage_change": -0.64453125,
+          "factor": "canvas",
+          "lower_95": -0.6953125,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 81,
+            "one_face->zero_faces": 165,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 10
+          },
+          "upper_95": -0.59375,
+          "variant": "YuNet_canvas_640"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 0,
+          "coverage_change": 0.0,
+          "factor": "repeat_control",
+          "lower_95": 0.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 246,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 10
+          },
+          "upper_95": 0.0,
+          "variant": "YuNet_repeat"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 2,
+          "coverage_change": 0.0,
+          "factor": "confidence",
+          "lower_95": -0.01171875,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 1,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 1,
+            "one_face->one_face": 253,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 1,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.0078125,
+          "variant": "SCRFD_confidence_0.3"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 3,
+          "coverage_change": -0.00390625,
+          "factor": "confidence",
+          "lower_95": -0.015625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 1,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 252,
+            "one_face->zero_faces": 2,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": 0.0078125,
+          "variant": "SCRFD_confidence_0.7"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 250,
+          "coverage_change": -0.97265625,
+          "factor": "confidence",
+          "lower_95": -0.9921875,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 1,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 5,
+            "one_face->zero_faces": 249,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": -0.953125,
+          "variant": "SCRFD_confidence_0.9"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 1,
+          "coverage_change": 0.00390625,
+          "factor": "canvas",
+          "lower_95": 0.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 1,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 254,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 1,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.01171875,
+          "variant": "SCRFD_canvas_160"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 254,
+          "coverage_change": -0.984375,
+          "factor": "canvas",
+          "lower_95": -1.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 1,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 1,
+            "one_face->zero_faces": 253,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": -0.96484375,
+          "variant": "SCRFD_canvas_640"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 0,
+          "coverage_change": 0.0,
+          "factor": "repeat_control",
+          "lower_95": 0.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 1,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 254,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": 0.0,
+          "variant": "SCRFD_repeat"
+        }
+      ],
+      "replicates": 2000,
+      "settings": {
+        "SCRFD_baseline": {
+          "detector_latency_mean_ms": 26.157693349887268,
+          "detector_latency_p95_ms": 30.339833290781826,
+          "intended_images": 256,
+          "one_face_coverage": 0.9921875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 1,
+            "one_face": 254,
+            "zero_faces": 1
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "baseline",
+            "name": "SCRFD_baseline"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 7.8125
+        },
+        "SCRFD_canvas_160": {
+          "detector_latency_mean_ms": 9.494492038811586,
+          "detector_latency_p95_ms": 12.887937249615788,
+          "intended_images": 256,
+          "one_face_coverage": 0.99609375,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 1,
+            "one_face": 255,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 160,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "canvas",
+            "name": "SCRFD_canvas_160"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 3.90625
+        },
+        "SCRFD_canvas_640": {
+          "detector_latency_mean_ms": 93.35370063809023,
+          "detector_latency_p95_ms": 100.02527068718337,
+          "intended_images": 256,
+          "one_face_coverage": 0.0078125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 2,
+            "zero_faces": 254
+          },
+          "setting": {
+            "canvas": 640,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "canvas",
+            "name": "SCRFD_canvas_640"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 992.1875
+        },
+        "SCRFD_confidence_0.3": {
+          "detector_latency_mean_ms": 25.98556279372133,
+          "detector_latency_p95_ms": 29.597927234135568,
+          "intended_images": 256,
+          "one_face_coverage": 0.9921875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 2,
+            "one_face": 254,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.3,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.3"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 7.8125
+        },
+        "SCRFD_confidence_0.7": {
+          "detector_latency_mean_ms": 26.201847369520692,
+          "detector_latency_p95_ms": 30.108187929727137,
+          "intended_images": 256,
+          "one_face_coverage": 0.98828125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 253,
+            "zero_faces": 3
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.7,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.7"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 11.71875
+        },
+        "SCRFD_confidence_0.9": {
+          "detector_latency_mean_ms": 25.96627046887079,
+          "detector_latency_p95_ms": 30.352603789651766,
+          "intended_images": 256,
+          "one_face_coverage": 0.01953125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 5,
+            "zero_faces": 251
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.9,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.9"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 980.46875
+        },
+        "SCRFD_repeat": {
+          "detector_latency_mean_ms": 25.954551943414117,
+          "detector_latency_p95_ms": 28.901427023811266,
+          "intended_images": 256,
+          "one_face_coverage": 0.9921875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 1,
+            "one_face": 254,
+            "zero_faces": 1
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "repeat_control",
+            "name": "SCRFD_repeat"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 7.8125
+        },
+        "YuNet_baseline": {
+          "detector_latency_mean_ms": 2.4979995141620748,
+          "detector_latency_p95_ms": 6.391292001353577,
+          "intended_images": 256,
+          "one_face_coverage": 0.9609375,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 246,
+            "zero_faces": 10
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "baseline",
+            "name": "YuNet_baseline"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 39.0625
+        },
+        "YuNet_canvas_320": {
+          "detector_latency_mean_ms": 5.003599274004955,
+          "detector_latency_p95_ms": 5.487218499183655,
+          "intended_images": 256,
+          "one_face_coverage": 0.9921875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 1,
+            "one_face": 254,
+            "zero_faces": 1
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "canvas",
+            "name": "YuNet_canvas_320"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 7.8125
+        },
+        "YuNet_canvas_640": {
+          "detector_latency_mean_ms": 19.861334483266546,
+          "detector_latency_p95_ms": 21.445666992804036,
+          "intended_images": 256,
+          "one_face_coverage": 0.31640625,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 81,
+            "zero_faces": 175
+          },
+          "setting": {
+            "canvas": 640,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "canvas",
+            "name": "YuNet_canvas_640"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 683.59375
+        },
+        "YuNet_confidence_0.7": {
+          "detector_latency_mean_ms": 2.5122115880549245,
+          "detector_latency_p95_ms": 6.175885035190731,
+          "intended_images": 256,
+          "one_face_coverage": 1.0,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 256,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.7,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.7"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 0.0
+        },
+        "YuNet_confidence_0.8": {
+          "detector_latency_mean_ms": 2.4981811525321973,
+          "detector_latency_p95_ms": 6.089802511269227,
+          "intended_images": 256,
+          "one_face_coverage": 1.0,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 256,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.8,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.8"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 0.0
+        },
+        "YuNet_confidence_0.95": {
+          "detector_latency_mean_ms": 2.493537928785372,
+          "detector_latency_p95_ms": 6.420843972591683,
+          "intended_images": 256,
+          "one_face_coverage": 0.0234375,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 6,
+            "zero_faces": 250
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.95,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.95"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 976.5625
+        },
+        "YuNet_repeat": {
+          "detector_latency_mean_ms": 2.530933778416511,
+          "detector_latency_p95_ms": 6.622156215598807,
+          "intended_images": 256,
+          "one_face_coverage": 0.9609375,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 246,
+            "zero_faces": 10
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "repeat_control",
+            "name": "YuNet_repeat"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 39.0625
+        }
+      }
+    },
+    "BFW_test": {
+      "independent_identities": 128,
+      "intended_images": 256,
+      "paired_comparisons": [
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 10,
+          "coverage_change": 0.0390625,
+          "factor": "confidence",
+          "lower_95": 0.01953125,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 246,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 10,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.06640625,
+          "variant": "YuNet_confidence_0.7"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 9,
+          "coverage_change": 0.03515625,
+          "factor": "confidence",
+          "lower_95": 0.015625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 246,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 9,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": 0.05859375,
+          "variant": "YuNet_confidence_0.8"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 234,
+          "coverage_change": -0.9140625,
+          "factor": "confidence",
+          "lower_95": -0.9453125,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 12,
+            "one_face->zero_faces": 234,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 10
+          },
+          "upper_95": -0.87890625,
+          "variant": "YuNet_confidence_0.95"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 7,
+          "coverage_change": 0.02734375,
+          "factor": "canvas",
+          "lower_95": 0.0078125,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 246,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 7,
+            "zero_faces->zero_faces": 3
+          },
+          "upper_95": 0.05078125,
+          "variant": "YuNet_canvas_320"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 145,
+          "coverage_change": -0.55859375,
+          "factor": "canvas",
+          "lower_95": -0.6171875,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 102,
+            "one_face->zero_faces": 144,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 1,
+            "zero_faces->zero_faces": 9
+          },
+          "upper_95": -0.5,
+          "variant": "YuNet_canvas_640"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 0,
+          "coverage_change": 0.0,
+          "factor": "repeat_control",
+          "lower_95": 0.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 246,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 10
+          },
+          "upper_95": 0.0,
+          "variant": "YuNet_repeat"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 2,
+          "coverage_change": -0.0078125,
+          "factor": "confidence",
+          "lower_95": -0.01953125,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 2,
+            "one_face->one_face": 254,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.0,
+          "variant": "SCRFD_confidence_0.3"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 6,
+          "coverage_change": -0.0234375,
+          "factor": "confidence",
+          "lower_95": -0.046875,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 250,
+            "one_face->zero_faces": 6,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": -0.00390625,
+          "variant": "SCRFD_confidence_0.7"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 254,
+          "coverage_change": -0.9921875,
+          "factor": "confidence",
+          "lower_95": -1.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 2,
+            "one_face->zero_faces": 254,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": -0.98046875,
+          "variant": "SCRFD_confidence_0.9"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 0,
+          "coverage_change": 0.0,
+          "factor": "canvas",
+          "lower_95": 0.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 256,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.0,
+          "variant": "SCRFD_canvas_160"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 242,
+          "coverage_change": -0.9453125,
+          "factor": "canvas",
+          "lower_95": -0.97265625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 14,
+            "one_face->zero_faces": 242,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": -0.91796875,
+          "variant": "SCRFD_canvas_640"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 0,
+          "coverage_change": 0.0,
+          "factor": "repeat_control",
+          "lower_95": 0.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 256,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.0,
+          "variant": "SCRFD_repeat"
+        }
+      ],
+      "replicates": 2000,
+      "settings": {
+        "SCRFD_baseline": {
+          "detector_latency_mean_ms": 25.495145345303172,
+          "detector_latency_p95_ms": 28.461260721087456,
+          "intended_images": 256,
+          "one_face_coverage": 1.0,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 256,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "baseline",
+            "name": "SCRFD_baseline"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 0.0
+        },
+        "SCRFD_canvas_160": {
+          "detector_latency_mean_ms": 8.840403997510293,
+          "detector_latency_p95_ms": 11.06083334889263,
+          "intended_images": 256,
+          "one_face_coverage": 1.0,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 256,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 160,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "canvas",
+            "name": "SCRFD_canvas_160"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 0.0
+        },
+        "SCRFD_canvas_640": {
+          "detector_latency_mean_ms": 91.96423636694817,
+          "detector_latency_p95_ms": 98.72394800186157,
+          "intended_images": 256,
+          "one_face_coverage": 0.0546875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 14,
+            "zero_faces": 242
+          },
+          "setting": {
+            "canvas": 640,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "canvas",
+            "name": "SCRFD_canvas_640"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 945.3125
+        },
+        "SCRFD_confidence_0.3": {
+          "detector_latency_mean_ms": 25.484745298399503,
+          "detector_latency_p95_ms": 29.373781522735953,
+          "intended_images": 256,
+          "one_face_coverage": 0.9921875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 2,
+            "one_face": 254,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.3,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.3"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 7.8125
+        },
+        "SCRFD_confidence_0.7": {
+          "detector_latency_mean_ms": 25.31976187856344,
+          "detector_latency_p95_ms": 28.66794800502248,
+          "intended_images": 256,
+          "one_face_coverage": 0.9765625,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 250,
+            "zero_faces": 6
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.7,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.7"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 23.4375
+        },
+        "SCRFD_confidence_0.9": {
+          "detector_latency_mean_ms": 25.38525032605321,
+          "detector_latency_p95_ms": 28.656354261329398,
+          "intended_images": 256,
+          "one_face_coverage": 0.0078125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 2,
+            "zero_faces": 254
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.9,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.9"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 992.1875
+        },
+        "SCRFD_repeat": {
+          "detector_latency_mean_ms": 25.607314786611823,
+          "detector_latency_p95_ms": 28.949020750587806,
+          "intended_images": 256,
+          "one_face_coverage": 1.0,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 256,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "repeat_control",
+            "name": "SCRFD_repeat"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 0.0
+        },
+        "YuNet_baseline": {
+          "detector_latency_mean_ms": 2.5007913027366158,
+          "detector_latency_p95_ms": 6.199395429575816,
+          "intended_images": 256,
+          "one_face_coverage": 0.9609375,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 246,
+            "zero_faces": 10
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "baseline",
+            "name": "YuNet_baseline"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 39.0625
+        },
+        "YuNet_canvas_320": {
+          "detector_latency_mean_ms": 5.055169926890812,
+          "detector_latency_p95_ms": 5.687697732355446,
+          "intended_images": 256,
+          "one_face_coverage": 0.98828125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 253,
+            "zero_faces": 3
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "canvas",
+            "name": "YuNet_canvas_320"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 11.71875
+        },
+        "YuNet_canvas_640": {
+          "detector_latency_mean_ms": 19.635893902432144,
+          "detector_latency_p95_ms": 21.007031202316284,
+          "intended_images": 256,
+          "one_face_coverage": 0.40234375,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 103,
+            "zero_faces": 153
+          },
+          "setting": {
+            "canvas": 640,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "canvas",
+            "name": "YuNet_canvas_640"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 597.65625
+        },
+        "YuNet_confidence_0.7": {
+          "detector_latency_mean_ms": 2.500560234693694,
+          "detector_latency_p95_ms": 6.22915624990128,
+          "intended_images": 256,
+          "one_face_coverage": 1.0,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 256,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.7,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.7"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 0.0
+        },
+        "YuNet_confidence_0.8": {
+          "detector_latency_mean_ms": 2.4843337951097055,
+          "detector_latency_p95_ms": 5.869374697795138,
+          "intended_images": 256,
+          "one_face_coverage": 0.99609375,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 255,
+            "zero_faces": 1
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.8,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.8"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 3.90625
+        },
+        "YuNet_confidence_0.95": {
+          "detector_latency_mean_ms": 2.5209686168636836,
+          "detector_latency_p95_ms": 6.512469291919842,
+          "intended_images": 256,
+          "one_face_coverage": 0.046875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 12,
+            "zero_faces": 244
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.95,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.95"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 953.125
+        },
+        "YuNet_repeat": {
+          "detector_latency_mean_ms": 2.5107488195317273,
+          "detector_latency_p95_ms": 5.876552284462377,
+          "intended_images": 256,
+          "one_face_coverage": 0.9609375,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 246,
+            "zero_faces": 10
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "repeat_control",
+            "name": "YuNet_repeat"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 39.0625
+        }
+      }
+    },
+    "CPLFW_raw": {
+      "independent_identities": 128,
+      "intended_images": 256,
+      "paired_comparisons": [
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 71,
+          "coverage_change": 0.19921875,
+          "factor": "confidence",
+          "lower_95": 0.14443359375,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 2,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 7,
+            "one_face->one_face": 177,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 6,
+            "zero_faces->one_face": 58,
+            "zero_faces->zero_faces": 6
+          },
+          "upper_95": 0.2578125,
+          "variant": "YuNet_confidence_0.7"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 66,
+          "coverage_change": 0.21484375,
+          "factor": "confidence",
+          "lower_95": 0.15625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 2,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 5,
+            "one_face->one_face": 179,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 1,
+            "zero_faces->one_face": 60,
+            "zero_faces->zero_faces": 9
+          },
+          "upper_95": 0.26953125,
+          "variant": "YuNet_confidence_0.8"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 185,
+          "coverage_change": -0.71484375,
+          "factor": "confidence",
+          "lower_95": -0.76962890625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 2,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 1,
+            "one_face->zero_faces": 183,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 70
+          },
+          "upper_95": -0.65625,
+          "variant": "YuNet_confidence_0.95"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 29,
+          "coverage_change": 0.08203125,
+          "factor": "canvas",
+          "lower_95": 0.04296875,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 2,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 1,
+            "one_face->one_face": 180,
+            "one_face->zero_faces": 3,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 25,
+            "zero_faces->zero_faces": 45
+          },
+          "upper_95": 0.12109375,
+          "variant": "YuNet_canvas_320"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 38,
+          "coverage_change": 0.0,
+          "factor": "canvas",
+          "lower_95": -0.046875,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 2,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 2,
+            "one_face->one_face": 165,
+            "one_face->zero_faces": 17,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 19,
+            "zero_faces->zero_faces": 51
+          },
+          "upper_95": 0.046875,
+          "variant": "YuNet_canvas_640"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 0,
+          "coverage_change": 0.0,
+          "factor": "repeat_control",
+          "lower_95": 0.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 2,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 184,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 70
+          },
+          "upper_95": 0.0,
+          "variant": "YuNet_repeat"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 11,
+          "coverage_change": -0.04296875,
+          "factor": "confidence",
+          "lower_95": -0.0703125,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 20,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 11,
+            "one_face->one_face": 224,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": -0.01953125,
+          "variant": "SCRFD_confidence_0.3"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 68,
+          "coverage_change": -0.16796875,
+          "factor": "confidence",
+          "lower_95": -0.22265625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 6,
+            "multiple_faces->one_face": 11,
+            "multiple_faces->zero_faces": 3,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 181,
+            "one_face->zero_faces": 54,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": -0.109375,
+          "variant": "SCRFD_confidence_0.7"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 255,
+          "coverage_change": -0.91796875,
+          "factor": "confidence",
+          "lower_95": -0.94921875,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 20,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 0,
+            "one_face->zero_faces": 235,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": -0.8828125,
+          "variant": "SCRFD_confidence_0.9"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 6,
+          "coverage_change": 0.0,
+          "factor": "canvas",
+          "lower_95": -0.01953125,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 17,
+            "multiple_faces->one_face": 3,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 2,
+            "one_face->one_face": 232,
+            "one_face->zero_faces": 1,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": 0.01953125,
+          "variant": "SCRFD_canvas_160"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 11,
+          "coverage_change": -0.01171875,
+          "factor": "canvas",
+          "lower_95": -0.03515625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 16,
+            "multiple_faces->one_face": 4,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 4,
+            "one_face->one_face": 228,
+            "one_face->zero_faces": 3,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": 0.0078125,
+          "variant": "SCRFD_canvas_640"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 0,
+          "coverage_change": 0.0,
+          "factor": "repeat_control",
+          "lower_95": 0.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 20,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 235,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 1
+          },
+          "upper_95": 0.0,
+          "variant": "SCRFD_repeat"
+        }
+      ],
+      "replicates": 2000,
+      "settings": {
+        "SCRFD_baseline": {
+          "detector_latency_mean_ms": 25.897806285684055,
+          "detector_latency_p95_ms": 30.595499993069097,
+          "intended_images": 256,
+          "one_face_coverage": 0.91796875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 20,
+            "one_face": 235,
+            "zero_faces": 1
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "baseline",
+            "name": "SCRFD_baseline"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 82.03125
+        },
+        "SCRFD_canvas_160": {
+          "detector_latency_mean_ms": 9.301377303017944,
+          "detector_latency_p95_ms": 12.249728490132838,
+          "intended_images": 256,
+          "one_face_coverage": 0.91796875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 19,
+            "one_face": 235,
+            "zero_faces": 2
+          },
+          "setting": {
+            "canvas": 160,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "canvas",
+            "name": "SCRFD_canvas_160"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 82.03125
+        },
+        "SCRFD_canvas_640": {
+          "detector_latency_mean_ms": 93.27774857956683,
+          "detector_latency_p95_ms": 106.81004173238762,
+          "intended_images": 256,
+          "one_face_coverage": 0.90625,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 20,
+            "one_face": 232,
+            "zero_faces": 4
+          },
+          "setting": {
+            "canvas": 640,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "canvas",
+            "name": "SCRFD_canvas_640"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 93.75
+        },
+        "SCRFD_confidence_0.3": {
+          "detector_latency_mean_ms": 26.935664249322144,
+          "detector_latency_p95_ms": 30.697427020641044,
+          "intended_images": 256,
+          "one_face_coverage": 0.875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 31,
+            "one_face": 224,
+            "zero_faces": 1
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.3,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.3"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 125.0
+        },
+        "SCRFD_confidence_0.7": {
+          "detector_latency_mean_ms": 25.8709313120562,
+          "detector_latency_p95_ms": 31.67603150359355,
+          "intended_images": 256,
+          "one_face_coverage": 0.75,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 6,
+            "one_face": 192,
+            "zero_faces": 58
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.7,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.7"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 250.0
+        },
+        "SCRFD_confidence_0.9": {
+          "detector_latency_mean_ms": 26.615977576966543,
+          "detector_latency_p95_ms": 31.475479481741786,
+          "intended_images": 256,
+          "one_face_coverage": 0.0,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 0,
+            "zero_faces": 256
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.9,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.9"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 1000.0
+        },
+        "SCRFD_repeat": {
+          "detector_latency_mean_ms": 25.87426871605203,
+          "detector_latency_p95_ms": 29.923510301159695,
+          "intended_images": 256,
+          "one_face_coverage": 0.91796875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 20,
+            "one_face": 235,
+            "zero_faces": 1
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "repeat_control",
+            "name": "SCRFD_repeat"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 82.03125
+        },
+        "YuNet_baseline": {
+          "detector_latency_mean_ms": 3.2921557540248614,
+          "detector_latency_p95_ms": 3.675426938571036,
+          "intended_images": 256,
+          "one_face_coverage": 0.71875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 2,
+            "one_face": 184,
+            "zero_faces": 70
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "baseline",
+            "name": "YuNet_baseline"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 281.25
+        },
+        "YuNet_canvas_320": {
+          "detector_latency_mean_ms": 5.1128672075719805,
+          "detector_latency_p95_ms": 5.554385745199397,
+          "intended_images": 256,
+          "one_face_coverage": 0.80078125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 3,
+            "one_face": 205,
+            "zero_faces": 48
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "canvas",
+            "name": "YuNet_canvas_320"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 199.21875
+        },
+        "YuNet_canvas_640": {
+          "detector_latency_mean_ms": 19.59445834154394,
+          "detector_latency_p95_ms": 21.467666752869263,
+          "intended_images": 256,
+          "one_face_coverage": 0.71875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 4,
+            "one_face": 184,
+            "zero_faces": 68
+          },
+          "setting": {
+            "canvas": 640,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "canvas",
+            "name": "YuNet_canvas_640"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 281.25
+        },
+        "YuNet_confidence_0.7": {
+          "detector_latency_mean_ms": 3.279241696873214,
+          "detector_latency_p95_ms": 3.5971975012216717,
+          "intended_images": 256,
+          "one_face_coverage": 0.91796875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 15,
+            "one_face": 235,
+            "zero_faces": 6
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.7,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.7"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 82.03125
+        },
+        "YuNet_confidence_0.8": {
+          "detector_latency_mean_ms": 3.3232946093448845,
+          "detector_latency_p95_ms": 3.6404060083441436,
+          "intended_images": 256,
+          "one_face_coverage": 0.93359375,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 8,
+            "one_face": 239,
+            "zero_faces": 9
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.8,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.8"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 66.40625
+        },
+        "YuNet_confidence_0.95": {
+          "detector_latency_mean_ms": 3.250702613968315,
+          "detector_latency_p95_ms": 3.6397497460711747,
+          "intended_images": 256,
+          "one_face_coverage": 0.00390625,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 1,
+            "zero_faces": 255
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.95,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.95"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 996.09375
+        },
+        "YuNet_repeat": {
+          "detector_latency_mean_ms": 3.2466490879414778,
+          "detector_latency_p95_ms": 3.5973020712845027,
+          "intended_images": 256,
+          "one_face_coverage": 0.71875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 2,
+            "one_face": 184,
+            "zero_faces": 70
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "repeat_control",
+            "name": "YuNet_repeat"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 281.25
+        }
+      }
+    },
+    "LFW_development": {
+      "independent_identities": 128,
+      "intended_images": 256,
+      "paired_comparisons": [
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 32,
+          "coverage_change": -0.125,
+          "factor": "confidence",
+          "lower_95": -0.16796875,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 14,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 32,
+            "one_face->one_face": 210,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": -0.0859375,
+          "variant": "YuNet_confidence_0.7"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 23,
+          "coverage_change": -0.08984375,
+          "factor": "confidence",
+          "lower_95": -0.12890625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 14,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 23,
+            "one_face->one_face": 219,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": -0.0546875,
+          "variant": "YuNet_confidence_0.8"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 254,
+          "coverage_change": -0.9375,
+          "factor": "confidence",
+          "lower_95": -0.96484375,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 14,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 2,
+            "one_face->zero_faces": 240,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": -0.90625,
+          "variant": "YuNet_confidence_0.95"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 3,
+          "coverage_change": -0.00390625,
+          "factor": "canvas",
+          "lower_95": -0.015625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 13,
+            "multiple_faces->one_face": 1,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 2,
+            "one_face->one_face": 240,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.0078125,
+          "variant": "YuNet_canvas_320"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 10,
+          "coverage_change": -0.0390625,
+          "factor": "canvas",
+          "lower_95": -0.0625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 14,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 10,
+            "one_face->one_face": 232,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": -0.015625,
+          "variant": "YuNet_canvas_640"
+        },
+        {
+          "baseline": "YuNet_baseline",
+          "changed_outcomes": 0,
+          "coverage_change": 0.0,
+          "factor": "repeat_control",
+          "lower_95": 0.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 14,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 242,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.0,
+          "variant": "YuNet_repeat"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 10,
+          "coverage_change": -0.0390625,
+          "factor": "confidence",
+          "lower_95": -0.06640625,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 53,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 10,
+            "one_face->one_face": 193,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": -0.015625,
+          "variant": "SCRFD_confidence_0.3"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 28,
+          "coverage_change": 0.08984375,
+          "factor": "confidence",
+          "lower_95": 0.054589843750000006,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 27,
+            "multiple_faces->one_face": 25,
+            "multiple_faces->zero_faces": 1,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 201,
+            "one_face->zero_faces": 2,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.12890625,
+          "variant": "SCRFD_confidence_0.7"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 256,
+          "coverage_change": -0.79296875,
+          "factor": "confidence",
+          "lower_95": -0.83984375,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 0,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 53,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 0,
+            "one_face->zero_faces": 203,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": -0.73828125,
+          "variant": "SCRFD_confidence_0.9"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 9,
+          "coverage_change": 0.01171875,
+          "factor": "canvas",
+          "lower_95": -0.01171875,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 47,
+            "multiple_faces->one_face": 6,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 3,
+            "one_face->one_face": 200,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.03515625,
+          "variant": "SCRFD_canvas_160"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 11,
+          "coverage_change": -0.00390625,
+          "factor": "canvas",
+          "lower_95": -0.03125,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 48,
+            "multiple_faces->one_face": 5,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 3,
+            "one_face->one_face": 197,
+            "one_face->zero_faces": 3,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.0234375,
+          "variant": "SCRFD_canvas_640"
+        },
+        {
+          "baseline": "SCRFD_baseline",
+          "changed_outcomes": 0,
+          "coverage_change": 0.0,
+          "factor": "repeat_control",
+          "lower_95": 0.0,
+          "transitions": {
+            "load_failure->load_failure": 0,
+            "load_failure->multiple_faces": 0,
+            "load_failure->one_face": 0,
+            "load_failure->zero_faces": 0,
+            "multiple_faces->load_failure": 0,
+            "multiple_faces->multiple_faces": 53,
+            "multiple_faces->one_face": 0,
+            "multiple_faces->zero_faces": 0,
+            "one_face->load_failure": 0,
+            "one_face->multiple_faces": 0,
+            "one_face->one_face": 203,
+            "one_face->zero_faces": 0,
+            "zero_faces->load_failure": 0,
+            "zero_faces->multiple_faces": 0,
+            "zero_faces->one_face": 0,
+            "zero_faces->zero_faces": 0
+          },
+          "upper_95": 0.0,
+          "variant": "SCRFD_repeat"
+        }
+      ],
+      "replicates": 2000,
+      "settings": {
+        "SCRFD_baseline": {
+          "detector_latency_mean_ms": 25.433829898247495,
+          "detector_latency_p95_ms": 27.65686475322582,
+          "intended_images": 256,
+          "one_face_coverage": 0.79296875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 53,
+            "one_face": 203,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "baseline",
+            "name": "SCRFD_baseline"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 207.03125
+        },
+        "SCRFD_canvas_160": {
+          "detector_latency_mean_ms": 8.99554032321248,
+          "detector_latency_p95_ms": 10.935896163573489,
+          "intended_images": 256,
+          "one_face_coverage": 0.8046875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 50,
+            "one_face": 206,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 160,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "canvas",
+            "name": "SCRFD_canvas_160"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 195.3125
+        },
+        "SCRFD_canvas_640": {
+          "detector_latency_mean_ms": 91.27138332814866,
+          "detector_latency_p95_ms": 93.32740624086,
+          "intended_images": 256,
+          "one_face_coverage": 0.7890625,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 51,
+            "one_face": 202,
+            "zero_faces": 3
+          },
+          "setting": {
+            "canvas": 640,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "canvas",
+            "name": "SCRFD_canvas_640"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 210.9375
+        },
+        "SCRFD_confidence_0.3": {
+          "detector_latency_mean_ms": 25.12100295371056,
+          "detector_latency_p95_ms": 26.952968473779038,
+          "intended_images": 256,
+          "one_face_coverage": 0.75390625,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 63,
+            "one_face": 193,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.3,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.3"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 246.09375
+        },
+        "SCRFD_confidence_0.7": {
+          "detector_latency_mean_ms": 25.43174221409572,
+          "detector_latency_p95_ms": 27.50046903383918,
+          "intended_images": 256,
+          "one_face_coverage": 0.8828125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 27,
+            "one_face": 226,
+            "zero_faces": 3
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.7,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.7"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 117.1875
+        },
+        "SCRFD_confidence_0.9": {
+          "detector_latency_mean_ms": 25.082184563416376,
+          "detector_latency_p95_ms": 26.85305173508823,
+          "intended_images": 256,
+          "one_face_coverage": 0.0,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 0,
+            "zero_faces": 256
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.9,
+            "detector": "SCRFD",
+            "factor": "confidence",
+            "name": "SCRFD_confidence_0.9"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 1000.0
+        },
+        "SCRFD_repeat": {
+          "detector_latency_mean_ms": 25.33195799242094,
+          "detector_latency_p95_ms": 27.55673904903233,
+          "intended_images": 256,
+          "one_face_coverage": 0.79296875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 53,
+            "one_face": 203,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.5,
+            "detector": "SCRFD",
+            "factor": "repeat_control",
+            "name": "SCRFD_repeat"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 207.03125
+        },
+        "YuNet_baseline": {
+          "detector_latency_mean_ms": 3.2123852861332125,
+          "detector_latency_p95_ms": 3.560427256161347,
+          "intended_images": 256,
+          "one_face_coverage": 0.9453125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 14,
+            "one_face": 242,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "baseline",
+            "name": "YuNet_baseline"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 54.6875
+        },
+        "YuNet_canvas_320": {
+          "detector_latency_mean_ms": 4.953903458499553,
+          "detector_latency_p95_ms": 5.4045626893639565,
+          "intended_images": 256,
+          "one_face_coverage": 0.94140625,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 15,
+            "one_face": 241,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 320,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "canvas",
+            "name": "YuNet_canvas_320"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 58.59375
+        },
+        "YuNet_canvas_640": {
+          "detector_latency_mean_ms": 19.375585585294175,
+          "detector_latency_p95_ms": 20.297228737035766,
+          "intended_images": 256,
+          "one_face_coverage": 0.90625,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 24,
+            "one_face": 232,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": 640,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "canvas",
+            "name": "YuNet_canvas_640"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 93.75
+        },
+        "YuNet_confidence_0.7": {
+          "detector_latency_mean_ms": 3.220003395654203,
+          "detector_latency_p95_ms": 3.5591772175394,
+          "intended_images": 256,
+          "one_face_coverage": 0.8203125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 46,
+            "one_face": 210,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.7,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.7"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 179.6875
+        },
+        "YuNet_confidence_0.8": {
+          "detector_latency_mean_ms": 3.242471359499177,
+          "detector_latency_p95_ms": 3.605448204325512,
+          "intended_images": 256,
+          "one_face_coverage": 0.85546875,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 37,
+            "one_face": 219,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.8,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.8"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 144.53125
+        },
+        "YuNet_confidence_0.95": {
+          "detector_latency_mean_ms": 3.2076163706733496,
+          "detector_latency_p95_ms": 3.509406262310222,
+          "intended_images": 256,
+          "one_face_coverage": 0.0078125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 0,
+            "one_face": 2,
+            "zero_faces": 254
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.95,
+            "detector": "YuNet",
+            "factor": "confidence",
+            "name": "YuNet_confidence_0.95"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 992.1875
+        },
+        "YuNet_repeat": {
+          "detector_latency_mean_ms": 3.2165561306101154,
+          "detector_latency_p95_ms": 3.566968778613955,
+          "intended_images": 256,
+          "one_face_coverage": 0.9453125,
+          "outcomes": {
+            "load_failure": 0,
+            "multiple_faces": 14,
+            "one_face": 242,
+            "zero_faces": 0
+          },
+          "setting": {
+            "canvas": null,
+            "confidence": 0.9,
+            "detector": "YuNet",
+            "factor": "repeat_control",
+            "name": "YuNet_repeat"
+          },
+          "timed_images": 256,
+          "unprocessed_per_1000_intended": 54.6875
+        }
+      }
+    }
+  },
+  "created_at": "2026-10-04T22:12:51.511193+00:00",
+  "main_results_unchanged": true,
+  "plan_sha256": "c4160722464683c810979187d94d92b8528f01b21ca9707a4c07768525e5692b",
+  "protected_artefacts": 103,
+  "revision": "fixed-images-one-factor-v1",
+  "schema_version": 1
+}

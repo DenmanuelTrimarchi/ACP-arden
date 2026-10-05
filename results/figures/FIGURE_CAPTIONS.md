@@ -96,3 +96,7 @@ A same-identity probe stands for a photograph belonging to the enrolled person. 
 ## Note on the classifier
 
 The classifier referred 20 non-mated searches in error against the calibrated threshold's 15. Its primary hypothesis — fewer false referrals — is not achieved.
+
+## Controlled detector settings
+
+**detector_settings_sensitivity** shows zero, one, multiple detections and decode failures for every preset setting on each fixed cohort of 256 images from 128 identities. Bars divide by all intended images, not successful extractions. One detected face indicates eligibility for recognition, not a correct identity decision. The identical setting repeats check observed execution variation. Paired identity-bootstrap changes and timing costs are in the detector-settings report; the figure itself shows observed counts, not uncertainty bounds. Cohorts are exploratory benchmark samples.

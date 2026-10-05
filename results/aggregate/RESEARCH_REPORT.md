@@ -281,12 +281,32 @@ SCRFD resizes while preserving aspect ratio and pads to a 320 by 320 pixel
 canvas. The extra LFW detections were not checked by hand, so they may be
 background faces or false detections.
 
-These are observed outcomes of complete configurations. No controlled
-confidence or input size sweep was published, so the separate effects of those
-settings are not established. The crossed experiments compare configured
-components, including alignment and separately calibrated recognition
-thresholds. A causal settings study would vary one setting within each
-detector on fixed development images, record zero, one and multiple
-detections, annotate extra detections, freeze the configuration and evaluate
-it on new held out identities.
+Controlled settings evidence
+
+The experiment changes one setting within a detector on identical images, with fixed weights, NMS and face acceptance rule. The preset comparisons below connect processing failures to unresolved workload and detector time. All variants and transition counts appear in the separate detector settings report; none was chosen to replace a main pipeline.
+
+  Cohort           Setting               Coverage change, points (95% CI)  Unprocessed per 1,000  Detector mean ms
+  ---------------  --------------------  --------------------------------  ---------------------  ----------------
+  BFW development  YuNet confidence 0.8  +3.91 (+1.95 to +6.25)            39.1 to 0.0            2.50 to 2.50
+  BFW development  YuNet canvas 320      +3.12 (+1.17 to +5.08)            39.1 to 7.8            2.50 to 5.00
+  BFW development  SCRFD confidence 0.7  -0.39 (-1.56 to +0.78)            7.8 to 11.7            26.16 to 26.20
+  BFW development  SCRFD canvas 640      -98.44 (-100.00 to -96.48)        7.8 to 992.2           26.16 to 93.35
+  BFW test         YuNet confidence 0.8  +3.52 (+1.56 to +5.86)            39.1 to 3.9            2.50 to 2.48
+  BFW test         YuNet canvas 320      +2.73 (+0.78 to +5.08)            39.1 to 11.7           2.50 to 5.06
+  BFW test         SCRFD confidence 0.7  -2.34 (-4.69 to -0.39)            0.0 to 23.4            25.50 to 25.32
+  BFW test         SCRFD canvas 640      -94.53 (-97.27 to -91.80)         0.0 to 945.3           25.50 to 91.96
+  CPLFW raw        YuNet confidence 0.8  +21.48 (+15.62 to +26.95)         281.2 to 66.4          3.29 to 3.32
+  CPLFW raw        YuNet canvas 320      +8.20 (+4.30 to +12.11)           281.2 to 199.2         3.29 to 5.11
+  CPLFW raw        SCRFD confidence 0.7  -16.80 (-22.27 to -10.94)         82.0 to 250.0          25.90 to 25.87
+  CPLFW raw        SCRFD canvas 640      -1.17 (-3.52 to +0.78)            82.0 to 93.8           25.90 to 93.28
+  LFW development  YuNet confidence 0.8  -8.98 (-12.89 to -5.47)           54.7 to 144.5          3.21 to 3.24
+  LFW development  YuNet canvas 320      -0.39 (-1.56 to +0.78)            54.7 to 58.6           3.21 to 4.95
+  LFW development  SCRFD confidence 0.7  +8.98 (+5.46 to +12.89)           207.0 to 117.2         25.43 to 25.43
+  LFW development  SCRFD canvas 640      -0.39 (-3.12 to +2.34)            207.0 to 210.9         25.43 to 91.27
+
+Cohorts use a preset equal number of images per sampled identity. BFW development and test use disjoint identities. The interventions establish processing effects on these sampled images; they do not prove the correctness of detections or the cause of the entire original dataset gap. Intervals use paired identity resampling and are exploratory, without adjustment for multiple comparisons. These are image counts, not failed pair counts.
+
+One detected face is eligibility for recognition, not identification accuracy. Unprocessed images are unresolved cases, not false duplicate referrals. No annotation establishes whether extra detections are real background faces. Model storage is fixed within each detector; only the configured processing and detector runtime change. Recognition must be recalibrated and evaluated before any alternative setting could replace the frozen main pipeline.
 ```
+
+Full controlled settings, paired transitions, timings and the frozen experiment plan: [detector settings report](detector_settings/DETECTOR_SETTINGS_REPORT.md). This sensitivity study preserves all original recognition policies and main results.

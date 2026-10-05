@@ -592,9 +592,10 @@ automatically and evaluate files other than the pinned ones.
 SCRFD resizes while preserving aspect ratio and pads to a 320 × 320 canvas,
 with a detection threshold of 0.5. YuNet uses each image's own dimensions and
 a threshold of 0.9. These scores are not calibrated on a common scale.
-The published results do not include a controlled 320-versus-640 comparison
-or a detector-threshold sweep; they support the evaluated configurations,
-without establishing the separate causal effects of those settings.
+The [controlled detector-settings study](results/aggregate/detector_settings/DETECTOR_SETTINGS_REPORT.md)
+varies confidence and input canvas within each detector on fixed image cohorts.
+Its processing effects are measured separately from the main recognition
+evaluation; no alternative setting replaces a frozen baseline policy.
 
 #### Held-out outcome — coverage, recognition and cost
 
@@ -727,7 +728,7 @@ could be attributed to the embedding model alone.
 
 ### Figures
 
-`results/figures/` holds 18 figures, each in PNG (300 dpi) and SVG,
+`results/figures/` holds 19 figures, each in PNG (300 dpi) and SVG,
 generated from the published JSON and CSV artefacts rather than typed values,
 with PNG text metadata stripped and the privacy scan applied:
 
@@ -748,6 +749,7 @@ open_set_operating_curve
 paired_pipeline_comparison
 pipeline_across_datasets
 pipeline_coverage_and_latency
+detector_settings_sensitivity
 profile_photo_consistency_outcomes
 subgroup_fpir_tpir_with_confidence_intervals
 ```
@@ -845,6 +847,39 @@ Reports:
 [research report](results/aggregate/RESEARCH_REPORT.md).
 
 ## Reproducibility and the canonical run
+
+### Controlled detector settings
+
+Run `python ACP_arden.py --mode detector-settings` (menu 27); inspect saved
+results with `--mode detector-settings-summary` (menu 28). The full `--mode all`
+workflow also runs this comparison before refreshing reports and figures.
+
+The preset study uses 256 images from 128 identities in each of four cohorts:
+LFW development, raw CPLFW, BFW development and BFW test. BFW identities are
+disjoint across the two partitions. Every configuration sees the same images
+in its cohort, with two images per identity. Cohorts and the plan are saved
+before detector evaluation; settings are never chosen from the outcomes.
+
+For each detector, three confidence changes and two input-canvas changes are
+compared with its baseline, plus an independent instance with identical
+settings. This gives 14 configurations in total. NMS, weights and the
+exactly-one-face acceptance rule stay fixed. Detection order is randomised
+per image, model instances are warmed, and the report includes paired identity
+bootstrap intervals and transitions between zero, one and multiple detections.
+Decode failures remain in the denominator.
+
+The study connects unprocessed images per 1,000 to detector time while keeping
+model bytes fixed. These are unresolved cases, not false duplicate referrals;
+one detected face is eligibility for recognition, not a correct identity
+decision. The new settings are not validated replacement recognition pipelines.
+The cohorts are exploratory benchmark samples, not independent deployment data.
+Private per-image records stay under ignored `results/raw/detector_settings/`;
+only the plan, aggregate results, report and figure are published. Main result
+files are fingerprinted before the run and checked afterwards.
+
+The generated [supervisor-feedback response](results/aggregate/SUPERVISOR_FEEDBACK_RESPONSE.md)
+maps all five requested improvements to the saved evidence, including the
+calibration, dataset-scope, cost and paired-statistics discussions.
 
 Detection is **not bit-stable across processes on this platform**, and the
 project does not claim otherwise.

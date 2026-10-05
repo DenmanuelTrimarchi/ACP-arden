@@ -20,6 +20,7 @@ EXPECTED_STAGES = (
     "action_run_mixed_pipelines",
     "action_run_comparison_diagnostics",
     "action_run_comparative_statistics",
+    "action_run_detector_ablation",
     "action_refresh_reports",
     "action_show_experiment_table",
 )
