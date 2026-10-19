@@ -1,5 +1,7 @@
 # Evidence addressing supervisor feedback
 
+Updated for feedback dated 19 October 2026; the original five evidence sections are retained.
+
 **Research objective:** A deployment-oriented evaluation methodology for duplicate face detection that incorporates unprocessed images, human-review workload and computational cost into the comparison of detector–recogniser pipelines.
 
 This response is generated from the saved results. The main research report contains the experimental results and their limitations; the sections below make each feedback point explicit.
@@ -177,6 +179,65 @@ bound the population FPIR. They condition on fitted models, frozen thresholds
 and fixed galleries, excluding fitting, calibration, gallery selection and
 population shift uncertainty.
 ```
+
+## 6. Dataset choice, project-defined protocol and comparison scope
+
+LFW supplies an established unconstrained 1:1 verification reference and official folds. It anchors comparison with verification research, but its public-figure images and pair task do not represent profile registration. CPLFW deliberately changes pose and image difficulty while retaining LFW identities: applying the separately frozen LFW development threshold tests transfer across conditions, not replication on an independent population or CPLFW's fold-recalibrated protocol.
+
+BFW supplies multiple real images per identity and balanced benchmark subgroups, making disjoint enrolment/probe roles and subgroup descriptions feasible in a small reproducible study. Its published verification setting does not answer the 1:N new-registration question directly. The project-defined open-set protocol therefore separates enrolled identities with known matches from identities absent from the gallery. This supports the research question at the cost of direct comparability with published BFW verification scores; it is not an official BFW identification benchmark or a representative service population.
+
+Saved protocol version: acp-arden-bfw-open-set-v1; seed: 20260727; manifest SHA-256: 549790b77cfc7abaf1a90748a7ebda86be9e988cb4aaf56af04136566b8191b1.
+
+Saved development partition: 400 identities, 200 gallery/mated identities, 200 non-mated identities; 600 enrolment images, 1,000 intended mated probes and 3,000 intended non-mated probes, 4,600 selected images in total.
+
+Saved test partition: 400 identities, 200 gallery/mated identities, 200 non-mated identities; 600 enrolment images, 1,000 intended mated probes and 3,000 intended non-mated probes, 4,600 selected images in total.
+
+Construction recipe: sort original identity strings within each subgroup, shuffle with random.Random(f'{seed}:{subgroup}'), then assign the first ceiling half to development and the rest to test. Within each partition/subgroup, shuffle sorted eligible identities with random.Random(f'{seed}:{partition}:{subgroup}'); the first ceiling half enters the gallery/mated group and the remainder is non-mated. Identities with insufficient enrolment/probe images remain eligible as non-mated. This membership is independent of the local HMAC identifier key. Sort each identity's filenames lexicographically: the first 3 enrol, the next 5 are mated probes, and non-mated identities contribute their first at most 15 images. Remaining images are unused. No image holds two roles and no identity crosses development/test or gallery/non-mated roles. Older saved summaries lack a recipe field; these role rules are the implemented protocol, while partition sizes and seed above are read from the saved summary.
+
+Independent sampling is at identity level: the saved test set contains 200 non-mated identities contributing 3,000 probe images. The image count must not be used as the number of independent people.
+
+Non-mated test identities by subgroup: asian_females: 25; asian_males: 25; black_females: 25; black_males: 25; indian_females: 25; indian_males: 25; white_females: 25; white_males: 25. Repeated images do not enlarge those subgroup identity counts.
+
+Multiple probes from one identity increase image-condition coverage, not the number of independent people. Non-mated probe-image counts are not independent identity trial counts. Identity-cluster resampling retains repeated probes of each person; the denominator still counts intended images for end-to-end detection. The single identity split, lexicographic image selection, fixed galleries and pretraining overlap not audited here limit representativeness. Exact reproduction requires the same dataset bytes, filenames, recipe, seed and software/model provenance; matching published scores requires a matching task and protocol, not only the dataset name.
+
+The four-way comparison holds identities, image roles, enrolment policy and target selection rule fixed, but compares configured components. YuNet confidence 0.9 at native input size and SCRFD confidence 0.5 on a 320 by 320 padded canvas are different operating settings. SFace uses OpenCV alignCrop; ArcFace uses its 112 by 112 landmark alignment. Each pairing has its own development-calibrated recognition threshold and surviving image subset. Crossing detectors/recognisers estimates a configured substitution, not an isolated network architecture effect; common-success results describe a selected subset. Equal numeric detector thresholds would not make their confidence scales comparable. The separate within-detector intervention isolates preset confidence or canvas changes for processing outcomes only, not recognition accuracy.
+
+Subgroup results are descriptive within BFW's recorded labels and sampling design. Balanced counts and excluding subgroup labels from classifier predictors do not establish fairness. Small identity counts, rare errors, label limitations and population shift prevent deployment fairness claims; no service harm, equal treatment or representative deployment error distribution was validated.
+
+## 7. Moderation budgets and sensitivity of the frozen policies
+
+Development FPIR budgets of 0.1%, 0.3% and 1% represent illustrative research budgets of 1, 3 and 10 false reviews per 1,000 scored non-mated probes. The primary 0.3% budget is not an empirically validated moderation requirement. No reviewer capacity, duplicate prevalence, harm weighting or cost of a missed duplicate was measured to justify an optimal policy. A real requirement would need those inputs and representative validation.
+
+Each row uses its existing development-selected, frozen threshold unchanged. The target column is a development constraint, not the observed test FPIR. Test workload counts false referrals per 1,000 successfully scored non-mated images; it excludes true referrals and unresolved extraction failures, so it is not the total review queue. Detected/intended retains failed mated probes. The count is recovered from recorded conditional TPIR times its scored-mated denominator, only when it identifies a whole count within floating-point tolerance.
+
+| Configured pipeline | Development target | Frozen threshold | Development FPIR | Test FPIR | False reviews / 1,000 scored non-mated | Correctly detected / intended mated (end-to-end) |
+| --- | --- | --- | --- | --- | --- | --- |
+| YuNet + SFace | 0.10% | 0.710967 | 0.07% | 0.00% | 0.00 | 405 / 1,000 (40.50%) |
+| YuNet + SFace | 0.30% | 0.477118 | 0.28% | 0.52% | 5.25 | 872 / 1,000 (87.20%) |
+| YuNet + SFace | 1.00% | 0.439414 | 0.98% | 1.78% | 17.84 | 892 / 1,000 (89.20%) |
+| SCRFD + SFace | 0.10% | 0.772258 | 0.07% | 0.00% | 0.00 | 240 / 1,000 (24.00%) |
+| SCRFD + SFace | 0.30% | 0.471432 | 0.27% | 0.64% | 6.36 | 949 / 1,000 (94.90%) |
+| SCRFD + SFace | 1.00% | 0.443377 | 0.97% | 1.74% | 17.41 | 958 / 1,000 (95.80%) |
+| YuNet + ArcFace | 0.10% | 0.718882 | 0.07% | 0.00% | 0.00 | 472 / 1,000 (47.20%) |
+| YuNet + ArcFace | 0.30% | 0.391290 | 0.10% | 0.17% | 1.75 | 916 / 1,000 (91.60%) |
+| YuNet + ArcFace | 1.00% | 0.334610 | 0.66% | 1.05% | 10.49 | 920 / 1,000 (92.00%) |
+| SCRFD + ArcFace | 0.10% | 0.770218 | 0.07% | n/a | not available | not available |
+| SCRFD + ArcFace | 0.30% | 0.393958 | 0.13% | 0.13% | 1.34 | 967 / 1,000 (96.70%) |
+| SCRFD + ArcFace | 1.00% | 0.333001 | 0.70% | n/a | not available | not available |
+
+This is descriptive sensitivity, not a new paired significance analysis. The original paired intervals support interpretation at the primary frozen policies only; they cannot be transferred to the other budgets. Thresholds are not reselected using test outcomes. Different budgets can change the detection/workload trade-off, so these observations do not establish an optimal threshold or a robust ranking across operational requirements.
+
+Missing held-out operating points remain not available. In particular, older SCRFD + ArcFace comparison artefacts store all development policies but only the primary test point. Development TPIR/FPIR and aggregate score histograms cannot supply the missing held-out outcomes. Future comparison runs save distinct test_operating_points for all already-frozen policies; refreshing this report does not run inference or fill those gaps.
+
+## 8. Verified evidence and claims requiring further investigation
+
+Verified evidence: saved benchmark processing counts, frozen policies, test rates and measured stage timings describe the recorded configurations and environment. Synthetic and contract tests check implementation behavior, not real-world recognition accuracy or the truth of broader research claims.
+
+Statistically supported directions: a primary paired identity-bootstrap difference whose exploratory 95% interval excludes zero supports that direction under this fixed protocol. An interval including zero is unresolved, not evidence of equivalence or no effect. These unadjusted comparisons condition on fitted models, frozen thresholds and galleries; they exclude selection, calibration and population-shift uncertainty.
+
+Descriptive evidence: the three-budget sensitivity, subgroup patterns, gallery repeats, feature ablations and observational image-quality strata are exploratory. Detector interventions provide paired intervals for processing coverage within their fixed cohorts, not a validated replacement recognition policy. Conditional common-success comparisons describe a selected subset; approximate mixed-pipeline timings and workload scaling examples remain estimates rather than new direct measurements.
+
+Claims requiring further investigation: a universally best recogniser or detector, stable rankings across budgets or new populations, deployment fairness, million-profile performance, calibrated real-world duplication probabilities, and economically optimal moderation policies. No independent deployment validation, moderator study or isolated architecture experiment establishes those claims here.
 
 The detector sensitivity study measures controlled processing interventions on fixed benchmark images. Its configurations do not replace the main frozen recognition policies. Higher one-face coverage is not evidence of better duplicate identification by itself. All comparisons remain limited to the evaluated benchmark populations and protocols.
 

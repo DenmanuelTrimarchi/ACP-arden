@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """COM7014 Advanced Computing Project — face verification coursework.
 
-The whole project lives in this one file. It measures face-verification
+The whole project lives in this one file. It measures face verification
 pipelines assembled from four pretrained models, none of which is modified.
 Two of them find the face in a photograph: YuNet, from OpenCV Zoo, and SCRFD,
 from InsightFace. The other two turn that face into a vector of numbers that
@@ -153,13 +153,12 @@ RAW_ROOT = RESULTS_ROOT / "raw"
 DEFAULT_REVIEW_DB = RAW_ROOT / "review.sqlite"
 DEFAULT_GALLERY_MANIFEST = RAW_ROOT / "gallery_manifest.json"
 
-# Attribution. Every line of this file is original project code: the OpenCV,
-# NumPy, Pillow and Streamlit calls below use those libraries' documented
-# public APIs, which is use rather than adaptation of their source. Wherever an
+# Attribution. OpenCV, NumPy, Pillow and Streamlit are called through their
+# documented public APIs. Wherever an
 # external model, dataset, API or published method enters the pipeline, a
 # four-field attribution header records its origin immediately above the code
 # concerned. The complete register, with licences and digests, is REFERENCES.md.
-# Neither benchmark dataset nor either model file is redistributed here.
+# Benchmark images and pretrained model files are excluded from the repository.
 #
 # Reading order. The thirty numbered sections run from configuration through
 # to the launcher, so the file may be read from top to bottom in roughly the
@@ -4237,6 +4236,17 @@ def build_open_set_protocol(
         ),
         "development_identities": len(development_ids),
         "test_identities": len(test_ids),
+        "construction_recipe": {
+            "identity_partition": "Sort identities within each subgroup, shuffle with random.Random(f'{seed}:{subgroup}'), and assign the first ceiling half to development and the remainder to test.",
+            "gallery_partition": "Within each partition and subgroup, sort eligible identities, shuffle with random.Random(f'{seed}:{partition}:{subgroup}'), and assign the first ceiling half to mated/gallery and the remainder to non-mated. Identities with too few enrolment/probe images remain non-mated.",
+            "identifier_key_dependency": "Partition and image selection use original identity strings and filenames, never HMAC identifiers; changing the local identifier key does not change membership.",
+            "image_order": "Lexicographic filename order within each identity; no image is chosen by extraction success or similarity.",
+            "enrolment_images_per_mated_identity": MULTI_IMAGE_ENROLMENT,
+            "mated_probes_per_identity": mated_probes_per_identity,
+            "non_mated_probes_per_identity_maximum": non_mated_probes_per_identity,
+            "image_roles": "First enrolment images form the gallery template; immediately following images form mated probes. First available images of non-mated identities form non-mated probes. Remaining images are unused.",
+            "resampling_unit": "Identity cluster; repeated probes of one person are not independent observations.",
+        },
     }
     return OpenSetProtocol(entries=entries, seed=seed, provenance=provenance)
 
@@ -4317,6 +4327,13 @@ def open_set_protocol_summary(
                 {e.identity_hash for e in rows if e.role == "non_mated_probe"}
             ),
             "by_subgroup": by_subgroup,
+            "identity_roles_by_subgroup": {
+                subgroup: {
+                    role: len({e.identity_hash for e in rows if e.subgroup == subgroup and e.role == role})
+                    for role in OPEN_SET_ROLES
+                }
+                for subgroup in BFW_SUBGROUPS
+            },
         }
 
     _identity = pipeline_identity_fields(detector, embedder, description)
@@ -4773,8 +4790,9 @@ def run_open_set_method(
 # Availability: https://www.iso.org/standard/73515.html
 ##############
 
-# NIST commonly reports FNIR at an FPIR of 0.003; that is taken as the primary
-# operating point here, with a stricter and a looser point either side.
+# Illustrative research budgets: 1, 3 and 10 false referrals per 1,000 scored
+# non-mated probes. The middle budget is primary, not a validated requirement
+# from a moderation service. All are selected on development identities only.
 FPIR_TARGETS = (0.001, 0.003, 0.01)
 PRIMARY_FPIR_TARGET = 0.003
 
@@ -9525,6 +9543,15 @@ def evaluate_one_pipeline_for_comparison(
         protocol, partition="test", method=METHOD_B, detector=detector, embedder=embedder,
     )
     coverage = open_set_coverage(test)
+    # Keep development selection and held-out observations in distinct fields.
+    # Every policy above is frozen before any test operating point is scored.
+    test_operating_points = {
+        target: {
+            **open_set_rates_at_threshold(test.search_results, float(policy["threshold"])),
+            **open_set_duplicate_detection(test, float(policy["threshold"])),
+        }
+        for target, policy in operating_points.items()
+    }
     rates = open_set_rates_at_threshold(test.search_results, frozen)
     intervals = cluster_bootstrap_intervals(
         test.search_results, threshold=frozen, replicates=bootstrap_replicates, seed=seed
@@ -9565,6 +9592,8 @@ def evaluate_one_pipeline_for_comparison(
         "development_threshold": frozen,
         "threshold_status": OPEN_SET_STATUS_FROZEN,
         "operating_points": operating_points,
+        "primary_fpir_target": PRIMARY_FPIR_TARGET,
+        "test_operating_points": test_operating_points,
         "rates": rates,
         "coverage": coverage,
         "confidence_intervals": intervals,
@@ -12341,6 +12370,12 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
               "This sensitivity study preserves all original recognition policies and main results."
               if (aggregate_root / DETECTOR_ABLATION_DIR / "detector_settings_metrics.json").is_file()
               else "The controlled detector settings experiment has not been run in this checkout."),
+        "", "## 15. Dataset selection and protocol justification", "",
+        render_methodological_scope(aggregate_root),
+        "", "## 16. Frozen-threshold sensitivity and moderation requirements", "",
+        render_threshold_sensitivity(aggregate_root),
+        "", "## 17. Evidence boundaries and statistical interpretation", "",
+        render_claim_boundaries(),
     ]
     return "\n".join(lines) + "\n"
 
@@ -15237,8 +15272,259 @@ def render_deployment_evaluation_summary(aggregate_root: Path = AGGREGATE_ROOT) 
     ])
 
 
+def render_methodological_scope(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """Explain dataset and protocol choices using public counts, never private records."""
+    summary = _load_optional(Path(aggregate_root), "bfw_open_set_protocol_summary.json")
+    lines = [
+        "LFW supplies an established unconstrained 1:1 verification reference and official "
+        "folds. It anchors comparison with verification research, but its public-figure "
+        "images and pair task do not represent profile registration. CPLFW deliberately "
+        "changes pose and image difficulty while retaining LFW identities: applying the "
+        "separately frozen LFW development threshold tests transfer across conditions, "
+        "not replication on an independent population or CPLFW's fold-recalibrated protocol.",
+        "BFW supplies multiple real images per identity and balanced benchmark subgroups, "
+        "making disjoint enrolment/probe roles and subgroup descriptions feasible in a "
+        "small reproducible study. Its published verification setting does not answer "
+        "the 1:N new-registration question directly. The project-defined open-set protocol "
+        "therefore separates enrolled identities with known matches from identities absent "
+        "from the gallery. This supports the research question at the cost of direct "
+        "comparability with published BFW verification scores; it is not an official BFW "
+        "identification benchmark or a representative service population.",
+    ]
+    if summary:
+        lines.append(f"Saved protocol version: {summary.get('protocol_version', 'not available')}; "
+                     f"seed: {summary.get('seed', 'not available')}; "
+                     f"manifest SHA-256: {summary.get('public_manifest_sha256', 'not available')}.")
+        for partition in ("development", "test"):
+            counts = summary.get(partition) or {}
+            roles = counts.get("roles") or {}
+            lines.append(
+                f"Saved {partition} partition: {format_count(counts.get('identities'))} identities, "
+                f"{format_count(counts.get('mated_identities'))} gallery/mated identities, "
+                f"{format_count(counts.get('non_mated_identities'))} non-mated identities; "
+                f"{format_count(roles.get('gallery_enrolment'))} enrolment images, "
+                f"{format_count(roles.get('mated_probe'))} intended mated probes and "
+                f"{format_count(roles.get('non_mated_probe'))} intended non-mated probes, "
+                f"{format_count(counts.get('images'))} selected images in total."
+            )
+        recipe = summary.get("construction_recipe") or {}
+        enrolment = recipe.get("enrolment_images_per_mated_identity", MULTI_IMAGE_ENROLMENT)
+        mated = recipe.get("mated_probes_per_identity", MATED_PROBES_PER_IDENTITY)
+        non_mated = recipe.get("non_mated_probes_per_identity_maximum", NON_MATED_PROBES_PER_IDENTITY)
+        lines.append(
+            "Construction recipe: sort original identity strings within each subgroup, "
+            "shuffle with random.Random(f'{seed}:{subgroup}'), then assign the first ceiling "
+            "half to development and the rest to test. Within each partition/subgroup, "
+            "shuffle sorted eligible identities with random.Random(f'{seed}:{partition}:{subgroup}'); "
+            "the first ceiling half enters the gallery/mated group and the remainder is "
+            "non-mated. Identities with insufficient enrolment/probe images remain eligible "
+            "as non-mated. This membership is independent of the local HMAC identifier key. "
+            f"Sort each identity's filenames lexicographically: the first {enrolment} enrol, "
+            f"the next {mated} are mated probes, and non-mated identities contribute their "
+            f"first at most {non_mated} images. Remaining images are unused. No image holds "
+            "two roles and no identity crosses development/test or gallery/non-mated roles. "
+            "Older saved summaries lack a recipe field; these role rules are the implemented "
+            "protocol, while partition sizes and seed above are read from the saved summary."
+        )
+        test_counts = summary.get("test") or {}
+        test_roles = test_counts.get("roles") or {}
+        lines.append(
+            f"Independent sampling is at identity level: the saved test set contains "
+            f"{format_count(test_counts.get('non_mated_identities'))} non-mated identities "
+            f"contributing {format_count(test_roles.get('non_mated_probe'))} probe images. "
+            "The image count must not be used as the number of independent people."
+        )
+        subgroup_counts = test_counts.get("identity_roles_by_subgroup") or {}
+        min_images = _artefact_value(summary, "dataset_provenance", "images_per_identity_min")
+        if not subgroup_counts and _is_number(min_images) and int(min_images) >= int(non_mated):
+            # Older summaries recorded image-role totals only. Their minimum-image
+            # provenance verifies that every non-mated identity contributes the
+            # full preset probe count, so the corresponding cluster count is exact.
+            subgroup_counts = {
+                group: {"non_mated_probe": roles["non_mated_probe"] // int(non_mated)}
+                for group, roles in (test_counts.get("by_subgroup") or {}).items()
+                if isinstance(roles.get("non_mated_probe"), int)
+                and roles["non_mated_probe"] % int(non_mated) == 0
+            }
+        if subgroup_counts:
+            lines.append("Non-mated test identities by subgroup: " + "; ".join(
+                f"{group}: {format_count(roles.get('non_mated_probe'))}"
+                for group, roles in sorted(subgroup_counts.items())
+            ) + ". Repeated images do not enlarge those subgroup identity counts.")
+    else:
+        lines.append("The saved BFW protocol summary is not available; no partition counts, "
+                     "seed or manifest fingerprint can be verified here.")
+    lines += [
+        "Multiple probes from one identity increase image-condition coverage, not the number "
+        "of independent people. Non-mated probe-image counts are not independent identity "
+        "trial counts. Identity-cluster resampling retains repeated probes of each person; "
+        "the denominator still counts intended images for end-to-end detection. The single "
+        "identity split, lexicographic image selection, fixed galleries and pretraining overlap "
+        "not audited here limit representativeness. Exact reproduction requires the same "
+        "dataset bytes, filenames, recipe, seed and software/model provenance; matching "
+        "published scores requires a matching task and protocol, not only the dataset name.",
+        f"The four-way comparison holds identities, image roles, enrolment policy and target "
+        f"selection rule fixed, but compares configured components. YuNet confidence "
+        f"{DETECTOR_SCORE_THRESHOLD:g} at native input size and SCRFD confidence "
+        f"{ARCFACE_DETECTION_THRESHOLD:g} on a {ARCFACE_DETECTION_INPUT_SIZE} by "
+        f"{ARCFACE_DETECTION_INPUT_SIZE} padded canvas are different operating settings. "
+        "SFace uses OpenCV alignCrop; ArcFace uses its 112 by 112 landmark alignment. "
+        "Each pairing has its own development-calibrated recognition threshold and surviving "
+        "image subset. Crossing detectors/recognisers estimates a configured substitution, "
+        "not an isolated network architecture effect; common-success results describe a "
+        "selected subset. Equal numeric detector thresholds would not make their confidence "
+        "scales comparable. The separate within-detector intervention isolates preset "
+        "confidence or canvas changes for processing outcomes only, not recognition accuracy.",
+        "Subgroup results are descriptive within BFW's recorded labels and sampling design. "
+        "Balanced counts and excluding subgroup labels from classifier predictors do not "
+        "establish fairness. Small identity counts, rare errors, label limitations and "
+        "population shift prevent deployment fairness claims; no service harm, equal treatment "
+        "or representative deployment error distribution was validated.",
+    ]
+    return "\n\n".join(lines)
+
+
+def threshold_sensitivity_rows(aggregate_root: Path = AGGREGATE_ROOT) -> List[Dict[str, Any]]:
+    """Read distinct development/test evidence; never infer scores from histograms."""
+    root = Path(aggregate_root)
+    comparison = _load_optional(root, "pipeline_comparison_metrics.json") or {}
+    held_out = comparison.get("held_out_metrics") or {}
+    specifications = (
+        ("YuNet + SFace", root),
+        ("SCRFD + SFace", root / MIXED_PIPELINE_DIRNAME / "scrfd-sface"),
+        ("YuNet + ArcFace", root / MIXED_PIPELINE_DIRNAME / "yunet-arcface"),
+        ("SCRFD + ArcFace", root / ARCFACE_REVIEW_DIRNAME),
+    )
+    rows: List[Dict[str, Any]] = []
+    for name, base in specifications:
+        policy = _load_optional(base, "bfw_open_set_threshold.json") or {}
+        metrics = _load_optional(base, "bfw_open_set_test_metrics.json") or {}
+        method = _artefact_value(metrics, "methods", METHOD_B) or {}
+        comparator: Mapping[str, Any] = {}
+        if name == "SCRFD + ArcFace":
+            comparator = next((value for key, value in held_out.items()
+                               if "scrfd" in key and "arcface" in key and isinstance(value, Mapping)), {})
+        development_points = policy.get("operating_points") or comparator.get("operating_points") or {}
+        frozen = (policy.get("status") == OPEN_SET_STATUS_FROZEN
+                  if policy else comparator.get("threshold_status") == OPEN_SET_STATUS_FROZEN)
+        primary_target = policy.get("primary_fpir_target", comparator.get("primary_fpir_target", PRIMARY_FPIR_TARGET))
+        coverage = method.get("coverage") or comparator.get("coverage") or {}
+        for target in FPIR_TARGETS:
+            point = development_points.get(str(target)) or {}
+            threshold = point.get("threshold")
+            observed = (method.get("operating_points") or comparator.get("test_operating_points") or {}).get(str(target)) or {}
+            if not observed and target == primary_target:
+                observed = method.get("primary_operating_point") or comparator.get("rates") or {}
+            valid = (frozen and _is_number(threshold) and _is_number(observed.get("threshold"))
+                     and math.isclose(float(cast(float, threshold)), float(observed["threshold"]), rel_tol=0, abs_tol=1e-10))
+            row: Dict[str, Any] = {
+                "pipeline": name, "development_target_fpir": target,
+                "threshold": threshold if frozen else None,
+                "development_fpir": point.get("development_fpir") if frozen else None,
+                "test_status": "available" if valid else "not available",
+                "test_fpir": observed.get("fpir") if valid else None,
+                "false_reviews_per_1000_scored_non_mated": None,
+                "test_tpir_rank1": observed.get("tpir_rank1") if valid else None,
+                "scored_mated_probes": observed.get("scored_mated_probes") if valid else None,
+                "scored_non_mated_probes": observed.get("scored_non_mated_probes") if valid else None,
+                "intended_mated_probes": coverage.get("intended_mated_probes"),
+                "correctly_detected_mated_probes": None,
+                "end_to_end_duplicate_detection_rate": None,
+            }
+            if valid and _is_number(row["test_fpir"]):
+                row["false_reviews_per_1000_scored_non_mated"] = 1000 * float(row["test_fpir"])
+            if valid and all(_is_number(row[key]) for key in ("test_tpir_rank1", "scored_mated_probes", "intended_mated_probes")):
+                intended = int(row["intended_mated_probes"])
+                raw_count = float(row["test_tpir_rank1"]) * int(row["scored_mated_probes"])
+                if math.isfinite(raw_count):
+                    detected = round(raw_count)
+                    if (intended > 0 and 0 <= detected <= intended
+                            and math.isclose(raw_count, detected, rel_tol=0, abs_tol=1e-6)):
+                        row["correctly_detected_mated_probes"] = detected
+                        row["end_to_end_duplicate_detection_rate"] = detected / intended
+            rows.append(row)
+    return rows
+
+
+def render_threshold_sensitivity(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """Descriptive sensitivity at already-frozen policies, with missing evidence explicit."""
+    lines = [
+        "Development FPIR budgets of 0.1%, 0.3% and 1% represent illustrative research "
+        "budgets of 1, 3 and 10 false reviews per 1,000 scored non-mated probes. The "
+        "primary 0.3% budget is not an empirically validated moderation requirement. "
+        "No reviewer capacity, duplicate prevalence, harm weighting or cost of a missed "
+        "duplicate was measured to justify an optimal policy. A real requirement would "
+        "need those inputs and representative validation.",
+        "Each row uses its existing development-selected, frozen threshold unchanged. "
+        "The target column is a development constraint, not the observed test FPIR. "
+        "Test workload counts false referrals per 1,000 successfully scored non-mated "
+        "images; it excludes true referrals and unresolved extraction failures, so it "
+        "is not the total review queue. Detected/intended retains failed mated probes. "
+        "The count is recovered from recorded conditional TPIR times its scored-mated "
+        "denominator, only when it identifies a whole count within floating-point tolerance.",
+    ]
+    table_lines = [
+        "| Configured pipeline | Development target | Frozen threshold | Development FPIR | Test FPIR | False reviews / 1,000 scored non-mated | Correctly detected / intended mated (end-to-end) |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in threshold_sensitivity_rows(aggregate_root):
+        workload = row["false_reviews_per_1000_scored_non_mated"]
+        detection = row["end_to_end_duplicate_detection_rate"]
+        detected = (f"{row['correctly_detected_mated_probes']:,} / {row['intended_mated_probes']:,} "
+                    f"({format_percentage(detection)})" if _is_number(detection) else "not available")
+        table_lines.append(f"| {row['pipeline']} | {format_percentage(row['development_target_fpir'])} | "
+                           f"{format_number(row['threshold'], 6)} | {format_percentage(row['development_fpir'])} | "
+                           f"{format_percentage(row['test_fpir'])} | "
+                           f"{format_number(workload, 2) if _is_number(workload) else 'not available'} | {detected} |")
+    lines.append("\n".join(table_lines))
+    lines += [
+        "This is descriptive sensitivity, not a new paired significance analysis. "
+        "The original paired intervals support interpretation at the primary frozen "
+        "policies only; they cannot be transferred to the other budgets. Thresholds "
+        "are not reselected using test outcomes. Different budgets can change the "
+        "detection/workload trade-off, so these observations do not establish an "
+        "optimal threshold or a robust ranking across operational requirements.",
+        "Missing held-out operating points remain not available. In particular, older "
+        "SCRFD + ArcFace comparison artefacts store all development policies but only "
+        "the primary test point. Development TPIR/FPIR and aggregate score histograms "
+        "cannot supply the missing held-out outcomes. Future comparison runs save "
+        "distinct test_operating_points for all already-frozen policies; refreshing "
+        "this report does not run inference or fill those gaps.",
+    ]
+    return "\n\n".join(lines)
+
+
+def render_claim_boundaries() -> str:
+    """Keep measured observations, interval-supported directions and open claims apart."""
+    return "\n\n".join([
+        "Verified evidence: saved benchmark processing counts, frozen policies, test "
+        "rates and measured stage timings describe the recorded configurations and "
+        "environment. Synthetic and contract tests check implementation behavior, "
+        "not real-world recognition accuracy or the truth of broader research claims.",
+        "Statistically supported directions: a primary paired identity-bootstrap "
+        "difference whose exploratory 95% interval excludes zero supports that "
+        "direction under this fixed protocol. An interval including zero is unresolved, "
+        "not evidence of equivalence or no effect. These unadjusted comparisons "
+        "condition on fitted models, frozen thresholds and galleries; they exclude "
+        "selection, calibration and population-shift uncertainty.",
+        "Descriptive evidence: the three-budget sensitivity, subgroup patterns, "
+        "gallery repeats, feature ablations and observational image-quality strata "
+        "are exploratory. Detector interventions provide paired intervals for "
+        "processing coverage within their fixed cohorts, not a validated replacement "
+        "recognition policy. Conditional common-success comparisons describe a "
+        "selected subset; approximate mixed-pipeline timings and workload scaling "
+        "examples remain estimates rather than new direct measurements.",
+        "Claims requiring further investigation: a universally best recogniser or "
+        "detector, stable rankings across budgets or new populations, deployment "
+        "fairness, million-profile performance, calibrated real-world duplication "
+        "probabilities, and economically optimal moderation policies. No independent "
+        "deployment validation, moderator study or isolated architecture experiment "
+        "establishes those claims here.",
+    ])
+
+
 def render_feedback_response(aggregate_root: Path = AGGREGATE_ROOT) -> str:
-    """Five supervisor requests, each supported by the same saved evidence as the report."""
+    """Successive supervisor requests, supported by saved evidence and explicit limits."""
     parts = (
         ("1. Threshold calibration and validation across datasets", render_threshold_validation_part),
         ("2. Dataset limitations and generalisability", render_dataset_limits_part),
@@ -15247,6 +15533,7 @@ def render_feedback_response(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         ("5. Statistical support for the main conclusion", render_statistical_support_part),
     )
     lines = ["# Evidence addressing supervisor feedback", "",
+             "Updated for feedback dated 19 October 2026; the original five evidence sections are retained.", "",
              "**Research objective:** A deployment-oriented evaluation methodology for duplicate face detection "
              "that incorporates unprocessed images, human-review workload and computational cost into "
              "the comparison of detector–recogniser pipelines.", "",
@@ -15254,6 +15541,12 @@ def render_feedback_response(aggregate_root: Path = AGGREGATE_ROOT) -> str:
              "experimental results and their limitations; the sections below make each feedback point explicit.", ""]
     for title, renderer in parts:
         lines += [f"## {title}", "", "```text", renderer(aggregate_root), "```", ""]
+    lines += ["## 6. Dataset choice, project-defined protocol and comparison scope", "",
+              render_methodological_scope(aggregate_root), "",
+              "## 7. Moderation budgets and sensitivity of the frozen policies", "",
+              render_threshold_sensitivity(aggregate_root), "",
+              "## 8. Verified evidence and claims requiring further investigation", "",
+              render_claim_boundaries(), ""]
     lines += ["The detector sensitivity study measures controlled processing interventions on fixed "
               "benchmark images. Its configurations do not replace the main frozen recognition policies. "
               "Higher one-face coverage is not evidence of better duplicate identification by itself. "

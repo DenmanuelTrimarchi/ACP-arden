@@ -7,6 +7,14 @@ similarity signal can surface duplicate profiles in a 1:N gallery under a
 human-review decision policy.
 
 Everything lives in one executable Python file, [ACP_arden.py](ACP_arden.py).
+The README, executable, dependency files and tests are kept in the repository
+root; the published measurements and reports are under `results/aggregate/`.
+
+For the response to the **19 October 2026 feedback**, see the
+[report-writing guide](REPORT_WRITING_GUIDE.md) and the generated
+[feedback evidence](results/aggregate/SUPERVISOR_FEEDBACK_RESPONSE.md).
+The guide also identifies thesis revisions that require the module handbook
+or an approval record rather than a code change.
 
 ## Research question
 
@@ -65,7 +73,8 @@ interchangeable:
 
 ## What it does
 
-Five experiments, run in a fixed order:
+Twelve experiments and additional controlled comparisons are available. The
+five baseline experiments run in a fixed order:
 
 1. **Threshold candidates** from LFW `pairsDevTrain.txt` only. Six candidate
    strategies are produced; none is selected.
@@ -152,6 +161,10 @@ MODERATION
  25. Open human review moderation
 
  26. Exit (or q)
+
+ADDITIONAL CONTROLLED STUDY
+ 27. Run controlled detector settings on fixed benchmark images
+ 28. Show the saved detector-settings study
 ```
 
 Option 23 runs Experiments 7 and 8 and rebuilds the figures. It does not run
@@ -233,9 +246,10 @@ network, so the code can be checked before any biometric data is touched.
 Neither the benchmark images nor any model binary is stored in this
 repository, and nothing here downloads them automatically. Four weight files
 are involved in total: the **two baseline OpenCV models** (YuNet detection,
-SFace recognition), which every experiment except the comparison needs, and
+SFace recognition), used by the baseline and relevant comparison arms, and
 the **two optional InsightFace comparison models** (SCRFD `det_10g`, ArcFace
-`w600k_r50`), which only Experiment 8 needs. Their locations are
+`w600k_r50`), needed for Experiments 8–12 and controlled comparisons using
+those components. Their locations are
 read from a git-ignored `.env` beside `ACP_arden.py`:
 
 ```bash
@@ -252,13 +266,26 @@ cp .env.example .env   # then fill in your own storage paths
 | `FACE_CACHE_ROOT` | Optional embedding cache; leave unset by default |
 | `FACE_BFW_ROOT` | Optional. Extracted BFW tree, for Experiment 6 |
 | `FACE_BFW_METADATA_ROOT` | Optional. Where the official BFW datatable lives; defaults to `FACE_BFW_ROOT` |
-| `FACE_ARCFACE_MODEL_ROOT` | Required only to rerun Experiment 8 locally. It must point directly to the verified `det_10g.onnx` and `w600k_r50.onnx` files. The repository already contains the aggregate evaluated results, but never the weight files |
+| `FACE_ARCFACE_MODEL_ROOT` | Required for Experiments 8–12 and controlled comparisons using SCRFD or ArcFace. It must point directly to the verified `det_10g.onnx` and `w600k_r50.onnx` files. Aggregate evaluated results are included; weights are excluded |
 
 **Datasets.** LFW (Labeled Faces in the Wild) is the primary dataset; CPLFW
 (Cross-Pose LFW) is the secondary one. CPLFW ships two non-interchangeable
 image sets — the authors' raw, unconstrained images (`images.rar`) and a
 separately pre-cropped and aligned copy (`cp-aligned.zip`). Every result
 records which variant it scored; the published figures use `raw`.
+
+**Why these datasets.** [LFW](https://people.cs.umass.edu/~elm/papers/lfw.pdf)
+provides a documented verification reference; its already detected and
+funnelled images also limit what it can establish about difficult uploads.
+[CPLFW](https://www.whdeng.cn/CPLFW/Cross-Pose-LFW.pdf) challenges the
+near-saturated LFW comparison with stronger pose variation and harder negative
+pairs. Here its raw images test extraction as well as recognition, using the
+unchanged LFW development threshold. Shared identities prevent treating these
+as independent population replications.
+[BFW](https://arxiv.org/abs/2002.06483) supplies repeated photographs and
+balanced published subgroups, enabling a separate identity-disjoint gallery
+study and descriptive subgroup audit. These complementary roles justify the
+selection; they do not establish representative dating-service performance.
 
 **Models.** Two pinned OpenCV Zoo files, verified by SHA-256 before either is
 loaded, and refused rather than used if a digest does not match:
@@ -399,6 +426,10 @@ pytest -v
 pyright                 # configuration is pinned in pyrightconfig.json
 ```
 
+The 19 October 2026 revision passed Python compilation, **629 pytest tests**
+and Pyright with zero errors or warnings. These checks validate implementation
+behaviour; the published benchmark measurements remain those of the saved runs.
+
 The self-tests cover cosine similarity, L2 normalisation, confusion-matrix
 accounting, the derived rates, ROC-AUC, EER, candidate generation,
 deterministic selection, rejection of non-frozen thresholds, failure
@@ -484,6 +515,29 @@ The policy is written with status `open_set_frozen`, and
 `require_frozen_open_set_policy` refuses to score the held-out test partition
 with anything else.
 
+The targets correspond to **1, 3 and 10 false referrals per 1,000 successfully
+scored new-identity searches** on development data. They are illustrative
+research budgets. No moderator study, service-level requirement or measured
+error cost establishes 3 per 1,000 as an acceptable operational policy. The
+test set measures whether the frozen policies transfer; it never chooses a
+replacement threshold.
+
+The saved YuNet + SFace outcomes show substantial sensitivity. At development
+targets of 0.1%, 0.3% and 1%, held-out conditional TPIR@1 is respectively
+42.99%, 92.57% and 94.69%; realised false referrals are 0, 5.25 and 17.84 per
+1,000 scored non-mated probes. The tighter budget sacrifices detection, while
+the primary and looser budgets are exceeded on test. Zero observed referrals
+at the tightest setting does not establish zero population risk.
+
+The generated reports place development targets beside realised held-out
+rates, processing denominators and end-to-end detection for all available
+pipeline operating points. The original SCRFD + ArcFace artefact contains
+held-out results only for the primary target; its other development points
+are not substituted for test results. Updated comparison runs save every
+pre-frozen target's held-out outcome. Current evidence cannot establish a
+four-pipeline ranking across all budgets. These sensitivity comparisons are
+descriptive, without paired intervals for the changes between budgets.
+
 ### Confidence intervals
 
 Several probes can belong to one identity, so images are **not** resampled
@@ -519,6 +573,47 @@ rather than guessing at a variant.
 **This project defines its own open-set protocol from the official BFW data.
 BFW publishes verification and bias-analysis protocols; it does not publish an
 open-set identification protocol, and none is implied.**
+
+### Exact BFW construction and its consequences
+
+The fixed seed is `20260727`. Within each of the eight metadata subgroups,
+sorted identities are shuffled with a subgroup-specific seed, then split
+equally into development and test. Eligible identities in each partition
+are split equally again into enrolled and non-mated identities using a
+partition-specific subgroup seed. Odd counts go to development, then to the
+enrolled side. Identities with fewer than eight images cannot be enrolled and
+are assigned to the non-mated side. No split depends on the identifier secret.
+
+Within each identity, filenames are sorted lexically. For enrolled identities,
+the first three images are enrolment candidates and the next five are mated
+probes. For non-mated identities, the first fifteen images are probes and no
+image is enrolled. The one-image control uses the first enrolment image;
+the three-image method needs at least two successful extractions. Selection
+precedes scoring and is identical across the configured pipelines.
+
+With the evaluated 800-identity corpus, **each partition** has 400 identities:
+200 intended gallery identities, 600 enrolment images, 1,000 mated probes
+and 3,000 non-mated probes. Thus 9,200 of the corpus's 20,000 images enter
+this protocol; 10,800 are unused. These are intended counts, before processing
+failures. The 1:3 probe ratio is a sampling design, not duplicate prevalence.
+
+The equal splits retain separate identities for development and evaluation
+within the available corpus. Three-image enrolment permits a compact
+multi-image control; five and fifteen probes increase the observed outcome
+counts within a feasible local experiment. Fifteen probes per non-mated
+identity improve probe-rate granularity, but 3,000 correlated probes still
+represent only 200 identities. Bootstrap sampling therefore uses identities.
+
+Lexical order may preserve collection or quality patterns. One identity split,
+a small fixed gallery and this enrolment rule limit generalisation. Other
+gallery seeds in the diagnostics do not replicate the development/test split.
+Published BFW verification scores and NIST identification rates use different
+protocols and cannot serve as directly comparable performance baselines.
+The protocol summary records aggregate counts and fingerprints; future runs
+also publish the explicit selection recipe. Exact reruns need the same
+dataset version, image files, seed, software and pinned model files. The
+canonical cache preserves shared run outcomes locally; it does not guarantee
+bit-identical fresh detection on another machine.
 
 ### Optional extensions
 
@@ -878,8 +973,8 @@ only the plan, aggregate results, report and figure are published. Main result
 files are fingerprinted before the run and checked afterwards.
 
 The generated [supervisor-feedback response](results/aggregate/SUPERVISOR_FEEDBACK_RESPONSE.md)
-maps all five requested improvements to the saved evidence, including the
-calibration, dataset-scope, cost and paired-statistics discussions.
+maps the September and 19 October requests to the saved evidence, including
+protocol justification, threshold sensitivity and the boundaries of the claims.
 
 Detection is **not bit-stable across processes on this platform**, and the
 project does not claim otherwise.
@@ -935,6 +1030,36 @@ hold it.
 
 ## Limitations
 
+**What the comparison controls.** All four combinations share intended BFW
+identities, gallery roles, images, metrics and the development/test boundary.
+Each receives its own development-calibrated similarity policy. Detector
+confidence scales, input sizes, landmark outputs, recogniser alignment,
+preprocessing, capacity and external training data differ. Crossing the
+components therefore estimates changes between **configured pipelines**;
+it does not isolate the intrinsic effect of a neural architecture or training
+loss. The detector-settings intervention isolates confidence or canvas
+changes within each detector, but measures processing eligibility rather than
+duplicate-identification accuracy. Matching the same numerical confidence
+across different models would not remove this limitation.
+
+**How to read the findings.** At the frozen primary operating point,
+SCRFD + ArcFace has the highest observed end-to-end detection: 96.70%.
+Its 9.50 percentage-point advantage over YuNet + SFace has an exploratory
+paired 95% interval of 7.30–12.10. The FPIR difference against YuNet + ArcFace
+has an interval spanning zero, leaving that difference unresolved; this is
+not evidence of equivalence. The best pipeline was identified from these
+test results, and the intervals are unadjusted for multiple comparisons.
+The threshold and gallery-size trends remain descriptive. Deployment
+performance, economic optimality and reviewer effectiveness require new data.
+
+**Subgroup evidence.** Each held-out subgroup contains only 25 enrolled and
+25 non-mated identities; repeated probes do not enlarge the independent
+identity population. The reported subgroup rates and intervals describe
+this benchmark under one global policy. The dataset's fixed labels and
+balanced sampling do not represent a service population, validate equal
+treatment or establish operational harm. No fairness certification or
+subgroup-specific intervention follows from these results.
+
 LFW and CPLFW carry their own demographic skew, which limits how
 representative any figure here is of a real user population.
 Face-extraction failures are excluded from the accuracy metrics but reported
@@ -952,10 +1077,10 @@ For the supplementary open-set experiment specifically:
   identities only; they do not extend to any other population.
 - Benchmark demographics do not represent a real dating-application user
   population, so subgroup figures are not deployment estimates.
-- Every rate is conditional on the coverage figures printed beside it. An FPIR
-  measured over a small surviving fraction of the protocol is not comparable
-  with one measured over nearly all of it, which is why the code refuses to
-  print one without the other.
+- Conditional rates use successfully scored cases; end-to-end detection uses
+  all intended mated probes. An FPIR measured over a small surviving fraction
+  of the protocol needs its processing coverage to be interpreted alongside
+  an FPIR measured over nearly all of it.
 - Duplicate-profile detection is **not** solved by anything here.
 
 ## What this artefact is
@@ -977,9 +1102,8 @@ direction.
 
 ## Attribution and licence
 
-All code in this repository is original — no file contains code copied or
-materially adapted from an external source. What *is* external is recorded in
-full in [REFERENCES.md](REFERENCES.md), and marked in the source itself with a
+External models, datasets, APIs and published methods are recorded in
+[REFERENCES.md](REFERENCES.md), and marked in the source itself with a
 four-field attribution header at each point where an external model, dataset,
 API or published method enters the pipeline:
 
@@ -992,7 +1116,7 @@ API or published method enters the pipeline:
 | ROC-AUC identity | Hanley and McNeil (1982), Radiology 143(1) |
 | Libraries | OpenCV, NumPy, Pillow, Streamlit — used through their documented public APIs |
 
-Neither dataset nor either model file is redistributed here.
+Benchmark images and pretrained model files are excluded from the repository.
 
 Made available for academic assessment and review — see [LICENSE](LICENSE) for
 the terms, which reserve all other rights.
