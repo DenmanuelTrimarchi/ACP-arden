@@ -1,86 +1,28 @@
 #!/usr/bin/env python3
-"""COM7014 Advanced Computing Project — face verification coursework.
+"""COM7014 Advanced Computing Project: duplicate-profile screening.
 
-The whole project lives in this one file. It measures face verification
-pipelines assembled from four pretrained models, none of which is modified.
-Two of them find the face in a photograph: YuNet, from OpenCV Zoo, and SCRFD,
-from InsightFace. The other two turn that face into a vector of numbers that
-can be compared: SFace, from OpenCV Zoo, which produces 128 values, and
-ArcFace, from the InsightFace buffalo_l pack, which produces 512. Any detector
-can feed any recogniser, so the pipeline is a choice of pairing rather than a
-fixed design.
+Compare four frozen pretrained detector-recogniser combinations assembled from
+YuNet, SCRFD, SFace and ArcFace. The evaluation covers LFW verification, raw
+CPLFW threshold transfer and a project-defined BFW open-set gallery protocol.
+It records processing coverage, rank-aware identification, false referrals,
+latency and model storage. A logistic-regression review classifier is fitted
+on development identities separately from the face models.
 
-Two questions are put to it. The first is the standard one-to-one problem:
-shown two unconstrained photographs, does the pipeline judge correctly whether
-they depict the same person? The second is harder, and is what the project is
-really about. When a single photograph is searched against a gallery of many
-enrolled profiles, can the same similarity score be trusted to flag a profile
-that may already be registered?
+Development and test boundaries are enforced independently for each task:
 
-The contribution is a deployment oriented evaluation methodology for duplicate
-face detection, which counts unprocessed images, human review workload and
-computational cost when comparing detector and recogniser pipelines. The
-contribution is the reproducible empirical comparison; no new model or metric
-is claimed.
+    pairsDevTrain.txt -> transfer-threshold candidates
+    pairsDevTest.txt  -> selection and freezing
+    pairs.txt         -> ten-fold evaluation, thresholds fitted on nine folds
+    pairs_CPLFW.txt   -> unchanged frozen development threshold
+    BFW               -> identity-disjoint development and held-out evaluation
 
-The research question is:
+Duplicate-profile screening refers high similarity to another enrolled
+identity. Profile-photo consistency refers low similarity to the profile's
+own template. Extraction failures remain unresolved; no automatic sanction
+is applied.
 
-    How effectively can pretrained face models screen new profile photographs
-    for duplicate identities under a human review policy, once unprocessed
-    photographs are counted, and which combination of detector and recogniser
-    best balances duplicates detected, moderator workload and computational
-    cost?
-
-No face detector or face-recognition network is trained or fine-tuned; each is
-used exactly as published. What this project supplies is the arrangement
-around them — enrolment, threshold calibration and a small review classifier —
-together with the measurements that show what each addition is actually worth.
-
-Five arrangements are compared on the same BFW protocol. They show the
-development of the system; adjacent differences can include calibration and
-coverage effects and are not automatically isolated component effects:
-
-    1  one enrolled photograph, threshold borrowed from 1:1 verification
-    2  three photographs averaged into a template, same borrowed threshold
-    3  the same template, but a threshold calibrated for gallery search
-    4  a logistic-regression classifier placed on top of the search
-    5  SCRFD and ArcFace substituted for YuNet and SFace, calibrated afresh
-
-Layer 5 earns its place for a particular reason. Swapping in stronger models
-shows how much of any gain belongs to the framework and how much simply
-belongs to better components. The classifier in layer 4 is the only model
-trained here, and it is fitted on BFW development identities that appear
-nowhere in the held-out test set.
-
-Nothing in this project decides anything about a person. Every result is a
-signal that opens a case for a human reviewer.
-
-Which direction counts as suspicious depends on the question being asked, and
-the two are easily confused:
-
-    duplicate-profile screening   a *high* similarity to another enrolled
-                                  gallery identity opens a duplicate-profile
-                                  review
-    profile-photo consistency     a *low* similarity to the profile's own
-                                  enrolled template opens an inconsistency
-                                  review
-    extraction failure            no match or mismatch decision is made
-
-Keeping development data apart from evaluation data is enforced in code rather
-than merely promised in prose:
-
-    pairsDevTrain.txt -> candidate thresholds only
-    pairsDevTest.txt  -> deterministic selection, then freezing
-    pairs.txt         -> official ten-fold CV, threshold fitted on nine folds
-    pairs_CPLFW.txt   -> raw CPLFW under the separate frozen development threshold
-
-Run it with the VS Code play button, or:
-
-    python ACP_arden.py                    # interactive menu
-    python ACP_arden.py --mode self-test   # deterministic synthetic tests
-
-No image dataset and no ONNX weight file is kept in the repository. Their
-locations are read from a local ``.env`` that Git ignores.
+Run ``python ACP_arden.py`` for the menu or use ``--help`` for command-line
+modes. Dataset and model locations are read from a local, ignored ``.env``.
 """
 
 # =============================================================================
@@ -153,16 +95,9 @@ RAW_ROOT = RESULTS_ROOT / "raw"
 DEFAULT_REVIEW_DB = RAW_ROOT / "review.sqlite"
 DEFAULT_GALLERY_MANIFEST = RAW_ROOT / "gallery_manifest.json"
 
-# Attribution. OpenCV, NumPy, Pillow and Streamlit are called through their
-# documented public APIs. Wherever an
-# external model, dataset, API or published method enters the pipeline, a
-# four-field attribution header records its origin immediately above the code
-# concerned. The complete register, with licences and digests, is REFERENCES.md.
+# Component references, licences and model digests are listed in REFERENCES.md.
+# Source headers identify the external models, datasets, APIs and methods used.
 # Benchmark images and pretrained model files are excluded from the repository.
-#
-# Reading order. The thirty numbered sections run from configuration through
-# to the launcher, so the file may be read from top to bottom in roughly the
-# order the pipeline executes.
 
 
 # =============================================================================

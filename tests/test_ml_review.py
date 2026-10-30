@@ -819,7 +819,7 @@ def test_figure_generation_keeps_publication_checks_in_section_28() -> None:
     assert "find_path_leaks(figures_root" in section
 
 
-def test_section_numbers_are_contiguous_and_documented() -> None:
+def test_section_numbers_are_contiguous_and_complete() -> None:
     import re
 
     source = _project_file("ACP_arden.py")
@@ -827,7 +827,6 @@ def test_section_numbers_are_contiguous_and_documented() -> None:
                       if int(m.group(1)) <= 40})
     assert numbers == list(range(1, len(numbers) + 1))
     assert len(numbers) == 30
-    assert "thirty numbered sections" in source
 
 
 # --- Experiment 8 evaluation path (synthetic stubs, no real weights) ----------

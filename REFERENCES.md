@@ -4,10 +4,10 @@ Sources for the pretrained models, benchmark datasets, libraries and evaluation
 methods used in this project. Model checksums identify the evaluated weight
 files; the source and model-weight licences are recorded separately.
 
-## Models (external artefacts, not code)
+## Pretrained models
 
-Neither file is committed to this repository. Each is verified against a pinned
-SHA-256 digest before it is loaded, and refused rather than used on a mismatch.
+The YuNet and SFace weights are stored outside the repository. The loader
+checks each file against its pinned SHA-256 digest and refuses a mismatch.
 
 **YuNet — face detection**
 
@@ -39,11 +39,11 @@ Both weight files are distributed through the OpenCV Zoo model repository
 (https://github.com/opencv/opencv_zoo), under `models/face_detection_yunet/`
 and `models/face_recognition_sface/` respectively.
 
-## Datasets (external inputs, not code)
+## Datasets
 
-Neither dataset is redistributed here. Both are used under their authors'
-published terms, and the archive checksums recorded in section 2 identify the
-exact copies this project evaluated.
+Dataset images are not redistributed. The experiments use the authors'
+published data under the applicable terms. Archive checksums in section 2 of
+`ACP_arden.py` identify the evaluated copies.
 
 ```text
 Title: Labeled Faces in the Wild: A Database for Studying Face Recognition in Unconstrained Environments
@@ -177,7 +177,7 @@ Date: 2007
 Availability: https://doi.org/10.1109/MCSE.2007.55
 ```
 
-### InsightFace, the Experiment 8 comparator
+### InsightFace components
 
 **Project:** InsightFace (deepinsight/insightface). **Model package:**
 `buffalo_l`. **Components evaluated:** SCRFD detection (`det_10g.onnx`) and
@@ -200,12 +200,6 @@ remain frozen during evaluation.
 **Redistribution:** none. Weight files are stored in private local research
 storage, are excluded from Git and from any release, and are never downloaded
 automatically by the programme.
-
-> The InsightFace pipeline is intended for evaluation solely within
-> non-commercial MSc research. The pretrained model files are stored outside the
-> public repository and are not redistributed. The project publishes only
-> aggregate benchmark results and provides full attribution to the original
-> model, software and research publications.
 
 The SCRFD + ArcFace comparison is recorded in
 `results/aggregate/pipeline_comparison_metrics.json`, including the evaluated
