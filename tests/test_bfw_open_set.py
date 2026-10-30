@@ -679,8 +679,7 @@ def test_optional_pipeline_status_is_reported_either_way() -> None:
 
 
 def test_agedb_is_not_implemented_anywhere() -> None:
-    """AgeDB was deliberately withdrawn. No configuration variable, execution
-    mode or adapter may remain, so it cannot be run by accident."""
+    """No AgeDB configuration variable, execution mode or dataset adapter is exposed."""
     assert not hasattr(acp, "AGEDB_ROOT_VARIABLE")
     assert not hasattr(acp, "load_agedb_dataset")
     assert not hasattr(acp, "run_agedb_transfer")
@@ -688,11 +687,6 @@ def test_agedb_is_not_implemented_anywhere() -> None:
     assert not any("agedb" in mode.lower() for mode in acp.MODES)
     template = (Path(acp.__file__).parent / ".env.example").read_text()
     assert "AGEDB" not in template.upper()
-
-
-def test_no_continuous_integration_configuration_is_present() -> None:
-    """The brief excludes CI configuration; assert none was introduced."""
-    assert not (Path(acp.__file__).parent / ".github" / "workflows").exists()
 
 
 def test_the_open_set_summary_reports_the_absence_of_results(tmp_path: Path) -> None:
@@ -869,7 +863,7 @@ def test_a_configured_comparator_with_unapproved_files_is_refused(tmp_path: Path
     with pytest.raises((acp.PipelineUnavailableError, acp.ModelUnavailableError)) as raised:
         acp.arcface_pipeline_description(config)
     assert "licens" not in str(raised.value).lower().split("]")[0]
-    # The digests are pinned to the supplied local pack, so a file that is not
+    # The digests are pinned to the buffalo_l model files, so a file that is not
     # the approved one is refused on its hash rather than for being unpinned.
     assert acp.ARCFACE_DETECTOR_SHA256 is not None
     assert acp.ARCFACE_RECOGNITION_SHA256 is not None

@@ -258,14 +258,16 @@ def test_the_readme_does_not_recommend_the_unsafe_install() -> None:
     assert "scripts/install_comparison_environment.sh" in text
 
 
-def test_the_readme_figure_inventory_matches_the_generated_files() -> None:
+def test_the_readme_links_to_figures_with_a_complete_caption_inventory() -> None:
     if not FIG.is_dir():
         pytest.skip("figures not generated")
     text = _text("README.md")
+    assert "results/figures/" in text
+    captions = (FIG / "FIGURE_CAPTIONS.md").read_text(encoding="utf-8")
     stems = sorted(p.stem for p in FIG.glob("*.png"))
-    assert f"holds {len(stems)} figures" in text
+    assert stems
     for stem in stems:
-        assert stem in text, f"README omits figure {stem}"
+        assert stem in captions, f"Caption inventory omits figure {stem}"
 
 
 def test_the_readme_names_the_authoritative_sources() -> None:

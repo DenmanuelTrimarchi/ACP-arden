@@ -8,8 +8,6 @@ Auto-generated from the published artefacts. Ordered to show what each layer was
 
 [NIST FRTE](https://pages.nist.gov/frvt/html/frvt1N.html) already evaluates identification errors, human-review scenarios and resource use. [Robinson et al. (2020)](https://openaccess.thecvf.com/content_CVPRW_2020/papers/w1/Robinson_Face_Recognition_Too_Bias_or_Not_Too_Bias_CVPRW_2020_paper.pdf) study BFW subgroup verification and threshold differences. This project applies those established concerns to its own identity-disjoint gallery protocol, crossed components and explicit failed-processing denominators. It does not claim that deployment-oriented evaluation was absent from prior work.
 
-See the [report-writing guide](../../REPORT_WRITING_GUIDE.md) for the requirement-to-evidence map, literature positioning and limits on interpretation.
-
 ## 1. LFW 1:1 verification
 
 LFW mean fold accuracy 99.28%, pooled FMR 0.33%, FNMR 1.11%, EER 0.78%, extraction failure 10.02%. This is a 1:1 pair task and its FMR is not comparable with the 1:N FPIR figures below. The official ten-fold protocol fits a threshold using the other nine folds for each held-out fold; the separate development-frozen transfer threshold is not used here.

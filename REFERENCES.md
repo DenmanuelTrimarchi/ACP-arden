@@ -1,51 +1,8 @@
-# Code attribution and reference register
+# References
 
-This register identifies every external source this artefact depends on, and
-states precisely what the dependency is: an **artefact** consumed (a pretrained
-model, a benchmark dataset), an **API** called, or a **published method** whose
-standard definition is implemented here.
-
-## Outcome of the review
-
-Every line of `ACP_arden.py` and of the test suite was reviewed for externally
-adapted code. **No file contains code copied or materially adapted from an
-external source.** Calling a library's documented public API is use of that
-library, not adaptation of its source; implementing a standard statistical
-definition from its published description is not adaptation of any particular
-implementation.
-
-Attribution headers are nonetheless recorded in the source at each point where
-an external model, dataset, API or published method enters the pipeline, so a
-reader can trace the provenance of every component without consulting this file.
-They use the four-field form:
-
-```python
-##############
-# Title: Short title of the adapted code or method
-# Author: Author name, organisation or project
-# Date: Year or full date where known
-# Availability: Stable URL, DOI or repository location
-##############
-```
-
-## Reviewed areas
-
-The table lists only areas a reviewer could reasonably question on provenance
-grounds. Every one was confirmed to be original project code.
-
-| Code area | Section | External source | Adaptation status | Licence checked |
-|---|---|---|---|---|
-| `YuNetDetector` wrapper around `cv2.FaceDetectorYN` | 6 | None — OpenCV's documented public API only; the YuNet weights are an external artefact | Original | MIT (weights) |
-| `SFaceEmbedder` wrapper around `cv2.FaceRecognizerSF` | 7 | None — OpenCV's documented public API only; the SFace weights are an external artefact | Original | Apache-2.0 (weights) |
-| `l2_normalize`, `cosine_similarity` | 8 | None — standard vector algebra written independently | Original | Not applicable |
-| LFW and CPLFW pair-file parsing | 9 | None — the *file formats* are defined by the dataset authors; the parsers are original | Original | Not applicable |
-| `roc_auc` rank-based implementation | 10 | None — the ROC-AUC/Wilcoxon–Mann–Whitney rank identity is a standard statistical result, implemented here without reference to another codebase | Original | Not applicable |
-| `equal_error_rate`, `roc_points`, `confusion_matrix` | 10 | None — standard definitions implemented independently, deliberately avoiding a scikit-learn dependency | Original | Not applicable |
-| `percentile` | 10 | None — linear-interpolation percentile, matching NumPy's documented default method | Original | Not applicable |
-| Two-stage calibration and the frozen-threshold guard | 11 | None — this project's own methodological design | Original | Not applicable |
-| Bounded image loading and EXIF orientation handling | 5 | None — uses Pillow's documented `ImageOps.exif_transpose`; the bounds and failure taxonomy are project-specific | Original | Not applicable |
-| Deterministic 1:N gallery construction | 13 | None — this project's own experimental design | Original | Not applicable |
-| Streamlit review page | 16 | None — standard Streamlit widgets composed for this project | Original | Not applicable |
+Sources for the pretrained models, benchmark datasets, libraries and evaluation
+methods used in this project. Model checksums identify the evaluated weight
+files; the source and model-weight licences are recorded separately.
 
 ## Models (external artefacts, not code)
 
@@ -142,20 +99,7 @@ partition used by Experiment 6 is constructed by this project from the official
 data and metadata, and is identified in every artefact by its own protocol
 version string so it can never be mistaken for an upstream standard.
 
-AgeDB was considered as an optional cross-dataset transfer test and then
-**withdrawn**. No AgeDB adapter, configuration variable, execution mode or
-result exists in this artefact, and no AgeDB claim appears in the research
-conclusions. The reference is retained solely so the git history remains
-interpretable; the dataset was never processed for a published figure.
-
-```text
-Title: AgeDB: The First Manually Collected, In-the-Wild Age Database
-Author: Moschoglou, S., Papaioannou, A., Sagonas, C., Deng, J., Kotsia, I. and Zafeiriou, S., Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition Workshops (CVPRW)
-Date: 2017
-Availability: https://ibug.doc.ic.ac.uk/resources/agedb/
-```
-
-## Published methods implemented independently
+## Evaluation methods
 
 ```text
 Title: The Meaning and Use of the Area under a Receiver Operating Characteristic (ROC) Curve
@@ -174,8 +118,7 @@ The open-set identification metrics follow the definitions used by NIST's 1:N
 evaluation: FPIR as the proportion of non-mated searches returning at least one
 candidate above threshold, and FNIR at rank *k* as the proportion of mated
 searches that fail to return the correct mate within rank *k* above threshold.
-The definitions are implemented independently in section 20; no NIST code is
-used or adapted.
+Section 20 implements these metric definitions.
 
 ```text
 Title: Face Recognition Technology Evaluation (FRTE) 1:N Identification
@@ -207,11 +150,9 @@ Date: 1979
 Availability: https://doi.org/10.1214/aos/1176344552
 ```
 
-The review classifier of Experiment 7 uses logistic regression through
-scikit-learn's documented public API. The method is Cox's; the implementation is
-scikit-learn's; the feature construction, identity-disjoint splitting, threshold
-freezing and evaluation code in this project are original. No scikit-learn
-source is copied or adapted.
+The review classifier uses scikit-learn's logistic-regression API with
+project-specific search features, identity-disjoint splitting, threshold
+freezing and held-out evaluation.
 
 ```text
 Title: The Regression Analysis of Binary Sequences
@@ -252,11 +193,9 @@ treat it as doing so.
 part of an MSc academic research artefact. There is no commercial deployment,
 paid service, commercial decision-making or real-user exposure.
 
-**Code copied:** none. **Code materially adapted:** none. **What is used:** the
-documented public API and the pretrained artefacts. The models were created and
-trained externally by the InsightFace project; nothing here trains or fine-tunes
-them, and no ownership of the models, their training data or their weights is
-claimed.
+The project uses the documented public API and pretrained artefacts. The
+models were created and trained externally by the InsightFace project and
+remain frozen during evaluation.
 
 **Redistribution:** none. Weight files are stored in private local research
 storage, are excluded from Git and from any release, and are never downloaded
@@ -268,9 +207,9 @@ automatically by the programme.
 > aggregate benchmark results and provides full attribution to the original
 > model, software and research publications.
 
-The past tense is used only once held-out metrics exist. At the time of writing
-the comparison has not run, for the technical reason recorded in
-`pipeline_comparison_metrics.json`.
+The SCRFD + ArcFace comparison is recorded in
+`results/aggregate/pipeline_comparison_metrics.json`, including the evaluated
+models, frozen thresholds, software versions and held-out outcomes.
 
 ```text
 Title: InsightFace: 2D and 3D Face Analysis Project
@@ -297,8 +236,7 @@ GitHub: https://github.com/deepinsight/insightface
 
 ## Libraries
 
-Used through their documented public APIs. No library's source is adapted into
-this file.
+Used through their documented public APIs.
 
 ```text
 Title: The OpenCV Library
@@ -329,8 +267,7 @@ Availability: https://streamlit.io/
 ```
 
 Keyed opaque identifiers use HMAC as specified in RFC 2104, through Python's
-documented standard-library API. No third-party implementation is used and no
-code is adapted.
+standard-library API.
 
 ```text
 Title: HMAC: Keyed-Hashing for Message Authentication (RFC 2104)
@@ -346,18 +283,11 @@ Date: 2025
 Availability: https://docs.python.org/3/library/hmac.html
 ```
 
-## Literature positioning for the dissertation
+## Benchmark and identification references
 
-The [report-writing guide](REPORT_WRITING_GUIDE.md#1-academic-contribution-and-relationship-to-previous-research)
-distinguishes this project's empirical contribution from existing methods.
-Attribution of original project code above is not evidence that an evaluation
-concept is new to the literature.
-
-The guide uses Huang et al. (2007) for verification protocol context, Zheng and
-Deng (2018) for cross-pose verification, Deng et al. (2019) for ArcFace, and
-Robinson et al. (2020) for BFW subgroup verification and threshold analysis.
-It also acknowledges that NIST already reports identification errors,
-human-review scenarios and resource costs:
+These sources describe the verification, identification and subgroup evaluation
+methods used for context. Project measurements are recorded separately in
+`results/aggregate/`.
 
 - NIST, *Face Recognition Technology Evaluation (FRTE), 1:N Identification*,
   [evaluation definitions and resources](https://pages.nist.gov/frvt/html/frvt1N.html).
@@ -375,28 +305,7 @@ human-review scenarios and resource costs:
   Angular Margin Loss for Deep Face Recognition*, CVPR, pp. 4690–4699,
   [published paper](https://openaccess.thecvf.com/content_CVPR_2019/html/Deng_ArcFace_Additive_Angular_Margin_Loss_for_Deep_Face_Recognition_CVPR_2019_paper.html).
 
-Links checked 4 October 2026. These sources support methodological positioning;
-they do not supply any of the project's measured performance values. The
-comparison is a focused literature discussion, not a systematic review proving
-that no prior study used a similar combination of measures.
-
-## A note on spelling
-
-Prose and comments throughout this project use British English. Cited titles
-are reproduced verbatim, including where the original uses American spelling —
-most visibly *Labeled Faces in the Wild*, which is the dataset's published
-title and is not silently Britishised here. Citation fidelity takes precedence
-over house style: altering a title would misquote its authors.
-
-## Maintenance rule
-
-If code is later adapted from an external source, add a four-field header
-immediately above the adapted block and a matching row to the table above. Do
-not add a header where the origin cannot be verified: record the uncertainty
-instead and raise it for review. A header is a claim about provenance, and an
-unverifiable claim is worse than an acknowledged gap.
-
-## Added evaluation methods
+## Comparative analysis methods
 
 The final LFW evaluation implements the official ten-fold pair protocol,
 fitting an accuracy-maximising threshold on nine folds and evaluating the

@@ -21,7 +21,7 @@ The contribution is a deployment oriented evaluation methodology for duplicate
 face detection, which counts unprocessed images, human review workload and
 computational cost when comparing detector and recogniser pipelines. The
 contribution is the reproducible empirical comparison; no new model or metric
-is claimed. The report-writing guide positions this contribution against prior work.
+is claimed.
 
 The research question is:
 
@@ -162,9 +162,7 @@ DEFAULT_GALLERY_MANIFEST = RAW_ROOT / "gallery_manifest.json"
 #
 # Reading order. The thirty numbered sections run from configuration through
 # to the launcher, so the file may be read from top to bottom in roughly the
-# order the pipeline executes. Comments that explain a language construct are
-# addressed to a reader following the method rather than the syntax, and appear
-# at the first use of each construct.
+# order the pipeline executes.
 
 
 # =============================================================================
@@ -935,9 +933,7 @@ class DetectorSettings:
 # Date: 2000 (library); APIs used as documented in the OpenCV 4.x release series
 # Availability: https://docs.opencv.org/4.x/df/d20/classcv_1_1FaceDetectorYN.html
 ##############
-# The wrapper below is original code. It calls OpenCV's documented public API,
-# which is use of the library rather than adaptation of its source; the header
-# records the API's origin, not a borrowed implementation.
+# Wrap OpenCV's face-detection API with the project's one-face policy.
 class YuNetDetector:
     def __init__(
         self,
@@ -1127,9 +1123,7 @@ def cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
 
 # The two file *formats* parsed below are defined by the respective dataset
 # authors and are documented in the references recorded in section 2 (LFW:
-# Huang et al., 2007; CPLFW: Zheng and Deng, 2018). The parsers themselves are
-# original code, written against the authors' distributed files rather than
-# adapted from any other implementation.
+# Huang et al., 2007; CPLFW: Zheng and Deng, 2018).
 class ProtocolError(RuntimeError):
     """Raised for any malformed, inconsistent, or unsafe protocol file."""
 
@@ -1559,9 +1553,7 @@ def roc_points(scores: ScoreInput, labels: LabelInput) -> List[Dict[str, float]]
 # The equivalence this function relies on -- that the area under the ROC curve
 # equals the probability that a randomly chosen positive outranks a randomly
 # chosen negative, the quantity estimated by the Wilcoxon/Mann-Whitney rank
-# statistic -- is the standard result established in the reference above. The
-# implementation below is original and deliberately avoids a machine-learning
-# dependency for one statistic.
+# statistic -- is the standard result established in the reference above.
 def roc_auc(scores: ScoreInput, labels: LabelInput) -> float:
     """Rank-based ROC-AUC (the Mann-Whitney U identity), ties resolved with
     average ranks. Equivalent to the trapezoidal-rule area, without pulling in
@@ -4881,8 +4873,7 @@ def open_set_rates_at_threshold(
 # Experiments 6, 7 and 8 must report the same figures for the same method. Each
 # scoring the primary pipeline separately would let them drift, because OpenCV
 # detection is not bit-reproducible across processes. One run per partition is
-# therefore scored, cached and reused. Original project logic; no external
-# implementation is adapted.
+# therefore scored, cached and reused.
 
 CANONICAL_RUN_CACHE = RAW_ROOT / "canonical_primary_run.json"
 CANONICAL_CACHE_SCHEMA_VERSION = 3
@@ -5607,9 +5598,7 @@ def require_frozen_open_set_policy(payload: Mapping[str, Any], *, context: str =
 # Date: 1979
 # Availability: https://doi.org/10.1214/aos/1176344552
 ##############
-# The resampling principle is Efron's. The clustering by identity, the subgroup
-# stratification and the percentile interval below are written for this
-# project; no external implementation is copied or adapted.
+# Resample identity clusters with subgroup stratification and percentile intervals.
 
 # Replicate count is fixed rather than tuned. A larger count narrows the Monte
 # Carlo error of the interval endpoints, not the interval itself.
@@ -11167,7 +11156,6 @@ def action_run_detector_ablation(output_root: Path = AGGREGATE_ROOT) -> int:
     if written:
         _write_figure_captions(output_root, FIGURES_ROOT, written)
     write_markdown_artifact(Path(output_root)/'RESEARCH_REPORT.md', render_research_report(output_root))
-    write_markdown_artifact(Path(output_root)/'SUPERVISOR_FEEDBACK_RESPONSE.md', render_feedback_response(output_root))
     announce("Controlled detector settings complete; reports updated without changing main policies.")
     return 0
 
@@ -12000,9 +11988,6 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "protocol, crossed components and explicit failed-processing denominators. "
         "It does not claim that deployment-oriented evaluation was absent from prior work.",
         "",
-        "See the [report-writing guide](../../REPORT_WRITING_GUIDE.md) for the "
-        "requirement-to-evidence map, literature positioning and limits on interpretation.",
-        "",
         "## 1. LFW 1:1 verification",
         "",
     ]
@@ -12383,7 +12368,7 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 def generate_figures(
     *, aggregate_root: Path = AGGREGATE_ROOT, figures_root: Path = FIGURES_ROOT
 ) -> List[Path]:
-    """Produce every dissertation figure the available artefacts support."""
+    """Produce the research figures supported by the available artefacts."""
     plt = _figure_backend()
     # Imported here rather than at module scope, because matplotlib is only
     # required when figures are actually generated.
@@ -13292,7 +13277,6 @@ def generate_figures(
     (aggregate_root / "RESEARCH_REPORT.md").write_text(
         render_research_report(aggregate_root), encoding="utf-8"
     )
-    write_markdown_artifact(aggregate_root / "SUPERVISOR_FEEDBACK_RESPONSE.md", render_feedback_response(aggregate_root))
 
     # Figures are published artefacts and are scanned like any other.
     leaks = find_path_leaks(figures_root, forbidden_substrings=default_forbidden_path_substrings())
@@ -15521,40 +15505,6 @@ def render_claim_boundaries() -> str:
         "deployment validation, moderator study or isolated architecture experiment "
         "establishes those claims here.",
     ])
-
-
-def render_feedback_response(aggregate_root: Path = AGGREGATE_ROOT) -> str:
-    """Successive supervisor requests, supported by saved evidence and explicit limits."""
-    parts = (
-        ("1. Threshold calibration and validation across datasets", render_threshold_validation_part),
-        ("2. Dataset limitations and generalisability", render_dataset_limits_part),
-        ("3. Accuracy, latency, storage and review workload", render_cost_and_workload_part),
-        ("4. Detector settings and processing failures", render_detector_settings_part),
-        ("5. Statistical support for the main conclusion", render_statistical_support_part),
-    )
-    lines = ["# Evidence addressing supervisor feedback", "",
-             "Updated for feedback dated 19 October 2026; the original five evidence sections are retained.", "",
-             "**Research objective:** A deployment-oriented evaluation methodology for duplicate face detection "
-             "that incorporates unprocessed images, human-review workload and computational cost into "
-             "the comparison of detector–recogniser pipelines.", "",
-             "This response is generated from the saved results. The main research report contains the "
-             "experimental results and their limitations; the sections below make each feedback point explicit.", ""]
-    for title, renderer in parts:
-        lines += [f"## {title}", "", "```text", renderer(aggregate_root), "```", ""]
-    lines += ["## 6. Dataset choice, project-defined protocol and comparison scope", "",
-              render_methodological_scope(aggregate_root), "",
-              "## 7. Moderation budgets and sensitivity of the frozen policies", "",
-              render_threshold_sensitivity(aggregate_root), "",
-              "## 8. Verified evidence and claims requiring further investigation", "",
-              render_claim_boundaries(), ""]
-    lines += ["The detector sensitivity study measures controlled processing interventions on fixed "
-              "benchmark images. Its configurations do not replace the main frozen recognition policies. "
-              "Higher one-face coverage is not evidence of better duplicate identification by itself. "
-              "All comparisons remain limited to the evaluated benchmark populations and protocols.", "",
-              "Sources: [main research report](RESEARCH_REPORT.md), "
-              "[paired pipeline statistics](COMPARATIVE_STATISTICS_REPORT.md), "
-              "[full detector sensitivity study](detector_settings/DETECTOR_SETTINGS_REPORT.md).", ""]
-    return "\n".join(lines)
 
 
 def render_model_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) -> str:

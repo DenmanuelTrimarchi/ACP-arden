@@ -188,13 +188,22 @@ def test_methodology_uses_saved_counts_and_distinguishes_configurations_and_fair
     assert "200 non-mated" not in text
 
 
-def test_reports_include_new_sections_and_unresolved_does_not_mean_equivalent(tmp_path: Path) -> None:
-    response = acp.render_feedback_response(tmp_path)
+def test_report_includes_methodology_sensitivity_and_evidence_boundaries(tmp_path: Path) -> None:
     report = acp.render_research_report(tmp_path)
-    assert "1. Threshold calibration" in response and "5. Statistical support" in response
-    assert "19 October 2026" in response
-    for text in (response, report):
-        assert "not evidence of equivalence or no effect" in text
-        assert "Claims requiring further investigation" in text
-        assert "not available" in text
-        assert "Development FPIR budgets" in text
+    assert "Dataset selection and protocol justification" in report
+    assert "Frozen-threshold sensitivity and moderation requirements" in report
+    assert "Evidence boundaries and statistical interpretation" in report
+    assert "not evidence of equivalence or no effect" in report
+    assert "Claims requiring further investigation" in report
+    assert "not available" in report
+    assert "Development FPIR budgets" in report
+
+
+def test_detector_analysis_publishes_the_research_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(acp, "run_detector_ablation", lambda output_root: {})
+    monkeypatch.setattr(acp, "write_detector_ablation_outputs", lambda *args: None)
+    assert acp.action_run_detector_ablation(tmp_path) == 0
+    assert {path.name for path in tmp_path.glob("*.md")} == {"RESEARCH_REPORT.md"}
+    report = (tmp_path / "RESEARCH_REPORT.md").read_text(encoding="utf-8")
+    assert "Dataset selection and protocol justification" in report
+    assert "Frozen-threshold sensitivity and moderation requirements" in report

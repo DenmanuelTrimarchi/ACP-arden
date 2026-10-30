@@ -2,9 +2,7 @@
 # produced under. The programme refuses to report an evaluation as evidence if
 # an installed version differs (see check_dependency_contract).
 #
-# PyYAML was removed at the open-set revision: it is imported by neither the
-# programme nor any test. matplotlib returned with Experiment 7, which
-# generates the dissertation figures. Test-only packages live in
+# Evaluation figures use matplotlib. Test-only packages live in
 # requirements-dev.txt.
 numpy==2.5.1
 opencv-python-headless==4.13.0.92
