@@ -1,41 +1,49 @@
 # Duplicate face screening
 
-This repository contains my COM7014 Advanced Computing Project. I developed a
-local research prototype to compare pretrained face detection and recognition
-pipelines for duplicate-profile screening. My main concern was whether a high
-recognition accuracy remained useful once failed image processing, false
-referrals and computational cost were taken into account.
+This COM7014 Advanced Computing Project examines the use of pretrained face
+detection and recognition models for duplicate-profile screening. The study
+compares their ability to identify potential matches while accounting for
+failed image processing, false referrals and computational cost. The aim is
+to assess the complete screening process, since recognition accuracy alone
+does not describe how many photographs can actually be compared.
 
-The programme searches a photograph against a gallery of enrolled identities
-and identifies possible matches for human review. A referral is a similarity
-result, not evidence of fraud, photograph ownership or legal identity. The
-prototype does not reject registrations or apply automatic sanctions.
+The programme compares a submitted photograph with a gallery of enrolled
+reference identities. Potential matches are referred for human review. A
+similarity score cannot establish fraud, photograph ownership or legal
+identity, and the prototype does not reject registrations or apply automatic
+sanctions.
 
 The implementation is in [ACP_arden.py](ACP_arden.py). The repository also
-contains the tests, aggregate results and figures needed to inspect the work.
+contains the tests, aggregate results and figures supporting the evaluation.
 Benchmark photographs, model weights and private working files are stored
 separately and are not redistributed.
 
-## Project development
+## Design and development
 
-I began with one-to-one face verification using YuNet and SFace, then extended
-the evaluation to gallery search. This distinction matters: a threshold that
-works for a pair of photographs may produce many false referrals when one
-photograph is compared with hundreds of enrolled identities.
+Each pipeline combines a detector, which locates a face and its landmarks,
+with a recogniser, which represents the aligned face as a numerical vector.
+Cosine similarity measures how closely two representations correspond.
 
-The later experiments introduce three-image enrolment, gallery-specific
-threshold calibration and a logistic-regression review classifier. I also
-compared SCRFD and ArcFace with the original components, including the crossed
-combinations SCRFD + SFace and YuNet + ArcFace. All four face networks remain
-pretrained and frozen. Only the logistic-regression review classifier is
-fitted within this project, using development identities.
+The initial implementation combined YuNet detection with SFace recognition
+for one-to-one verification. The evaluation was subsequently extended to
+gallery search, where a photograph is compared with many enrolled identities.
+This introduces a different decision problem: a threshold suitable for a
+single pair may produce excessive false referrals across a larger gallery.
 
-The evaluation now records failed extractions and unsuccessful enrolment
-alongside conditional recognition performance. It includes shared cached
-outcomes, paired identity-bootstrap comparisons, threshold and gallery-size
-analyses, and controlled changes to detector settings. These additions make
-it possible to examine where an apparent improvement comes from, rather than
-relying on a single accuracy figure.
+Later experiments introduced three-image enrolment, gallery-specific threshold
+calibration and a logistic-regression review classifier. The comparison also
+expanded to include SCRFD and ArcFace, producing four detector–recogniser
+combinations: YuNet + SFace, SCRFD + SFace, YuNet + ArcFace and SCRFD + ArcFace.
+The pretrained face networks remain frozen throughout. Only the
+logistic-regression review classifier is fitted within the project, using
+development identities.
+
+The evaluation records failed extractions and unsuccessful enrolment as well
+as recognition performance among successfully processed photographs. Paired
+comparisons and controlled analyses examine the effects of component choice,
+thresholds, gallery size and detector settings. These extensions distinguish
+changes in recognition performance from changes in processing coverage and
+review workload.
 
 ## Installation
 
@@ -106,7 +114,7 @@ bash scripts/install_comparison_environment.sh
 
 The installer preserves the pinned `opencv-python-headless` build. Installing
 a second OpenCV distribution can change which implementation is imported and
-affect the recorded results. Direct pins are listed in
+affect the numerical results. Direct dependency versions are listed in
 `requirements-comparison-deps.txt`; `requirements-comparison-lock.txt` records
 the verified environment's full package set.
 
@@ -165,19 +173,24 @@ The existing reports can be read without loading models or rerunning inference.
 
 ## Evaluation approach
 
-For LFW, the development files generate and select a transfer threshold, which
-is then frozen. Final verification uses the official ten folds: each fold's
-threshold is fitted on the other nine. This avoids treating the overlapping
-development and final pair files as independent datasets. The separate frozen
-development threshold is applied unchanged to raw CPLFW.
+The LFW development files are used to generate candidate transfer thresholds,
+select one and freeze it. Final LFW verification follows the official ten-fold
+protocol, with each fold's threshold fitted on the other nine folds. This
+separates final verification from transfer calibration, as the development
+and final pair files overlap. The frozen development threshold is then applied
+unchanged to raw CPLFW to examine transfer across image conditions.
 
-For BFW, I constructed a project-defined open-set protocol rather than using
-an official identification benchmark. Identities are split within each subgroup
-between development and test, then between enrolled and non-mated roles. The
-splits use sorted identities, subgroup-specific seeded shuffles and seed
-`20260727`; they do not depend on the private identifier key. Odd counts go
-to development and then the enrolled side. Identities with insufficient images
-for enrolment remain non-mated.
+BFW is evaluated using a project-defined open-set protocol, rather than an
+official BFW identification benchmark. A mated probe is a photograph of a
+person whose reference images are enrolled in the gallery. A non-mated probe
+belongs to a person absent from the gallery. The two roles allow correct
+duplicate identifications and false referrals to be measured separately.
+
+Identities are split within each subgroup between development and test, then
+between enrolled and non-mated roles. The splits use sorted identities,
+subgroup-specific seeded shuffles and seed `20260727`; they do not depend on
+the private identifier key. Odd counts go to development and then the enrolled
+side. Identities with insufficient images for enrolment remain non-mated.
 
 Images are sorted by filename within each identity. The first three are
 enrolment candidates and the next five are mated probes. Non-mated identities
@@ -199,34 +212,39 @@ held-out results do not determine their selection.
 ### Interpreting the measures
 
 Conditional rates describe successfully scored cases. End-to-end duplicate
-detection uses all intended mated probes, including extraction and enrolment
-failures. FPIR is a search-level rate and differs from a pairwise false-match
-rate.
+detection uses all intended mated probes, including cases lost through
+extraction or enrolment failure. Reporting both makes the effect of processing
+failures visible. FPIR is measured across non-mated gallery searches and is
+distinct from the false-match rate for individual photograph pairs.
 
 True positive identification rate (TPIR) is rank-aware: the correct identity
 must be within the stated rank and above threshold. A referral to the wrong
 identity is recorded as `mated_wrong_identity_referred` and does not count as
 correct duplicate identification.
 
-Repeated photographs of one person are correlated. Confidence intervals
-therefore resample identities, with 2,000 shared draws in the paired
-comparisons and subgroup stratification. These exploratory intervals are
-unadjusted for multiple comparisons and conditional on the fitted models,
-frozen thresholds and fixed galleries. An interval containing zero leaves
-a difference unresolved; it does not demonstrate equivalence.
+Photographs of the same person are correlated observations. Confidence
+intervals therefore resample identities rather than individual images. The
+paired comparisons use 2,000 shared identity draws, stratified by subgroup.
+These exploratory intervals are unadjusted for multiple comparisons and
+conditional on the fitted models, frozen thresholds and fixed galleries.
+An interval containing zero leaves a difference unresolved; it does not
+demonstrate equivalence.
 
 ## Main findings
 
-Under the saved BFW protocol, YuNet + SFace detected 87.20% of all intended
-duplicates. Its conditional TPIR@1 was 92.57%, with 0.52% FPIR, or 5.25 false
-referrals per 1,000 scored non-mated searches. Mean complete-pipeline latency
-was 21.72 ms per image and the weight files occupied approximately 37.1 MiB.
+Under the recorded BFW protocol, YuNet + SFace detected 87.20% of all intended
+duplicate probes. Its conditional TPIR@1 was 92.57%, with 0.52% FPIR, or 5.25
+false referrals per 1,000 scored non-mated searches. Mean complete-pipeline
+latency was 21.72 ms per image and the weight files occupied approximately
+37.1 MiB.
 
-SCRFD + ArcFace detected 96.70% of intended duplicates. Its conditional TPIR@1
-was 96.80%, with 0.13% FPIR, or 1.34 false referrals per 1,000 scored non-mated
-searches. Mean complete-pipeline latency was 80.73 ms and weight-file storage
-was approximately 182.4 MiB. The end-to-end difference was 9.50 percentage
-points, with an exploratory paired 95% interval of 7.30–12.10.
+SCRFD + ArcFace detected 96.70% of intended duplicate probes. Its conditional
+TPIR@1 was 96.80%, with 0.13% FPIR, or 1.34 false referrals per 1,000 scored
+non-mated searches. Mean complete-pipeline latency was 80.73 ms and weight-file
+storage was approximately 182.4 MiB. The end-to-end difference was 9.50
+percentage points, with an exploratory paired 95% interval of 7.30–12.10. The
+higher detection rate and lower false-referral rate therefore came with
+greater processing time and model storage in this benchmark setting.
 
 These results compare configured pipelines. Detector settings, alignment,
 preprocessing and separately calibrated thresholds remain part of each
@@ -235,9 +253,9 @@ training-loss effect.
 
 The logistic-regression review classifier did not reduce false referrals on
 the baseline pipeline: they increased from 15 to 20, despite higher conditional
-TPIR@1. The outcome differs on the ArcFace pipeline. I therefore treat the
-classifier as a component to evaluate, rather than assume that adding a
-learned decision layer improves every configuration.
+TPIR@1. The outcome differs on the ArcFace pipeline, so the results do not
+establish a consistent benefit from adding the classifier. Its contribution
+depends on the pipeline and the operating policy under evaluation.
 
 The evaluation was repeated only to test computational reproducibility;
 no repeated held-out result influenced model selection, threshold selection
@@ -253,13 +271,14 @@ verification, gallery, classifier and cost findings. Aggregate figures are in
 
 ## Limitations and reproducibility
 
-The results apply to the recorded benchmarks and settings. LFW and CPLFW share
-identities, and none of the datasets establishes performance on a representative
-service population. BFW's balanced labels permit descriptive subgroup analysis;
-they do not establish deployment fairness. Each held-out subgroup contains
+The results are specific to the recorded benchmarks and settings. LFW and
+CPLFW share identities, so they do not provide independent population
+replications. The datasets have not been validated here as representative of
+service uploads. BFW's balanced labels support descriptive subgroup analysis,
+but do not establish deployment fairness. Each held-out subgroup contains
 only 25 non-mated identities, despite its repeated probe photographs.
 
-Lexical image selection, one identity split, small fixed galleries and
+Filename-based image selection, one identity split, small fixed galleries and
 unaudited pretraining overlap limit generalisation. A development FPIR budget
 may be exceeded on test. The original SCRFD + ArcFace comparison lacks
 non-primary held-out operating points; reports leave those results unavailable.
@@ -306,8 +325,9 @@ The self-tests and default pytest checks use synthetic inputs and test doubles,
 without benchmark images, weights or network access. Optional checks requiring
 private data or models are skipped when those files are unavailable. The tests
 cover metric accounting, calibration boundaries, protocol roles, model
-contracts, cache integrity and report consistency. Passing these checks verifies
-implementation behaviour rather than performance in a new population.
+contracts, cache integrity and report consistency. These checks establish
+whether the implementation behaves as intended; performance on a new
+population requires separate empirical evaluation.
 
 ## Repository structure
 
