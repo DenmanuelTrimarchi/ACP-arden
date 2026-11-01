@@ -4173,6 +4173,12 @@ def build_open_set_protocol(
             "non_mated_probes_per_identity_maximum": non_mated_probes_per_identity,
             "image_roles": "First enrolment images form the gallery template; immediately following images form mated probes. First available images of non-mated identities form non-mated probes. Remaining images are unused.",
             "resampling_unit": "Identity cluster; repeated probes of one person are not independent observations.",
+            "design_rationale": {
+                "equal_identity_splits": "Retain development and held-out identities in every subgroup, with enrolled and absent identities available for both target selection and evaluation; no optimal allocation is claimed.",
+                "multi_image_enrolment": "Three candidate photographs permit a compact multi-image template comparison. At least two successful images distinguish it from single-image enrolment while retaining one extraction failure; this is a preset design choice, not an optimised service policy.",
+                "repeated_probes": "Several mated probes sample within-person image variation; more non-mated probes improve empirical FPIR granularity for rare errors. Repeated photographs do not increase the number of independent identities.",
+                "selection_limit": "Lexical filename order avoids score-based selection but can preserve collection or quality bias. Unused photographs and alternative identity splits are not evaluated by this protocol.",
+            },
         },
     }
     return OpenSetProtocol(entries=entries, seed=seed, provenance=provenance)
@@ -11876,6 +11882,319 @@ def render_paired_comparison_report(aggregate_root: Path = AGGREGATE_ROOT) -> st
     return "\n".join(lines)
 
 
+# Research interpretation is derived separately from the detailed experiment log.
+RESEARCH_PRIMARY_SOURCES = {
+    "LFW": "https://people.cs.umass.edu/~elm/papers/lfw.pdf",
+    "CPLFW": "https://www.whdeng.cn/CPLFW/Cross-Pose-LFW.pdf",
+    "BFW": "https://arxiv.org/abs/2002.06483",
+    "ArcFace": "https://arxiv.org/abs/1801.07698v3",
+    "SFace": "https://arxiv.org/abs/2205.12010",
+    "YuNet": "https://link.springer.com/article/10.1007/s11633-023-1423-y",
+    "SCRFD": "https://arxiv.org/abs/2105.04714",
+    "NIST FRTE": "https://pages.nist.gov/frvt/html/frvt1N.html",
+}
+
+
+def render_critical_research_synthesis() -> str:
+    """Distinguish published objectives from the questions tested by this artefact."""
+    def cite(name: str) -> str:
+        return f"[{name}]({RESEARCH_PRIMARY_SOURCES[name]})"
+
+    return "\n\n".join([
+        "### Critical comparison with previous research",
+        f"**Verification accuracy and processing coverage.** {cite('LFW')} provides a "
+        "reproducible pair-verification task, but its images were selected through a "
+        "detector-based collection process. It permits other faces around the labelled "
+        "central target. The exactly-one-face rule used here is therefore an additional "
+        "application policy: multiple detections may represent real faces, rather than "
+        "detector errors. Conditional verification accuracy and usable-image coverage "
+        "answer different questions. This study examines whether their joint reporting "
+        "changes the apparent ranking of complete configurations.",
+        f"**Benchmark saturation and transfer.** {cite('CPLFW')} challenges optimistic "
+        "LFW results through greater pose differences and harder negative pairs, while "
+        "retaining LFW identities. Its role here is a transfer test using raw images "
+        "and an unchanged development threshold. Results from aligned images or "
+        "fold-wise recalibration estimate a different quantity. A change between these "
+        "datasets cannot establish independent-population generalisation or isolate "
+        "pose as the cause of a processing failure.",
+        f"**Competing representation-learning objectives.** {cite('ArcFace')} introduces "
+        f"an angular-margin loss; {cite('SFace')} adjusts intra-class and inter-class "
+        "optimisation through gradient rescaling. Those training objectives motivate "
+        "comparison, but this study evaluates published frozen weights. External "
+        "training data are not controlled; capacity, alignment and normalisation are "
+        "also part of each configuration. The results "
+        "therefore concern configured recogniser substitutions, not a causal comparison "
+        "of loss functions. Architecture-only superiority remains an unresolved question.",
+        f"**Detection performance and screening eligibility.** {cite('YuNet')} and "
+        f"{cite('SCRFD')} pursue detection accuracy and efficiency with different model "
+        "designs. Detection recall does not directly determine eligibility under an "
+        "exactly-one-face rule: finding an additional face can prevent recognition. "
+        "The within-detector interventions here test how confidence and canvas changes "
+        "affect processing. They do not establish the identity accuracy of replacement "
+        "settings without development-only recalibration and further held-out testing.",
+        f"**Subgroup thresholds and review policy.** {cite('BFW')} studies face-pair "
+        "verification and differences between global and subgroup-specific thresholds. "
+        "This motivates an audit, but neither its task nor its population validates "
+        "the open-set gallery construction used here. A single global policy permits "
+        "descriptive subgroup comparison; balanced labels and similar aggregate rates "
+        "do not establish fair service outcomes. Reviewer decisions, harm and a "
+        "representative deployment population were not measured.",
+        f"**Established identification evaluation and the remaining gap.** "
+        f"{cite('NIST FRTE')} already measures search-level errors, investigation "
+        "scenarios, processing time and storage. The contribution here is the "
+        "specific executable comparison and its empirical counterexamples: calibration "
+        "can change review burden, processing coverage can change interpretation, and "
+        "an added classifier can fail to improve its intended outcome. The open "
+        "question is which evaluated configuration offers the most useful trade-off "
+        "under this protocol; no new metric or first general evaluation method is claimed.",
+    ])
+
+
+def research_comparison_controls() -> List[Dict[str, str]]:
+    """Record the estimand and retained configuration differences explicitly."""
+    return [
+        {"aspect": "Benchmark inputs", "shared": "Intended BFW identities, image roles, gallery membership and seed",
+         "varied": "Successful extraction subsets", "inference": "End-to-end comparisons retain every intended mated probe"},
+        {"aspect": "Detector", "shared": "Same selected images and exactly-one-face eligibility rule",
+         "varied": f"YuNet confidence {DETECTOR_SCORE_THRESHOLD:g}, native image size, NMS {DETECTOR_NMS_THRESHOLD:g}; SCRFD confidence {ARCFACE_DETECTION_THRESHOLD:g}, padded {ARCFACE_DETECTION_INPUT_SIZE} canvas and its own NMS",
+         "inference": "Configured detector substitution; equal numeric confidence would not equalise model-specific scores"},
+        {"aspect": "Recogniser", "shared": "Frozen weights and the selected detector's landmark outputs within a detector arm",
+         "varied": "SFace alignCrop versus ArcFace landmark alignment, normalisation, dimensionality, capacity and external training history",
+         "inference": "Configured recogniser substitution; no isolated architecture or training-loss effect"},
+        {"aspect": "Gallery policy", "shared": "Three enrolment candidates, minimum two successful extractions, development/test boundary and FPIR selection rule",
+         "varied": "A separately calibrated numerical similarity threshold for each pairing",
+         "inference": "Common policy objective, not equal raw score cutoffs or guaranteed equal realised test FPIR"},
+        {"aspect": "Statistical comparison", "shared": "Matched intended probes and shared identity-bootstrap draws",
+         "varied": "Coverage and separately fitted/frozen policies; common-success analysis selects a smaller subset",
+         "inference": "Exploratory paired differences conditional on the evaluated configurations and galleries"},
+        {"aspect": "Detector intervention", "shared": "Images, weights, NMS and eligibility within each detector; warmed instances and repeat controls",
+         "varied": "One preset confidence or canvas setting at a time",
+         "inference": "Controlled processing effects in sampled cohorts; no replacement recognition policy is validated"},
+    ]
+
+
+def build_research_assessment(aggregate_root: Path = AGGREGATE_ROOT) -> Dict[str, Any]:
+    """Publish evidence classes from saved aggregates without selecting a policy."""
+    root = Path(aggregate_root)
+    names = [
+        "comparative_statistics.json", "bfw_open_set_protocol_summary.json",
+        "bfw_open_set_test_metrics.json", "pipeline_comparison_metrics.json",
+        "mixed_pipelines/scrfd-sface/bfw_open_set_test_metrics.json",
+        "mixed_pipelines/yunet-arcface/bfw_open_set_test_metrics.json",
+        "lfw_final_metrics.json", "verification_comparison/lfw_final_metrics.json",
+        "ml_review_test_metrics.json", "arcface_review/ml_review_test_metrics.json",
+        "comparison_diagnostics/comparison_diagnostics.json", "threshold_sensitivity.json",
+    ]
+    saved = {name: read_json_artifact(root / name) for name in names if (root / name).is_file()}
+    manifests: Dict[str, str] = {}
+    for name in names[:6]:
+        payload = saved.get(name, {})
+        values = [payload.get(key) for key in ("public_manifest_sha256", "public_manifest_digest", "protocol_digest")]
+        values = [v for v in values if isinstance(v, str) and v]
+        if values:
+            # Conflicting aliases are retained as a mismatch, not silently preferred.
+            manifests[name] = "|".join(sorted(set(values)))
+    consistent = bool(manifests) and len(set(manifests.values())) == 1 and "|" not in next(iter(manifests.values()))
+    comparison = saved.get("comparative_statistics.json", {})
+    full = _artefact_value(comparison, "analyses", "full_protocol") or {}
+    claims: List[Dict[str, Any]] = []
+    for pair in full.get("paired_differences", []):
+        for metric in ("end_to_end_duplicate_detection_rate", "fpir"):
+            entry = _artefact_value(pair, "metrics", metric) or {}
+            estimate, lower, upper = [entry.get(key) for key in ("estimate", "lower_95", "upper_95")]
+            replicates = entry.get("valid_replicates")
+            known_direction = pair.get("direction") == "right minus left"
+            valid = (all(_is_number(v) and math.isfinite(float(cast(float, v))) for v in (estimate, lower, upper))
+                     and float(cast(float, lower)) <= float(cast(float, estimate)) <= float(cast(float, upper))
+                     and _is_number(replicates) and float(cast(float, replicates)) > 0
+                     and known_direction
+                     and isinstance(comparison.get("public_manifest_sha256"), str)
+                     and consistent)
+            support = ("exploratory_paired_support" if valid and (float(cast(float, lower)) > 0 or float(cast(float, upper)) < 0)
+                       else "difference_unresolved" if valid else "descriptive_only")
+            claims.append({
+                "left": pair.get("left"), "right": pair.get("right"), "metric": metric,
+                "direction": pair.get("direction", "not available"),
+                "estimate": estimate if known_direction and _is_number(estimate) and math.isfinite(float(cast(float, estimate))) else None,
+                "lower_95": lower if valid else None, "upper_95": upper if valid else None,
+                "evidence_class": support, "source": "comparative_statistics.json",
+                "limitation": "Exploratory, unadjusted, conditional on fitted models, frozen policies and fixed galleries; an unresolved difference is not equivalence.",
+            })
+    verification = []
+    for name, filename in (("YuNet + SFace", "lfw_final_metrics.json"),
+                           ("SCRFD + ArcFace", "verification_comparison/lfw_final_metrics.json")):
+        data = saved.get(filename)
+        if data:
+            verification.append({"pipeline": name, "source": filename,
+                "mean_fold_accuracy": data.get("mean_fold_accuracy"),
+                "processing_coverage": (1.0 - data["failure_rate"] if _is_number(data.get("failure_rate")) else None),
+                "correct_decisions_per_intended_pair": data.get("end_to_end_correct_decision_rate"),
+                "evidence_class": "observed_benchmark_outcome"})
+    control = _artefact_value(saved.get("bfw_open_set_test_metrics.json"), "methods", METHOD_B) or {}
+    calibration = {"source": "bfw_open_set_test_metrics.json", "evidence_class": "descriptive_same_template_control",
+                   "transferred_policy": control.get("at_lfw_control_threshold"),
+                   "gallery_calibrated_policy": control.get("primary_operating_point"),
+                   "interpretation": "Same three-image templates, different frozen policy; this contrasts calibration without changing enrolment."}
+    classifiers = []
+    for pipeline, filename in (("YuNet + SFace", "ml_review_test_metrics.json"),
+                               ("SCRFD + ArcFace", "arcface_review/ml_review_test_metrics.json")):
+        data = saved.get(filename)
+        if data:
+            baseline = _artefact_value(data, "comparator_three_image_open_set_calibrated", "rates") or {}
+            fitted = data.get("classifier") or {}
+            classifiers.append({"pipeline": pipeline, "source": filename, "evidence_class": "descriptive_policy_comparison",
+                "threshold_fpir": baseline.get("fpir"), "classifier_fpir": fitted.get("fpir"),
+                "threshold_tpir_rank1": baseline.get("tpir_rank1"), "classifier_tpir_rank1": fitted.get("tpir_rank1"),
+                "interpretation": "A fitted classifier is not assumed to improve every pipeline; comparisons require their own uncertainty."})
+    return {
+        "artifact_type": "research_assessment", "schema_version": SCHEMA_VERSION,
+        "source_fingerprints": {name: sha256_of_file(root / name) for name in saved},
+        "provenance_check": {"status": "consistent_saved_manifests" if consistent else "insufficient_or_conflicting_saved_manifests",
+                             "manifest_digests": manifests,
+                             "limitation": "Matching manifests establish the recorded input roles, not independent replication or model-training disjointness."},
+        "paired_claims": claims, "verification": verification, "calibration_control": calibration,
+        "threshold_sensitivity": threshold_sensitivity_rows(root),
+        "classifier_comparisons": classifiers, "comparison_controls": research_comparison_controls(),
+        "cost_profile": combination_cost_profile(root),
+        "primary_sources": dict(RESEARCH_PRIMARY_SOURCES),
+        "evidence_classes": {
+            "observed_benchmark_outcome": "Recorded counts, rates and measured costs within the stated protocol",
+            "exploratory_paired_support": "A valid paired interval excludes zero under the stated conditioning",
+            "difference_unresolved": "A valid paired interval includes zero; no equivalence is established",
+            "descriptive_only": "No admissible paired interval or compatible provenance supports a directional claim",
+            "untested": "Deployment fairness, representative service performance, reviewer effectiveness and economic optimality",
+        },
+        "scope": "Research-scale configured pipelines; no new model, metric, general methodology or deployment validation is claimed.",
+    }
+
+
+def render_research_assessment(aggregate_root: Path = AGGREGATE_ROOT) -> str:
+    """Lead with the research argument; detailed measurements remain separately expandable."""
+    root = Path(aggregate_root)
+    data = build_research_assessment(root)
+    paragraphs = ["## Research assessment", "### Contribution and principal findings",
+        "The study contributes a reproducible empirical comparison of four configured "
+        "detector–recogniser pipelines. Its added evidence concerns how coverage, "
+        "calibration and review policies alter the interpretation of recognition "
+        "performance, with resource costs and paired uncertainty retained. The "
+        "contribution is the demonstrated relationships and executable controls, rather "
+        "than applying a face lookup to another dataset or proposing a new general method."]
+    verification = data["verification"]
+    if verification:
+        cells = [f"{row['pipeline']}: conditional mean fold accuracy "
+                 f"{format_percentage(row['mean_fold_accuracy'])}, coverage "
+                 f"{format_percentage(row['processing_coverage'])}, and correct decisions "
+                 f"across all intended pairs {format_percentage(row['correct_decisions_per_intended_pair'])}"
+                 for row in verification]
+        paragraphs.append("**Observed coverage effect.** " + "; ".join(cells) +
+                          ". A high conditional score does not by itself determine the complete-pipeline result. These are different successful subsets, not an isolated recogniser comparison.")
+    calibration = data["calibration_control"]
+    before, after = calibration.get("transferred_policy"), calibration.get("gallery_calibrated_policy")
+    if isinstance(before, Mapping) and isinstance(after, Mapping):
+        paragraphs.append(
+            "**Observed calibration effect on fixed templates.** With the same three-image "
+            f"BFW templates, transferred-policy FPIR {format_percentage(before.get('fpir'))} "
+            f"and TPIR@1 {format_percentage(before.get('tpir_rank1'))} become "
+            f"{format_percentage(after.get('fpir'))} and {format_percentage(after.get('tpir_rank1'))} "
+            "under gallery calibration. This isolates the decision-policy change; comparing "
+            "single-image transfer with three-image calibration would also change enrolment.")
+    relevant = [claim for claim in data["paired_claims"]
+                if claim["right"] == "SCRFD + ArcFace" and claim["left"] in {"YuNet + SFace", "YuNet + ArcFace"}]
+    if relevant:
+        table = ["| Paired contrast: right minus left | Measure | Change in percentage points (95% interval) | Evidence |",
+                 "| --- | --- | --- | --- |"]
+        for claim in relevant:
+            estimate = claim["estimate"]
+            point = f"{100 * estimate:+.2f}" if _is_number(estimate) else "not available"
+            interval = (f"[{100 * claim['lower_95']:+.2f}, {100 * claim['upper_95']:+.2f}]"
+                        if _is_number(claim["lower_95"]) and _is_number(claim["upper_95"]) else "interval not available")
+            label = {"exploratory_paired_support": "Exploratory interval excludes zero",
+                     "difference_unresolved": "Difference unresolved; interval includes zero",
+                     "descriptive_only": "Descriptive only; paired support unavailable"}[claim["evidence_class"]]
+            metric = "End-to-end detection" if claim["metric"] == "end_to_end_duplicate_detection_rate" else "FPIR"
+            table.append(f"| {claim['left']} → {claim['right']} | {metric} | {point} {interval} | {label} |")
+        paragraphs += ["**Comparative statistical evidence.** The direction of each change is explicit. "
+                       "These are exploratory, unadjusted intervals, conditional on fitted models, frozen thresholds and fixed galleries. The highest observed configuration is selected from these results; the analysis is not independent confirmation of a prespecified winner.", "\n".join(table)]
+    else:
+        paragraphs.append("Paired comparative evidence is not available; no supported pipeline ranking is inferred.")
+    if data["provenance_check"]["status"] != "consistent_saved_manifests":
+        paragraphs.append("**Evidence limitation.** Saved manifest provenance is incomplete or conflicting. Cross-pipeline paired support is withheld until compatible evidence is available.")
+    costs = data["cost_profile"]
+    baseline_cost, comparison_cost = costs.get("YuNet + SFace", {}), costs.get("SCRFD + ArcFace", {})
+    times = [entry.get("complete_ms") for entry in (baseline_cost, comparison_cost)]
+    storage = [entry.get("storage_mb") for entry in (baseline_cost, comparison_cost)]
+    if all(_is_number(value) and value > 0 for value in times + storage):
+        paragraphs.append(
+            f"**Observed resource trade-off.** Mean complete processing rises from "
+            f"{times[0]:.2f} to {times[1]:.2f} ms/image; weight-file storage rises from "
+            f"{storage[0]:.1f} to {storage[1]:.1f} MiB. The comparator therefore uses "
+            f"{times[1] / times[0]:.2f} times the measured processing time and "
+            f"{storage[1] / storage[0]:.2f} times the model storage. These recorded costs "
+            "exclude reviewer minutes, gallery templates, runtime memory and library "
+            "binaries; they do not establish an economic optimum.")
+    for row in data["classifier_comparisons"]:
+        paragraphs.append(f"**Descriptive classifier outcome, {row['pipeline']}.** Threshold FPIR "
+            f"{format_percentage(row['threshold_fpir'])} becomes {format_percentage(row['classifier_fpir'])}; "
+            f"TPIR@1 {format_percentage(row['threshold_tpir_rank1'])} becomes {format_percentage(row['classifier_tpir_rank1'])}. "
+            "This policy comparison does not establish a general classifier benefit or deployment error rate.")
+    paragraphs.append("### Sensitivity to the review budget")
+    for name in COMPARISON_PIPELINE_ORDER:
+        rows = [row for row in data["threshold_sensitivity"] if row["pipeline"] == name]
+        if not rows:
+            continue
+        points = [f"{100 * row['development_target_fpir']:.1f}% target: "
+                  f"{format_percentage(row['end_to_end_duplicate_detection_rate'])} end-to-end, "
+                  f"{format_number(row['false_reviews_per_1000_scored_non_mated'], 2)} false referrals/1,000"
+                  for row in rows]
+        paragraphs.append(f"**{name}.** " + "; ".join(points) + ".")
+    rankings = []
+    for target in FPIR_TARGETS:
+        points = [row for row in data["threshold_sensitivity"]
+                  if row["development_target_fpir"] == target
+                  and _is_number(row["end_to_end_duplicate_detection_rate"])]
+        if len(points) == len(COMPARISON_PIPELINE_ORDER):
+            maximum = max(row["end_to_end_duplicate_detection_rate"] for row in points)
+            leaders = [row["pipeline"] for row in points if row["end_to_end_duplicate_detection_rate"] == maximum]
+            rankings.append(f"{100 * target:.1f}% development budget: {' and '.join(leaders)} "
+                            f"({format_percentage(maximum)})")
+    if rankings:
+        paragraphs.append("**Observed policy-dependent ranking.** Highest end-to-end detection "
+                          "among all four evaluated configurations: " + "; ".join(rankings) +
+                          ". These rankings describe the fixed test outcomes; comparative "
+                          "uncertainty must be read from the paired contrasts at each budget.")
+    paragraphs.append(
+        "Targets are development constraints; the rates above are held-out observations. "
+        "Comparative claims at the primary policy cannot be transferred automatically to "
+        "stricter or looser budgets. Additional paired sensitivity intervals, where available, "
+        "are retrospective and exploratory. All policies remain frozen, and missing points "
+        "are not inferred from development performance.")
+    paragraphs += [render_critical_research_synthesis(), "### Controls and scope of inference"]
+    controls = ["| Aspect | Held constant | Retained differences | Interpretation |", "| --- | --- | --- | --- |"]
+    for row in data["comparison_controls"]:
+        controls.append(f"| {row['aspect']} | {row['shared']} | {row['varied']} | {row['inference']} |")
+    paragraphs += ["\n".join(controls),
+        "### Interpretation boundaries",
+        "The three FPIR budgets are research scenarios, not validated moderation requirements. "
+        "The frozen-policy sensitivity results below examine whether conclusions change across "
+        "those budgets; no test outcome selects a replacement policy. Sparse subgroup errors "
+        "remain descriptive benchmark observations. Neither balanced labels nor a zero observed "
+        "false-referral count establishes deployment fairness or zero population risk.",
+        "Measured timings and weight-file sizes are environment-specific observations; mixed-pipeline "
+        "timings and workload projections are estimates. Independent service data, reviewer outcomes, "
+        "error costs and calibration on new development identities would be required before claiming "
+        "a deployable or economically optimal policy. Reusing validated cached outcomes provides "
+        "consistent retrospective analysis, not a fresh independent benchmark replication."]
+    return "\n\n".join(paragraphs)
+
+
+def write_research_assessment(aggregate_root: Path = AGGREGATE_ROOT) -> Dict[str, Any]:
+    root = Path(aggregate_root)
+    data = build_research_assessment(root)
+    write_json_artifact(root / "research_assessment.json", data)
+    write_markdown_artifact(root / "RESEARCH_REPORT.md", render_research_report(root))
+    return data
+
+
 def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     """Consolidated write-up, ordered so each layer's intent is visible.
 
@@ -11900,8 +12219,9 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     lines = [
         "# COM7014 Advanced Computing Project — research report",
         "",
-        "Auto-generated from the published artefacts. Ordered to show what each layer was "
-        "intended to improve, and where it did not.",
+        "Generated from saved benchmark artefacts. The research assessment leads with "
+        "methodological choices, comparative findings and limits; detailed experiment "
+        "measurements follow in an expandable section.",
         "",
         "**Research objective.** Assess how detector and recogniser choice, enrolment "
         "images and threshold calibration affect duplicate detection, false-review "
@@ -11909,20 +12229,9 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "separate these factors where the protocol permits. The face networks remain "
         "pretrained and frozen; only the review classifier is trained here.",
         "",
-        "**Academic contribution.** A reproducible empirical comparison of four "
-        "configured detector–recogniser pipelines, combining processing coverage, "
-        "review referrals, calibration transfer and computational cost. These are "
-        "established evaluation concepts, not new metrics. The contribution is the "
-        "controlled application and the resulting evidence about these combinations.",
-        "",
-        "[NIST FRTE](https://pages.nist.gov/frvt/html/frvt1N.html) already evaluates "
-        "identification errors, human-review scenarios and resource use. "
-        "[Robinson et al. (2020)](https://openaccess.thecvf.com/content_CVPRW_2020/papers/w1/Robinson_Face_Recognition_Too_Bias_or_Not_Too_Bias_CVPRW_2020_paper.pdf) "
-        "study BFW subgroup verification and threshold differences. This project "
-        "applies those established concerns to its own identity-disjoint gallery "
-        "protocol, crossed components and explicit failed-processing denominators. "
-        "It does not claim that deployment-oriented evaluation was absent from prior work.",
-        "",
+        render_research_assessment(aggregate_root),
+        "", "<details>",
+        "<summary>Detailed experimental measurements and protocol evidence</summary>", "",
         "## 1. LFW 1:1 verification",
         "",
     ]
@@ -11942,7 +12251,8 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             f"Conditional accuracy {pct(cplfw.get('accuracy'))} over "
             f"{format_count(cplfw.get('scored_pairs'))} scored pairs, with "
             f"{pct(cplfw.get('failure_rate'))} of the protocol never reaching comparison. "
-            f"Cross-pose *detection*, not comparison, is the dominant finding.",
+            f"Processing coverage limits the interpretation of conditional comparison "
+            f"accuracy. These outcomes do not isolate pose as the cause of failure.",
         ]
 
     if open_set:
@@ -11986,7 +12296,7 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             f"The primary hypothesis was that the classifier would reduce false review "
             f"referrals while retaining detection. That criterion is "
             f"**{str(achieved).replace('_', ' ')}**. The classifier raises identification "
-            f"while referring more innocent registrations, which is a trade-off rather than "
+            f"while referring more non-mated benchmark searches, which is a trade-off rather than "
             f"an improvement.",
         ]
 
@@ -12296,6 +12606,7 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         render_threshold_sensitivity(aggregate_root),
         "", "## 17. Evidence boundaries and statistical interpretation", "",
         render_claim_boundaries(),
+        "", "</details>",
     ]
     return "\n".join(lines) + "\n"
 
@@ -14431,10 +14742,11 @@ def render_processing_coverage_explanation(aggregate_root: Path = AGGREGATE_ROOT
 # own cell rather than stopping the summary.
 
 DEPLOYMENT_CONTRIBUTION = (
-    "A deployment oriented evaluation methodology for duplicate face detection, "
-    "which counts unprocessed images, human review workload and computational "
-    "cost when comparing detector and recogniser pipelines. The contribution is "
-    "the reproducible empirical comparison; no new model or metric is claimed."
+    "A reproducible empirical comparison of four configured face screening "
+    "pipelines, relating processing failures, duplicate identification, false review "
+    "referrals and computational cost. Its contribution is the evidence about "
+    "coverage, calibration transfer and component interactions under one bounded "
+    "protocol; no new model, metric or general evaluation methodology is claimed."
 )
 
 DEPLOYMENT_RESEARCH_QUESTION = (
@@ -15274,6 +15586,21 @@ def render_methodological_scope(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         lines.append("The saved BFW protocol summary is not available; no partition counts, "
                      "seed or manifest fingerprint can be verified here.")
     lines += [
+        "The equal identity splits retain separate calibration and held-out samples "
+        "within every subgroup, and both enrolled and absent identities in each "
+        "partition. Multiple enrolment candidates give a compact template comparison; "
+        "the minimum of two successful images preserves a multi-image template when "
+        "one of the three candidates fails extraction. Repeated mated probes sample "
+        "within-person image variation. Additional non-mated probes improve empirical "
+        "rare-error granularity, while actual conditional resolution uses the "
+        "successfully scored denominator. These are feasibility and precision "
+        "compromises, not proven optimal allocations; repeated photographs do not "
+        "increase the number of independent people.",
+        "The mated/non-mated probe ratio is a sampling design and "
+        "does not estimate service duplicate prevalence. Selecting other image orders, "
+        "identity splits or representative upload populations could change the "
+        "operating threshold and pipeline ranking; the gallery-seed diagnostics do "
+        "not constitute independent development/test-population replications.",
         "Multiple probes from one identity increase image-condition coverage, not the number "
         "of independent people. Non-mated probe-image counts are not independent identity "
         "trial counts. Identity-cluster resampling retains repeated probes of each person; "
@@ -15300,13 +15627,297 @@ def render_methodological_scope(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "population shift prevent deployment fairness claims; no service harm, equal treatment "
         "or representative deployment error distribution was validated.",
     ]
+    if summary:
+        total = _artefact_value(summary, "dataset_provenance", "total_images")
+        selected = [_artefact_value(summary, part, "images") for part in ("development", "test")]
+        if _is_number(total) and all(_is_number(count) for count in selected):
+            used = sum(int(count) for count in selected)
+            if int(total) >= used:
+                lines.append(f"Saved image selection uses {used:,} of {int(total):,} corpus "
+                             f"images and leaves {int(total) - used:,} unused.")
+        probes = _artefact_value(summary, "test", "roles", "non_mated_probe")
+        identities = _artefact_value(summary, "test", "non_mated_identities")
+        if all(_is_number(v) and v > 0 for v in (probes, identities)):
+            lines.append(f"One event among {int(probes):,} intended non-mated probes "
+                         f"has empirical granularity {100 / probes:.3f}%, versus "
+                         f"{100 / identities:.3f}% for one probe per each of "
+                         f"{int(identities):,} identities. This is image-rate granularity, "
+                         "not an increase in independent identity trials or a guarantee "
+                         "of tail-rate precision.")
     return "\n\n".join(lines)
+
+
+THRESHOLD_SENSITIVITY_FILENAME = "threshold_sensitivity.json"
+THRESHOLD_SENSITIVITY_REVISION = "frozen-policies-canonical-outcomes-v1"
+
+
+class ThresholdSensitivityError(RuntimeError):
+    """A saved policy and its original outcomes cannot be safely associated."""
+
+
+def _threshold_sensitivity_digest(payload: Mapping[str, Any]) -> str:
+    """Fingerprint analysis content independently of publication timestamps."""
+    return context_digest({key: value for key, value in payload.items()
+                           if key not in ("schema_version", "created_at", "analysis_content_sha256")})
+
+
+def _threshold_sensitivity_sources(root: Path) -> List[Tuple[str, Path, Path, Path, Tuple[str, str]]]:
+    """Public source artefacts and private cache bases for the four configured pipelines."""
+    scrfd_digest = ARCFACE_DETECTOR_SHA256 or ""
+    arcface_digest = ARCFACE_RECOGNITION_SHA256 or ""
+    return [
+        ("YuNet + SFace", root, Path("bfw_open_set_test_metrics.json"), CANONICAL_RUN_CACHE,
+         (YUNET_SHA256, SFACE_SHA256)),
+        ("SCRFD + SFace", root / MIXED_PIPELINE_DIRNAME / "scrfd-sface",
+         Path(MIXED_PIPELINE_DIRNAME) / "scrfd-sface" / "bfw_open_set_test_metrics.json",
+         mixed_run_cache("scrfd-sface"), (scrfd_digest, SFACE_SHA256)),
+        ("YuNet + ArcFace", root / MIXED_PIPELINE_DIRNAME / "yunet-arcface",
+         Path(MIXED_PIPELINE_DIRNAME) / "yunet-arcface" / "bfw_open_set_test_metrics.json",
+         mixed_run_cache("yunet-arcface"), (YUNET_SHA256, arcface_digest)),
+        ("SCRFD + ArcFace", root / ARCFACE_REVIEW_DIRNAME,
+         Path(ARCFACE_REVIEW_DIRNAME) / "ml_review_test_metrics.json", ARCFACE_RUN_CACHE,
+         (scrfd_digest, arcface_digest)),
+    ]
+
+
+def _saved_protocol_digest(payload: Mapping[str, Any]) -> Any:
+    return payload.get("public_manifest_sha256", payload.get("public_manifest_digest", payload.get("protocol_digest")))
+
+
+def _validated_sensitivity_inputs(
+    policy: Mapping[str, Any], evidence: Mapping[str, Any],
+    cached: Mapping[str, Mapping[str, Any]], model_pair: Tuple[str, str],
+) -> Tuple[OpenSetRunResult, OpenSetRunResult]:
+    """Bind historical caches to published provenance without loading models or images."""
+    try:
+        require_frozen_open_set_policy(policy)
+    except (OpenSetPolicyError, TypeError, ValueError):
+        raise ThresholdSensitivityError("policy is not a complete frozen open-set policy") from None
+    manifest = _saved_protocol_digest(policy)
+    if not isinstance(manifest, str) or not manifest or manifest != _saved_protocol_digest(evidence):
+        raise ThresholdSensitivityError("policy and published outcomes have different protocol fingerprints")
+    models = policy.get("model_sha256") or (policy.get("pipeline") or {}).get("model_sha256") or {}
+    if (models.get("yunet", models.get("detector")), models.get("sface", models.get("recognition"))) != model_pair:
+        raise ThresholdSensitivityError("frozen policy model fingerprints do not match the configured pipeline")
+    runs: Dict[str, OpenSetRunResult] = {}
+    for partition in ("development", "test"):
+        payload = cached[partition]
+        reason = cached_payload_integrity_reason(payload)
+        if reason:
+            raise ThresholdSensitivityError(f"{partition} cache integrity check failed: {reason}")
+        context = payload["canonical_context"]
+        if payload["partition"] != partition or context.get("partition") != partition or payload["method"] != METHOD_B:
+            raise ThresholdSensitivityError(f"{partition} cache has the wrong role or enrolment method")
+        if (evidence.get(f"canonical_{partition}_run_digest") != payload["canonical_run_digest"]
+                or evidence.get(f"canonical_{partition}_context_sha256") != payload["canonical_context_sha256"]):
+            raise ThresholdSensitivityError(f"{partition} cache does not match the published canonical provenance")
+        if context.get("public_manifest_digest") != manifest:
+            raise ThresholdSensitivityError(f"{partition} cache belongs to another protocol")
+        if context.get("model_sha256") != {"yunet": model_pair[0], "sface": model_pair[1]}:
+            raise ThresholdSensitivityError(f"{partition} cache has different model fingerprints")
+        dataset = policy.get("dataset_provenance") or {}
+        for public_key, context_key in (("metadata_sha256", "dataset_metadata_sha256"),
+                                        ("evaluated_image_set_sha256", "evaluated_image_set_sha256")):
+            if not dataset.get(public_key) or dataset[public_key] != context.get(context_key):
+                raise ThresholdSensitivityError(f"{partition} cache has different dataset fingerprints")
+        runs[partition] = _run_from_cached_payload(payload)
+        run = runs[partition]
+        for role, field_name in (("mated_probe", "mated_probe_samples"), ("non_mated_probe", "non_mated_probe_samples")):
+            samples = sorted(r.sample_id for r in run.search_results if r.role == role)
+            if samples != context.get(field_name):
+                raise ThresholdSensitivityError(f"{partition} cache probe assignments differ from its recorded context")
+    development, test = runs["development"], runs["test"]
+    if ({r.identity_hash for r in development.search_results} & {r.identity_hash for r in test.search_results}
+            or {r.sample_id for r in development.search_results} & {r.sample_id for r in test.search_results}):
+        raise ThresholdSensitivityError("development and test outcomes share identities or probes")
+    for target in FPIR_TARGETS:
+        point = (policy.get("operating_points") or {}).get(str(target)) or {}
+        threshold = point.get("threshold")
+        if (point.get("target_fpir") != target or not _is_number(threshold)
+                or not math.isfinite(float(cast(float, threshold)))):
+            raise ThresholdSensitivityError("a frozen research budget has no finite threshold")
+        observed = open_set_rates_at_threshold(development.search_results, float(cast(float, threshold)))
+        # Check the existing selections, without choosing or refitting a policy.
+        for public_key, rate_key in (("development_fpir", "fpir"),
+                                     ("development_tpir_rank1", "tpir_rank1"),
+                                     ("development_tpir_rank5", "tpir_rank5")):
+            value = point.get(public_key)
+            if not _is_number(value) or not math.isclose(float(cast(float, value)), observed[rate_key], rel_tol=0, abs_tol=1e-12):
+                raise ThresholdSensitivityError("frozen development rates do not match the original cached outcomes")
+        if observed["fpir"] > target + 1e-12:
+            raise ThresholdSensitivityError("frozen development FPIR exceeds its stated budget")
+    primary = (evidence.get("methods") or {}).get(METHOD_B) or {}
+    published = primary.get("primary_operating_point") or (evidence.get("comparator_three_image_open_set_calibrated") or {}).get("rates") or {}
+    rates = open_set_rates_at_threshold(test.search_results, require_frozen_open_set_policy(policy))
+    for key in ("threshold", "fpir", "tpir_rank1", "tpir_rank5", "scored_mated_probes", "scored_non_mated_probes"):
+        if not _is_number(published.get(key)) or not math.isclose(float(published[key]), rates[key], rel_tol=0, abs_tol=1e-12):
+            raise ThresholdSensitivityError("the cached primary operating point differs from the published measurement")
+    counts = _threshold_test_counts(test, require_frozen_open_set_policy(policy))
+    coverage = primary.get("coverage") or evidence.get("classifier") or {}
+    for key in ("intended_mated_probes", "intended_non_mated_probes"):
+        if coverage.get(key) != counts[key]:
+            raise ThresholdSensitivityError("cached intended denominators differ from the published measurement")
+    published_detection = primary.get("end_to_end_duplicate_detection_rate", (
+        evidence.get("comparator_three_image_open_set_calibrated") or {}).get("end_to_end_duplicate_detection_rate"))
+    if (not _is_number(published_detection)
+            or not math.isclose(float(cast(float, published_detection)), counts["end_to_end_duplicate_detection_rate"], rel_tol=0, abs_tol=1e-12)):
+        raise ThresholdSensitivityError("cached primary end-to-end detection differs from the published measurement")
+    return development, test
+
+
+def _threshold_test_counts(run: OpenSetRunResult, threshold: float) -> Dict[str, Any]:
+    """Exact rank-aware counts with both conditional and intended denominators."""
+    mated = [r for r in run.search_results if r.role == "mated_probe"]
+    non_mated = [r for r in run.search_results if r.role == "non_mated_probe"]
+    scored_mated = [r for r in mated if r.failure_code is None]
+    scored_non_mated = [r for r in non_mated if r.failure_code is None]
+    detected = sum(r.correct_rank == 1 and r.correct_similarity is not None
+                   and r.correct_similarity >= threshold for r in scored_mated)
+    detected_rank5 = sum(r.correct_rank is not None and r.correct_rank <= 5
+                         and r.correct_similarity is not None and r.correct_similarity >= threshold
+                         for r in scored_mated)
+    false_referrals = sum(r.top_similarity is not None and r.top_similarity >= threshold for r in scored_non_mated)
+    return {
+        **open_set_rates_at_threshold(run.search_results, threshold),
+        **open_set_duplicate_detection(run, threshold),
+        "intended_mated_probes": len(mated), "intended_non_mated_probes": len(non_mated),
+        "mated_extraction_failures": len(mated) - len(scored_mated),
+        "non_mated_extraction_failures": len(non_mated) - len(scored_non_mated),
+        "mated_correct_rank1_referred": detected, "mated_correct_rank5_referred": detected_rank5,
+        "mated_wrong_identity_referred": sum(r.correct_rank != 1 and r.top_similarity is not None
+                                              and r.top_similarity >= threshold for r in scored_mated),
+        "non_mated_incorrectly_referred": false_referrals,
+        "false_reviews_per_1000_intended_non_mated": 1000 * false_referrals / len(non_mated) if non_mated else None,
+    }
+
+
+def generate_threshold_sensitivity(
+    output_root: Path = AGGREGATE_ROOT, *, cache_bases: Optional[Mapping[str, Path]] = None,
+    replicates: int = BOOTSTRAP_REPLICATES, seed: int = DEFAULT_RANDOM_SEED,
+) -> Dict[str, Any]:
+    """Analyse pre-frozen budgets from original, provenance-validated cached outcomes.
+
+    No model session, image loading, fitting or threshold selection is performed.
+    Only the additive sensitivity artefact is written; original measurements stay fixed.
+    """
+    import inspect
+    if replicates < 2:
+        raise ValueError("Threshold sensitivity requires at least two bootstrap replicates.")
+    root = Path(output_root)
+    pipelines: Dict[str, Any] = {}
+    runs: Dict[str, OpenSetRunResult] = {}
+    manifests: Set[str] = set()
+    for name, base, evidence_relative, default_cache, model_pair in _threshold_sensitivity_sources(root):
+        policy_path = base / "bfw_open_set_threshold.json"
+        evidence_path = root / evidence_relative
+        cache_base = (cache_bases or {}).get(name, default_cache)
+        paths = {partition: canonical_cache_path(partition, cache_base) for partition in ("development", "test")}
+        if not policy_path.is_file() or not evidence_path.is_file() or not all(path.is_file() for path in paths.values()):
+            pipelines[name] = {"status": "not_available", "reason": "frozen policy, original published evidence or private canonical cache is missing"}
+            continue
+        try:
+            policy = read_json_artifact(policy_path)
+            evidence = read_json_artifact(evidence_path)
+            cached = {partition: read_json_artifact(path) for partition, path in paths.items()}
+            _, run = _validated_sensitivity_inputs(policy, evidence, cached, model_pair)
+            manifest = str(_saved_protocol_digest(policy))
+            if manifests and manifest not in manifests:
+                raise ThresholdSensitivityError("pipeline protocol differs from the other sensitivity outcomes")
+            manifests.add(manifest)
+            points = {}
+            for target in FPIR_TARGETS:
+                selection = policy["operating_points"][str(target)]
+                point = _threshold_test_counts(run, float(selection["threshold"]))
+                point.update({"development_target_fpir": target, "development_fpir": selection["development_fpir"],
+                              "development_tpir_rank1": selection["development_tpir_rank1"],
+                              "development_tpir_rank5": selection["development_tpir_rank5"],
+                              "test_fpir_exceeds_development_target": point["fpir"] > target})
+                points[str(target)] = point
+            pipelines[name] = {
+                "status": "evaluated", "policy_source": policy_path.relative_to(root).as_posix(),
+                "policy_sha256": sha256_of_file(policy_path), "evidence_source": evidence_relative.as_posix(),
+                "evidence_sha256": sha256_of_file(evidence_path), "public_manifest_sha256": manifest,
+                "model_sha256": {"detector": model_pair[0], "recognition": model_pair[1]},
+                "canonical_run_digests": {partition: payload["canonical_run_digest"] for partition, payload in cached.items()},
+                "canonical_context_sha256": {partition: payload["canonical_context_sha256"] for partition, payload in cached.items()},
+                "test_operating_points": points,
+            }
+            runs[name] = run
+        except ThresholdSensitivityError as exc:
+            pipelines[name] = {"status": "invalid", "reason": str(exc)}
+        except (OSError, ValueError, KeyError, TypeError):
+            pipelines[name] = {"status": "invalid", "reason": "a required source artefact could not be read or validated"}
+    paired: Dict[str, Any] = {}
+    if len(runs) >= 2:
+        for target in FPIR_TARGETS:
+            thresholds = {name: pipelines[name]["test_operating_points"][str(target)]["threshold"] for name in runs}
+            paired[str(target)] = paired_pipeline_bootstrap(runs, thresholds, replicates=replicates, seed=seed)
+    within_pipeline: Dict[str, Any] = {}
+    for name, run in runs.items():
+        budgets = {str(target): run for target in FPIR_TARGETS}
+        thresholds = {target: pipelines[name]["test_operating_points"][target]["threshold"] for target in budgets}
+        uncertainty = paired_pipeline_bootstrap(budgets, thresholds, replicates=replicates, seed=seed)
+        within_pipeline[name] = uncertainty["analyses"]["full_protocol"]["paired_differences"]
+        for target in budgets:
+            intervals = uncertainty["analyses"]["full_protocol"]["pipelines"][target]
+            intervals = {key: value for key, value in intervals.items() if key != "counts"}
+            non_mated_counts: Dict[str, Tuple[int, int]] = {}
+            for row in run.search_results:
+                if row.role == "non_mated_probe":
+                    intended, scored = non_mated_counts.get(row.identity_hash, (0, 0))
+                    non_mated_counts[row.identity_hash] = (intended + 1, scored + int(row.failure_code is None))
+            _attach_zero_event_bound(intervals["fpir"], non_mated_counts,
+                                     pipelines[name]["test_operating_points"][target]["non_mated_incorrectly_referred"])
+            pipelines[name]["test_operating_points"][target]["confidence_intervals"] = intervals
+    payload = {
+        "artifact_type": "frozen_threshold_sensitivity", "analysis_revision": THRESHOLD_SENSITIVITY_REVISION,
+        "status": "evaluated" if len(runs) == 4 else "partial" if runs else "not_available",
+        "primary_fpir_target": PRIMARY_FPIR_TARGET, "development_fpir_targets": list(FPIR_TARGETS),
+        "seed": seed, "replicates": replicates, "pipelines": pipelines,
+        "analysis_software_environment": {"python_version": sys.version.split()[0],
+                                          "numpy_version": _package_version("numpy"), "platform": platform.platform()},
+        "analysis_implementation_sha256": sha256_of_text("\n".join(inspect.getsource(function) for function in (
+            generate_threshold_sensitivity, _validated_sensitivity_inputs, _threshold_test_counts,
+            _threshold_sensitivity_digest, paired_pipeline_bootstrap))),
+        "paired_pipeline_comparisons_by_budget": paired, "paired_budget_differences_by_pipeline": within_pipeline,
+        "validation_scope": "Stored schema/context/outcome integrity and binding to original published run fingerprints, frozen model/protocol policies and development rates. No assertion of fresh inference compatibility.",
+        "analysis_scope": "Retrospective exploratory analysis of already-frozen development policies on the original cached held-out outcomes; no policy reselection, fitting or new image inference.",
+        "resampling": "Role/subgroup-stratified identity bootstrap with identical seeds and identity draws across pipelines and budgets; all intended probes retained for end-to-end detection.",
+        "limitations": "Unadjusted exploratory 95% percentile intervals, not universal or simultaneous claims. Fixed policies/galleries; excludes fitting, calibration, gallery selection and population shift uncertainty. Zero-event bootstrap intervals cannot bound population FPIR; supplementary identity-level bounds are distinct from scored-probe FPIR.",
+    }
+    payload["analysis_content_sha256"] = _threshold_sensitivity_digest(payload)
+    write_json_artifact(root / THRESHOLD_SENSITIVITY_FILENAME, payload)
+    return payload
+
+
+def _current_threshold_sensitivity(root: Path) -> Dict[str, Any]:
+    """Use additive results only while their public source fingerprints still match."""
+    payload = _load_optional(root, THRESHOLD_SENSITIVITY_FILENAME) or {}
+    if (payload.get("artifact_type") != "frozen_threshold_sensitivity"
+            or payload.get("analysis_revision") != THRESHOLD_SENSITIVITY_REVISION
+            or not isinstance(payload.get("replicates"), int) or payload["replicates"] < 2
+            or payload.get("analysis_content_sha256") != _threshold_sensitivity_digest(payload)):
+        return {}
+    valid = {}
+    expected = {name: ((base / "bfw_open_set_threshold.json").relative_to(root).as_posix(), source.as_posix())
+                for name, base, source, _, _ in _threshold_sensitivity_sources(root)}
+    for name, node in (payload.get("pipelines") or {}).items():
+        if node.get("status") != "evaluated":
+            continue
+        try:
+            if (name in expected and (node.get("policy_source"), node.get("evidence_source")) == expected[name]
+                    and all(sha256_of_file(root / node[f"{kind}_source"]) == node[f"{kind}_sha256"] for kind in ("policy", "evidence"))):
+                valid[name] = node
+        except (OSError, KeyError, TypeError):
+            continue
+    return {**payload, "pipelines": valid}
 
 
 def threshold_sensitivity_rows(aggregate_root: Path = AGGREGATE_ROOT) -> List[Dict[str, Any]]:
     """Read distinct development/test evidence; never infer scores from histograms."""
     root = Path(aggregate_root)
     comparison = _load_optional(root, "pipeline_comparison_metrics.json") or {}
+    additive = _current_threshold_sensitivity(root).get("pipelines") or {}
     held_out = comparison.get("held_out_metrics") or {}
     specifications = (
         ("YuNet + SFace", root),
@@ -15334,6 +15945,9 @@ def threshold_sensitivity_rows(aggregate_root: Path = AGGREGATE_ROOT) -> List[Di
             observed = (method.get("operating_points") or comparator.get("test_operating_points") or {}).get(str(target)) or {}
             if not observed and target == primary_target:
                 observed = method.get("primary_operating_point") or comparator.get("rates") or {}
+            cached_point = (additive.get(name, {}).get("test_operating_points") or {}).get(str(target)) or {}
+            if cached_point:
+                observed = cached_point
             valid = (frozen and _is_number(threshold) and _is_number(observed.get("threshold"))
                      and math.isclose(float(cast(float, threshold)), float(observed["threshold"]), rel_tol=0, abs_tol=1e-10))
             row: Dict[str, Any] = {
@@ -15346,12 +15960,19 @@ def threshold_sensitivity_rows(aggregate_root: Path = AGGREGATE_ROOT) -> List[Di
                 "test_tpir_rank1": observed.get("tpir_rank1") if valid else None,
                 "scored_mated_probes": observed.get("scored_mated_probes") if valid else None,
                 "scored_non_mated_probes": observed.get("scored_non_mated_probes") if valid else None,
-                "intended_mated_probes": coverage.get("intended_mated_probes"),
+                "intended_mated_probes": observed.get("intended_mated_probes", coverage.get("intended_mated_probes")),
                 "correctly_detected_mated_probes": None,
                 "end_to_end_duplicate_detection_rate": None,
+                "analysis_source": "validated_canonical_outcomes" if cached_point else "original_public_aggregate",
+                "confidence_intervals": observed.get("confidence_intervals") if valid else None,
+                "intended_non_mated_probes": observed.get("intended_non_mated_probes") if valid else None,
+                "false_referrals": observed.get("non_mated_incorrectly_referred") if valid else None,
             }
             if valid and _is_number(row["test_fpir"]):
                 row["false_reviews_per_1000_scored_non_mated"] = 1000 * float(row["test_fpir"])
+            if valid and isinstance(observed.get("mated_correct_rank1_referred"), int):
+                row["correctly_detected_mated_probes"] = observed["mated_correct_rank1_referred"]
+                row["end_to_end_duplicate_detection_rate"] = observed.get("end_to_end_duplicate_detection_rate")
             if valid and all(_is_number(row[key]) for key in ("test_tpir_rank1", "scored_mated_probes", "intended_mated_probes")):
                 intended = int(row["intended_mated_probes"])
                 raw_count = float(row["test_tpir_rank1"]) * int(row["scored_mated_probes"])
@@ -15366,7 +15987,9 @@ def threshold_sensitivity_rows(aggregate_root: Path = AGGREGATE_ROOT) -> List[Di
 
 
 def render_threshold_sensitivity(aggregate_root: Path = AGGREGATE_ROOT) -> str:
-    """Descriptive sensitivity at already-frozen policies, with missing evidence explicit."""
+    """Frozen-policy sensitivity with exploratory paired intervals where outcomes are retained."""
+    analysis = _current_threshold_sensitivity(Path(aggregate_root))
+    rows = threshold_sensitivity_rows(aggregate_root)
     lines = [
         "Development FPIR budgets of 0.1%, 0.3% and 1% represent illustrative research "
         "budgets of 1, 3 and 10 false reviews per 1,000 scored non-mated probes. The "
@@ -15379,14 +16002,17 @@ def render_threshold_sensitivity(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "Test workload counts false referrals per 1,000 successfully scored non-mated "
         "images; it excludes true referrals and unresolved extraction failures, so it "
         "is not the total review queue. Detected/intended retains failed mated probes. "
-        "The count is recovered from recorded conditional TPIR times its scored-mated "
-        "denominator, only when it identifies a whole count within floating-point tolerance.",
+        + ("Counts in the additive analysis are computed directly from the validated original "
+         "canonical outcomes. Original measurement files and primary policies are unchanged."
+         if analysis.get("pipelines") else
+         "The count is recovered from recorded conditional TPIR times its scored-mated "
+         "denominator, only when it identifies a whole count within floating-point tolerance."),
     ]
     table_lines = [
         "| Configured pipeline | Development target | Frozen threshold | Development FPIR | Test FPIR | False reviews / 1,000 scored non-mated | Correctly detected / intended mated (end-to-end) |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
-    for row in threshold_sensitivity_rows(aggregate_root):
+    for row in rows:
         workload = row["false_reviews_per_1000_scored_non_mated"]
         detection = row["end_to_end_duplicate_detection_rate"]
         detected = (f"{row['correctly_detected_mated_probes']:,} / {row['intended_mated_probes']:,} "
@@ -15396,6 +16022,89 @@ def render_threshold_sensitivity(aggregate_root: Path = AGGREGATE_ROOT) -> str:
                            f"{format_percentage(row['test_fpir'])} | "
                            f"{format_number(workload, 2) if _is_number(workload) else 'not available'} | {detected} |")
     lines.append("\n".join(table_lines))
+    if analysis.get("pipelines"):
+        lines.append(
+            f"The additive analysis uses {format_count(analysis.get('replicates'))} "
+            "role/subgroup-stratified identity-bootstrap draws, paired across budgets and "
+            "pipelines. These retrospective exploratory intervals condition on the same "
+            "fixed galleries and already-frozen policies; they do not repeat model inference "
+            "or select a threshold from test outcomes. Unadjusted intervals do not establish "
+            "simultaneous superiority across budgets or a universally optimal policy."
+        )
+        def band(interval: Any, *, multiplier: float = 100) -> str:
+            if not isinstance(interval, Mapping) or not all(_is_number(interval.get(k)) for k in ("estimate", "lower_95", "upper_95")):
+                return "not available"
+            return (f"{multiplier * interval['estimate']:.2f} "
+                    f"[{multiplier * interval['lower_95']:.2f}, {multiplier * interval['upper_95']:.2f}]")
+        intervals_table = [
+            "| Pipeline | Development budget | Scored / intended mated | Scored / intended non-mated | End-to-end detection %, 95% CI | False reviews / 1,000 scored non-mated, 95% CI |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for row in rows:
+            ci = row.get("confidence_intervals") or {}
+            if not ci:
+                continue
+            intervals_table.append(
+                f"| {row['pipeline']} | {format_percentage(row['development_target_fpir'])} | "
+                f"{format_count(row['scored_mated_probes'])} / {format_count(row['intended_mated_probes'])} | "
+                f"{format_count(row['scored_non_mated_probes'])} / {format_count(row['intended_non_mated_probes'])} | "
+                f"{band(ci.get('end_to_end_duplicate_detection_rate'))} | {band(ci.get('fpir'), multiplier=1000)} |"
+            )
+        lines.append("\n".join(intervals_table))
+        comparison_rows = [
+            "| Development budget | SCRFD + ArcFace minus YuNet + SFace, end-to-end percentage points (95% CI) | FPIR percentage points (95% CI) |",
+            "| --- | --- | --- |",
+        ]
+        if all(name in analysis["pipelines"] for name in ("YuNet + SFace", "SCRFD + ArcFace")):
+            for target in FPIR_TARGETS:
+                differences = _artefact_value(analysis, "paired_pipeline_comparisons_by_budget", str(target), "analyses", "full_protocol", "paired_differences") or []
+                entry = next((entry for entry in differences
+                              if entry.get("left") == "YuNet + SFace" and entry.get("right") == "SCRFD + ArcFace"), None)
+                if entry:
+                    comparison_rows.append(f"| {format_percentage(target)} | {band(entry['metrics'].get('end_to_end_duplicate_detection_rate'))} | "
+                                           f"{band(entry['metrics'].get('fpir'))} |")
+        if len(comparison_rows) > 2:
+            lines += ["The original baseline-versus-comparator contrast is recomputed separately "
+                      "at each pre-frozen budget, using paired identity draws. Its direction "
+                      "must be interpreted at that budget rather than transferred from the primary policy.",
+                      "\n".join(comparison_rows)]
+        contrasts = [
+            "Within-pipeline changes below are the higher budget minus the lower budget, "
+            "using the same identity draws. A positive detection difference may come with "
+            "increased false-referral workload; an interval including zero is unresolved.",
+            "| Pipeline | Budget change | End-to-end change, percentage points (95% CI) | FPIR change, percentage points (95% CI) |",
+            "| --- | --- | --- | --- |",
+        ]
+        for name, differences in (analysis.get("paired_budget_differences_by_pipeline") or {}).items():
+            if name not in analysis["pipelines"]:
+                continue
+            for entry in differences:
+                metrics = entry["metrics"]
+                contrasts.append(f"| {name} | {format_percentage(float(entry['left']))} to {format_percentage(float(entry['right']))} | "
+                                 f"{band(metrics.get('end_to_end_duplicate_detection_rate'))} | {band(metrics.get('fpir'))} |")
+        lines += [contrasts[0], "\n".join(contrasts[1:])]
+        zero_bounds = {
+            (bound["independent_identities"], bound["one_sided_upper"])
+            for row in rows
+            if (bound := _artefact_value(row, "confidence_intervals", "fpir", "zero_event_identity_bound"))
+        }
+        for identities, upper in sorted(zero_bounds):
+            lines.append(f"At zero-referral operating points with {identities:,} independent "
+                         f"non-mated identity clusters, the separate one-sided 95% upper bound "
+                         f"for an identity having any referral is {format_percentage(upper)}. "
+                         "This is not a bound on conditional per-image FPIR.")
+        lines += [
+            "Complete cross-pipeline paired differences at each budget and the source "
+            "policy/run fingerprints are stored in threshold_sensitivity.json. Sampling "
+            "intervals exclude fitting, calibration, gallery selection and population shift "
+            "uncertainty. Zero-event intervals such as 0–0 do not bound population FPIR; "
+            "the JSON also reports a separate upper bound for an identity having any "
+            "false referral under independent, exchangeable identity assumptions.",
+            "Any remaining unavailable point lacks retained, provenance-validated canonical "
+            "outcomes. Development rates and aggregate histograms never substitute for test "
+            "results. Original primary measurements have not been replaced.",
+        ]
+        return "\n\n".join(lines)
     lines += [
         "This is descriptive sensitivity, not a new paired significance analysis. "
         "The original paired intervals support interpretation at the primary frozen "
@@ -15426,9 +16135,13 @@ def render_claim_boundaries() -> str:
         "not evidence of equivalence or no effect. These unadjusted comparisons "
         "condition on fitted models, frozen thresholds and galleries; they exclude "
         "selection, calibration and population-shift uncertainty.",
-        "Descriptive evidence: the three-budget sensitivity, subgroup patterns, "
-        "gallery repeats, feature ablations and observational image-quality strata "
-        "are exploratory. Detector interventions provide paired intervals for "
+        "Descriptive evidence: subgroup patterns, observed budget rankings, gallery "
+        "repeats, untested feature comparisons and observational image-quality strata "
+        "remain descriptive unless their own comparative intervals are supplied. "
+        "Validated frozen-budget changes and pipeline contrasts have additional "
+        "exploratory paired intervals in the sensitivity analysis; primary-policy "
+        "intervals cannot substitute for those budget-specific estimates. "
+        "Detector interventions provide paired intervals for "
         "processing coverage within their fixed cohorts, not a validated replacement "
         "recognition policy. Conditional common-success comparisons describe a "
         "selected subset; approximate mixed-pipeline timings and workload scaling "
@@ -15536,6 +16249,9 @@ def render_overall_conclusion(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 
     control = reviews_per_1000(
         open_set, "methods", METHOD_A, "rates", "false_reviews_per_1000_non_mated")
+    same_template = reviews_per_1000(
+        open_set, "methods", METHOD_B, "at_lfw_control_threshold",
+        "false_reviews_per_1000_non_mated")
     calibrated = reviews_per_1000(
         open_set, "methods", METHOD_B, "primary_operating_point",
         "false_reviews_per_1000_non_mated")
@@ -15546,32 +16262,51 @@ def render_overall_conclusion(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "OVERALL PROJECT CONCLUSION",
         "",
         wrap_plain(
-            f"1. The transferred one-to-one threshold was not suitable for searching a "
-            f"large profile gallery because it produced too many unnecessary reviews "
-            f"({control} per 1,000 new profiles)."
+            f"1. The single-image control referred {control} non-mated benchmark "
+            f"searches per 1,000 in a research-scale gallery under the transferred "
+            f"one-to-one threshold. No measured service requirement establishes an "
+            f"acceptable total review workload."
         ),
         "",
         wrap_plain(
-            f"2. Selecting a threshold specifically for open-set gallery search reduced "
-            f"the false-review burden substantially, to {calibrated} per 1,000."
+            f"2. On the same three-image templates, replacing the transferred policy "
+            f"with gallery calibration changed false referrals from {same_template} "
+            f"to {calibrated} per 1,000 scored non-mated searches. This comparison "
+            f"isolates the threshold change, with a corresponding detection trade-off."
         ),
         "",
         wrap_plain(
-            f"3. The logistic-regression classifier increased duplicate detection "
-            f"slightly but did not reduce false reviews ({classifier} per 1,000). Its "
+            f"3. The baseline logistic-regression classifier increased conditional "
+            f"TPIR@1 but did not reduce false referrals ({classifier} per 1,000). Its "
             f"main hypothesis was therefore not achieved."
         ),
         "",
     ]
-    if pipeline and pipeline.get("evaluated") == "yes":
+    statistics = _load_optional(Path(aggregate_root), "comparative_statistics.json")
+    ranked = _artefact_value(statistics, "analyses", "full_protocol", "pipelines")
+    best = best_combination_by_detection(ranked)
+    if best and isinstance(ranked, Mapping):
+        selected = ranked[best]
+        detection = _artefact_value(selected, "end_to_end_duplicate_detection_rate", "estimate")
+        conditional = _artefact_value(selected, "tpir_rank1", "estimate")
+        lines += [wrap_plain(
+            f"4. {best} has the highest observed primary-policy end-to-end detection "
+            f"among the evaluated configurations: {format_percentage(detection)} of "
+            f"intended mated probes, compared with conditional TPIR@1 "
+            f"{format_percentage(conditional)}. The paired intervals are exploratory; "
+            "this ranking does not establish universal, architecture-only or economic superiority."
+        ), ""]
+    elif pipeline and pipeline.get("evaluated") == "yes":
         held_out = pipeline.get("held_out_metrics") or {}
         arcface = next((v for k, v in held_out.items() if "arcface" in k.lower()), None)
         if arcface:
             lines += [wrap_plain(
-                f"4. SCRFD + ArcFace produced the strongest benchmark results, with "
+                f"4. The recorded SCRFD + ArcFace primary-policy outcome has "
                 f"{arcface['rates']['false_reviews_per_1000_non_mated']:.1f} false reviews "
                 f"per 1,000 and "
-                f"{_percentage_of(arcface['rates']['tpir_rank1'])} detection, but required "
+                f"{_percentage_of(arcface['rates']['tpir_rank1'])} conditional TPIR@1, "
+                f"with end-to-end detection "
+                f"{format_percentage(arcface.get('end_to_end_duplicate_detection_rate'))}. It required "
                 f"more processing time and larger model files."
             ), ""]
     else:
@@ -15589,6 +16324,16 @@ def render_overall_conclusion(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 # --- Previews shown before a long-running option starts -----------------------
 
 EXPERIMENT_PREVIEWS = {
+    "research-evaluation": """Selected: Frozen review budgets and research assessment
+
+Evaluate every already-frozen review budget against the original validated
+canonical outcomes. Report paired identity-bootstrap uncertainty, then rebuild
+the research interpretation and machine-readable evidence assessment.
+
+Requires the original private development/test outcome caches and their saved
+policy and result fingerprints. No image inference, model fitting or threshold
+selection is performed. Missing or incompatible evidence is reported explicitly.
+Existing primary measurements are preserved; only additive analysis is written.""",
     "all": """Selected: Run all experiments, comparisons and reports
 
 Purpose:
@@ -16109,6 +16854,8 @@ OVERVIEW AND REPORTS
  22. Show every experiment at a glance
  23. Run Experiments 7 and 8 and generate figures (requires Experiment 6)
  24. Generate reports and figures from saved results
+ 29. Analyse frozen review budgets and generate the research assessment
+ 30. Show the research assessment from saved evidence
 100. Run all experiments, comparisons and reports (includes setup checks)
 
 MODERATION
@@ -16138,6 +16885,7 @@ MODES = (
     "experiment-table", "comparison-diagnostics", "comparison-diagnostics-summary",
     "comparative-statistics", "comparative-statistics-summary", "refresh-reports",
     "extensions", "all", "detector-settings", "detector-settings-summary",
+    "research-evaluation", "research-summary",
 )
 
 
@@ -17100,6 +17848,16 @@ def action_run_comparative_statistics(output_root: Path = AGGREGATE_ROOT) -> int
     return 0
 
 
+def action_run_research_evaluation(output_root: Path = AGGREGATE_ROOT) -> int:
+    """Complete frozen-policy sensitivity and rebuild the research interpretation."""
+    sensitivity = generate_threshold_sensitivity(output_root)
+    write_research_assessment(output_root)
+    print(render_research_assessment(output_root))
+    announce(f"Frozen-policy sensitivity status: {sensitivity['status']}.")
+    announce("Wrote research_assessment.json and RESEARCH_REPORT.md from saved evidence.")
+    return 0 if sensitivity["status"] == "evaluated" else 1
+
+
 def action_refresh_reports(output_root: Path = AGGREGATE_ROOT) -> int:
     baseline = ("lfw_development_metrics.json", "lfw_final_metrics.json", "cplfw_metrics.json", "calibrated_threshold.json")
     if all((output_root / name).is_file() for name in baseline) and any(
@@ -17119,6 +17877,7 @@ def action_refresh_reports(output_root: Path = AGGREGATE_ROOT) -> int:
     if (output_root / "comparison_diagnostics" / "comparison_diagnostics.json").is_file():
         write_markdown_artifact(output_root / "comparison_diagnostics" / "COMPARISON_DIAGNOSTICS_REPORT.md", render_comparison_diagnostics_summary(output_root))
     written = generate_figures(aggregate_root=output_root)
+    write_research_assessment(output_root)
     announce(f"Refreshed reports and {len(written)} figures from saved results.")
     return 0
 
@@ -17149,6 +17908,8 @@ def action_run_all(output_root: Path = AGGREGATE_ROOT) -> int:
          lambda: action_run_comparative_statistics(output_root)),
         ("Controlled detector settings sensitivity",
          lambda: action_run_detector_ablation(output_root)),
+        ("Frozen-policy sensitivity and research assessment",
+         lambda: action_run_research_evaluation(output_root)),
         ("Refresh reports and figures",
          lambda: action_refresh_reports(output_root)),
         ("Show every experiment at a glance",
@@ -17168,6 +17929,7 @@ def action_run_all(output_root: Path = AGGREGATE_ROOT) -> int:
 # Which preview belongs to which menu option. Options that only display saved
 # results need no preview, because nothing long-running is about to start.
 MENU_PREVIEW_KEYS = {
+    "29": "research-evaluation",
     "100": "all",
     "4": "full",
     "6": "open-set",
@@ -17218,6 +17980,8 @@ def run_menu(output_root: Path = AGGREGATE_ROOT) -> int:
         "25": lambda: launch_review_interface(DEFAULT_REVIEW_DB),
         "27": lambda: action_run_detector_ablation(output_root),
         "28": lambda: _print_saved_summary(render_detector_ablation_report, output_root),
+        "29": lambda: action_run_research_evaluation(output_root),
+        "30": lambda: _print_saved_summary(render_research_assessment, output_root),
         "100": lambda: action_run_all(output_root),
     }
     # The scope of the artefact is stated before any option is offered.
@@ -17367,6 +18131,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _run_action(lambda: _print_saved_summary(render_detector_ablation_report, args.results_root))
     if args.mode == "refresh-reports":
         return _run_action(lambda: action_refresh_reports(args.results_root))
+    if args.mode == "research-evaluation":
+        return _run_action(lambda: action_run_research_evaluation(args.results_root))
+    if args.mode == "research-summary":
+        return _run_action(lambda: _print_saved_summary(render_research_assessment, args.results_root))
     if args.mode == "extensions":
         return _run_action(lambda: action_run_extensions(args.results_root))
 

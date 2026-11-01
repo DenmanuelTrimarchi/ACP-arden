@@ -1,12 +1,81 @@
 # COM7014 Advanced Computing Project — research report
 
-Auto-generated from the published artefacts. Ordered to show what each layer was intended to improve, and where it did not.
+Generated from saved benchmark artefacts. The research assessment leads with methodological choices, comparative findings and limits; detailed experiment measurements follow in an expandable section.
 
 **Research objective.** Assess how detector and recogniser choice, enrolment images and threshold calibration affect duplicate detection, false-review burden, subgroup performance and computational cost. Controlled comparisons separate these factors where the protocol permits. The face networks remain pretrained and frozen; only the review classifier is trained here.
 
-**Academic contribution.** A reproducible empirical comparison of four configured detector–recogniser pipelines, combining processing coverage, review referrals, calibration transfer and computational cost. These are established evaluation concepts, not new metrics. The contribution is the controlled application and the resulting evidence about these combinations.
+## Research assessment
 
-[NIST FRTE](https://pages.nist.gov/frvt/html/frvt1N.html) already evaluates identification errors, human-review scenarios and resource use. [Robinson et al. (2020)](https://openaccess.thecvf.com/content_CVPRW_2020/papers/w1/Robinson_Face_Recognition_Too_Bias_or_Not_Too_Bias_CVPRW_2020_paper.pdf) study BFW subgroup verification and threshold differences. This project applies those established concerns to its own identity-disjoint gallery protocol, crossed components and explicit failed-processing denominators. It does not claim that deployment-oriented evaluation was absent from prior work.
+### Contribution and principal findings
+
+The study contributes a reproducible empirical comparison of four configured detector–recogniser pipelines. Its added evidence concerns how coverage, calibration and review policies alter the interpretation of recognition performance, with resource costs and paired uncertainty retained. The contribution is the demonstrated relationships and executable controls, rather than applying a face lookup to another dataset or proposing a new general method.
+
+**Observed coverage effect.** YuNet + SFace: conditional mean fold accuracy 99.28%, coverage 89.98%, and correct decisions across all intended pairs 89.33%; SCRFD + ArcFace: conditional mean fold accuracy 99.79%, coverage 70.10%, and correct decisions across all intended pairs 69.95%. A high conditional score does not by itself determine the complete-pipeline result. These are different successful subsets, not an isolated recogniser comparison.
+
+**Observed calibration effect on fixed templates.** With the same three-image BFW templates, transferred-policy FPIR 15.22% and TPIR@1 96.71% become 0.52% and 92.57% under gallery calibration. This isolates the decision-policy change; comparing single-image transfer with three-image calibration would also change enrolment.
+
+**Comparative statistical evidence.** The direction of each change is explicit. These are exploratory, unadjusted intervals, conditional on fitted models, frozen thresholds and fixed galleries. The highest observed configuration is selected from these results; the analysis is not independent confirmation of a prespecified winner.
+
+| Paired contrast: right minus left | Measure | Change in percentage points (95% interval) | Evidence |
+| --- | --- | --- | --- |
+| YuNet + SFace → SCRFD + ArcFace | End-to-end detection | +9.50 [+7.30, +12.10] | Exploratory interval excludes zero |
+| YuNet + SFace → SCRFD + ArcFace | FPIR | -0.39 [-0.71, -0.11] | Exploratory interval excludes zero |
+| YuNet + ArcFace → SCRFD + ArcFace | End-to-end detection | +5.10 [+3.60, +6.90] | Exploratory interval excludes zero |
+| YuNet + ArcFace → SCRFD + ArcFace | FPIR | -0.04 [-0.21, +0.13] | Difference unresolved; interval includes zero |
+
+**Observed resource trade-off.** Mean complete processing rises from 21.72 to 80.73 ms/image; weight-file storage rises from 37.1 to 182.4 MiB. The comparator therefore uses 3.72 times the measured processing time and 4.92 times the model storage. These recorded costs exclude reviewer minutes, gallery templates, runtime memory and library binaries; they do not establish an economic optimum.
+
+**Descriptive classifier outcome, YuNet + SFace.** Threshold FPIR 0.52% becomes 0.70%; TPIR@1 92.57% becomes 94.27%. This policy comparison does not establish a general classifier benefit or deployment error rate.
+
+**Descriptive classifier outcome, SCRFD + ArcFace.** Threshold FPIR 0.13% becomes 0.00%; TPIR@1 96.80% becomes 95.90%. This policy comparison does not establish a general classifier benefit or deployment error rate.
+
+### Sensitivity to the review budget
+
+**YuNet + SFace.** 0.1% target: 40.50% end-to-end, 0.00 false referrals/1,000; 0.3% target: 87.20% end-to-end, 5.25 false referrals/1,000; 1.0% target: 89.20% end-to-end, 17.84 false referrals/1,000.
+
+**SCRFD + SFace.** 0.1% target: 24.00% end-to-end, 0.00 false referrals/1,000; 0.3% target: 94.90% end-to-end, 6.36 false referrals/1,000; 1.0% target: 95.80% end-to-end, 17.41 false referrals/1,000.
+
+**YuNet + ArcFace.** 0.1% target: 47.20% end-to-end, 0.00 false referrals/1,000; 0.3% target: 91.60% end-to-end, 1.75 false referrals/1,000; 1.0% target: 92.00% end-to-end, 10.49 false referrals/1,000.
+
+**SCRFD + ArcFace.** 0.1% target: 28.30% end-to-end, 0.00 false referrals/1,000; 0.3% target: 96.70% end-to-end, 1.34 false referrals/1,000; 1.0% target: 97.40% end-to-end, 10.71 false referrals/1,000.
+
+**Observed policy-dependent ranking.** Highest end-to-end detection among all four evaluated configurations: 0.1% development budget: YuNet + ArcFace (47.20%); 0.3% development budget: SCRFD + ArcFace (96.70%); 1.0% development budget: SCRFD + ArcFace (97.40%). These rankings describe the fixed test outcomes; comparative uncertainty must be read from the paired contrasts at each budget.
+
+Targets are development constraints; the rates above are held-out observations. Comparative claims at the primary policy cannot be transferred automatically to stricter or looser budgets. Additional paired sensitivity intervals, where available, are retrospective and exploratory. All policies remain frozen, and missing points are not inferred from development performance.
+
+### Critical comparison with previous research
+
+**Verification accuracy and processing coverage.** [LFW](https://people.cs.umass.edu/~elm/papers/lfw.pdf) provides a reproducible pair-verification task, but its images were selected through a detector-based collection process. It permits other faces around the labelled central target. The exactly-one-face rule used here is therefore an additional application policy: multiple detections may represent real faces, rather than detector errors. Conditional verification accuracy and usable-image coverage answer different questions. This study examines whether their joint reporting changes the apparent ranking of complete configurations.
+
+**Benchmark saturation and transfer.** [CPLFW](https://www.whdeng.cn/CPLFW/Cross-Pose-LFW.pdf) challenges optimistic LFW results through greater pose differences and harder negative pairs, while retaining LFW identities. Its role here is a transfer test using raw images and an unchanged development threshold. Results from aligned images or fold-wise recalibration estimate a different quantity. A change between these datasets cannot establish independent-population generalisation or isolate pose as the cause of a processing failure.
+
+**Competing representation-learning objectives.** [ArcFace](https://arxiv.org/abs/1801.07698v3) introduces an angular-margin loss; [SFace](https://arxiv.org/abs/2205.12010) adjusts intra-class and inter-class optimisation through gradient rescaling. Those training objectives motivate comparison, but this study evaluates published frozen weights. External training data are not controlled; capacity, alignment and normalisation are also part of each configuration. The results therefore concern configured recogniser substitutions, not a causal comparison of loss functions. Architecture-only superiority remains an unresolved question.
+
+**Detection performance and screening eligibility.** [YuNet](https://link.springer.com/article/10.1007/s11633-023-1423-y) and [SCRFD](https://arxiv.org/abs/2105.04714) pursue detection accuracy and efficiency with different model designs. Detection recall does not directly determine eligibility under an exactly-one-face rule: finding an additional face can prevent recognition. The within-detector interventions here test how confidence and canvas changes affect processing. They do not establish the identity accuracy of replacement settings without development-only recalibration and further held-out testing.
+
+**Subgroup thresholds and review policy.** [BFW](https://arxiv.org/abs/2002.06483) studies face-pair verification and differences between global and subgroup-specific thresholds. This motivates an audit, but neither its task nor its population validates the open-set gallery construction used here. A single global policy permits descriptive subgroup comparison; balanced labels and similar aggregate rates do not establish fair service outcomes. Reviewer decisions, harm and a representative deployment population were not measured.
+
+**Established identification evaluation and the remaining gap.** [NIST FRTE](https://pages.nist.gov/frvt/html/frvt1N.html) already measures search-level errors, investigation scenarios, processing time and storage. The contribution here is the specific executable comparison and its empirical counterexamples: calibration can change review burden, processing coverage can change interpretation, and an added classifier can fail to improve its intended outcome. The open question is which evaluated configuration offers the most useful trade-off under this protocol; no new metric or first general evaluation method is claimed.
+
+### Controls and scope of inference
+
+| Aspect | Held constant | Retained differences | Interpretation |
+| --- | --- | --- | --- |
+| Benchmark inputs | Intended BFW identities, image roles, gallery membership and seed | Successful extraction subsets | End-to-end comparisons retain every intended mated probe |
+| Detector | Same selected images and exactly-one-face eligibility rule | YuNet confidence 0.9, native image size, NMS 0.3; SCRFD confidence 0.5, padded 320 canvas and its own NMS | Configured detector substitution; equal numeric confidence would not equalise model-specific scores |
+| Recogniser | Frozen weights and the selected detector's landmark outputs within a detector arm | SFace alignCrop versus ArcFace landmark alignment, normalisation, dimensionality, capacity and external training history | Configured recogniser substitution; no isolated architecture or training-loss effect |
+| Gallery policy | Three enrolment candidates, minimum two successful extractions, development/test boundary and FPIR selection rule | A separately calibrated numerical similarity threshold for each pairing | Common policy objective, not equal raw score cutoffs or guaranteed equal realised test FPIR |
+| Statistical comparison | Matched intended probes and shared identity-bootstrap draws | Coverage and separately fitted/frozen policies; common-success analysis selects a smaller subset | Exploratory paired differences conditional on the evaluated configurations and galleries |
+| Detector intervention | Images, weights, NMS and eligibility within each detector; warmed instances and repeat controls | One preset confidence or canvas setting at a time | Controlled processing effects in sampled cohorts; no replacement recognition policy is validated |
+
+### Interpretation boundaries
+
+The three FPIR budgets are research scenarios, not validated moderation requirements. The frozen-policy sensitivity results below examine whether conclusions change across those budgets; no test outcome selects a replacement policy. Sparse subgroup errors remain descriptive benchmark observations. Neither balanced labels nor a zero observed false-referral count establishes deployment fairness or zero population risk.
+
+Measured timings and weight-file sizes are environment-specific observations; mixed-pipeline timings and workload projections are estimates. Independent service data, reviewer outcomes, error costs and calibration on new development identities would be required before claiming a deployable or economically optimal policy. Reusing validated cached outcomes provides consistent retrospective analysis, not a fresh independent benchmark replication.
+
+<details>
+<summary>Detailed experimental measurements and protocol evidence</summary>
 
 ## 1. LFW 1:1 verification
 
@@ -14,7 +83,7 @@ LFW mean fold accuracy 99.28%, pooled FMR 0.33%, FNMR 1.11%, EER 0.78%, extracti
 
 ## 2. CPLFW cross-pose transfer
 
-Conditional accuracy 90.24% over 3,515 scored pairs, with 41.42% of the protocol never reaching comparison. Cross-pose *detection*, not comparison, is the dominant finding.
+Conditional accuracy 90.24% over 3,515 scored pairs, with 41.42% of the protocol never reaching comparison. Processing coverage limits the interpretation of conditional comparison accuracy. These outcomes do not isolate pose as the cause of failure.
 
 ## 3. BFW single-image open-set control
 
@@ -32,7 +101,7 @@ FPIR 0.52%, TPIR@1 92.57%, 5.2 false reviews per 1,000. Comparing this row with 
 
 FPIR 0.70% against the threshold method's 0.52%; TPIR@1 94.27% against 92.57%; 7.00 false reviews per 1,000 against 5.25.
 
-The primary hypothesis was that the classifier would reduce false review referrals while retaining detection. That criterion is **not achieved**. The classifier raises identification while referring more innocent registrations, which is a trade-off rather than an improvement.
+The primary hypothesis was that the classifier would reduce false review referrals while retaining detection. That criterion is **not achieved**. The classifier raises identification while referring more non-mated benchmark searches, which is a trade-off rather than an improvement.
 
 ## 7. Female subgroup analysis
 
@@ -327,17 +396,25 @@ Independent sampling is at identity level: the saved test set contains 200 non-m
 
 Non-mated test identities by subgroup: asian_females: 25; asian_males: 25; black_females: 25; black_males: 25; indian_females: 25; indian_males: 25; white_females: 25; white_males: 25. Repeated images do not enlarge those subgroup identity counts.
 
+The equal identity splits retain separate calibration and held-out samples within every subgroup, and both enrolled and absent identities in each partition. Multiple enrolment candidates give a compact template comparison; the minimum of two successful images preserves a multi-image template when one of the three candidates fails extraction. Repeated mated probes sample within-person image variation. Additional non-mated probes improve empirical rare-error granularity, while actual conditional resolution uses the successfully scored denominator. These are feasibility and precision compromises, not proven optimal allocations; repeated photographs do not increase the number of independent people.
+
+The mated/non-mated probe ratio is a sampling design and does not estimate service duplicate prevalence. Selecting other image orders, identity splits or representative upload populations could change the operating threshold and pipeline ranking; the gallery-seed diagnostics do not constitute independent development/test-population replications.
+
 Multiple probes from one identity increase image-condition coverage, not the number of independent people. Non-mated probe-image counts are not independent identity trial counts. Identity-cluster resampling retains repeated probes of each person; the denominator still counts intended images for end-to-end detection. The single identity split, lexicographic image selection, fixed galleries and pretraining overlap not audited here limit representativeness. Exact reproduction requires the same dataset bytes, filenames, recipe, seed and software/model provenance; matching published scores requires a matching task and protocol, not only the dataset name.
 
 The four-way comparison holds identities, image roles, enrolment policy and target selection rule fixed, but compares configured components. YuNet confidence 0.9 at native input size and SCRFD confidence 0.5 on a 320 by 320 padded canvas are different operating settings. SFace uses OpenCV alignCrop; ArcFace uses its 112 by 112 landmark alignment. Each pairing has its own development-calibrated recognition threshold and surviving image subset. Crossing detectors/recognisers estimates a configured substitution, not an isolated network architecture effect; common-success results describe a selected subset. Equal numeric detector thresholds would not make their confidence scales comparable. The separate within-detector intervention isolates preset confidence or canvas changes for processing outcomes only, not recognition accuracy.
 
 Subgroup results are descriptive within BFW's recorded labels and sampling design. Balanced counts and excluding subgroup labels from classifier predictors do not establish fairness. Small identity counts, rare errors, label limitations and population shift prevent deployment fairness claims; no service harm, equal treatment or representative deployment error distribution was validated.
 
+Saved image selection uses 9,200 of 20,000 corpus images and leaves 10,800 unused.
+
+One event among 3,000 intended non-mated probes has empirical granularity 0.033%, versus 0.500% for one probe per each of 200 identities. This is image-rate granularity, not an increase in independent identity trials or a guarantee of tail-rate precision.
+
 ## 16. Frozen-threshold sensitivity and moderation requirements
 
 Development FPIR budgets of 0.1%, 0.3% and 1% represent illustrative research budgets of 1, 3 and 10 false reviews per 1,000 scored non-mated probes. The primary 0.3% budget is not an empirically validated moderation requirement. No reviewer capacity, duplicate prevalence, harm weighting or cost of a missed duplicate was measured to justify an optimal policy. A real requirement would need those inputs and representative validation.
 
-Each row uses its existing development-selected, frozen threshold unchanged. The target column is a development constraint, not the observed test FPIR. Test workload counts false referrals per 1,000 successfully scored non-mated images; it excludes true referrals and unresolved extraction failures, so it is not the total review queue. Detected/intended retains failed mated probes. The count is recovered from recorded conditional TPIR times its scored-mated denominator, only when it identifies a whole count within floating-point tolerance.
+Each row uses its existing development-selected, frozen threshold unchanged. The target column is a development constraint, not the observed test FPIR. Test workload counts false referrals per 1,000 successfully scored non-mated images; it excludes true referrals and unresolved extraction failures, so it is not the total review queue. Detected/intended retains failed mated probes. Counts in the additive analysis are computed directly from the validated original canonical outcomes. Original measurement files and primary policies are unchanged.
 
 | Configured pipeline | Development target | Frozen threshold | Development FPIR | Test FPIR | False reviews / 1,000 scored non-mated | Correctly detected / intended mated (end-to-end) |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -350,13 +427,57 @@ Each row uses its existing development-selected, frozen threshold unchanged. The
 | YuNet + ArcFace | 0.10% | 0.718882 | 0.07% | 0.00% | 0.00 | 472 / 1,000 (47.20%) |
 | YuNet + ArcFace | 0.30% | 0.391290 | 0.10% | 0.17% | 1.75 | 916 / 1,000 (91.60%) |
 | YuNet + ArcFace | 1.00% | 0.334610 | 0.66% | 1.05% | 10.49 | 920 / 1,000 (92.00%) |
-| SCRFD + ArcFace | 0.10% | 0.770218 | 0.07% | n/a | not available | not available |
+| SCRFD + ArcFace | 0.10% | 0.770218 | 0.07% | 0.00% | 0.00 | 283 / 1,000 (28.30%) |
 | SCRFD + ArcFace | 0.30% | 0.393958 | 0.13% | 0.13% | 1.34 | 967 / 1,000 (96.70%) |
-| SCRFD + ArcFace | 1.00% | 0.333001 | 0.70% | n/a | not available | not available |
+| SCRFD + ArcFace | 1.00% | 0.333001 | 0.70% | 1.07% | 10.71 | 974 / 1,000 (97.40%) |
 
-This is descriptive sensitivity, not a new paired significance analysis. The original paired intervals support interpretation at the primary frozen policies only; they cannot be transferred to the other budgets. Thresholds are not reselected using test outcomes. Different budgets can change the detection/workload trade-off, so these observations do not establish an optimal threshold or a robust ranking across operational requirements.
+The additive analysis uses 2,000 role/subgroup-stratified identity-bootstrap draws, paired across budgets and pipelines. These retrospective exploratory intervals condition on the same fixed galleries and already-frozen policies; they do not repeat model inference or select a threshold from test outcomes. Unadjusted intervals do not establish simultaneous superiority across budgets or a universally optimal policy.
 
-Missing held-out operating points remain not available. In particular, older SCRFD + ArcFace comparison artefacts store all development policies but only the primary test point. Development TPIR/FPIR and aggregate score histograms cannot supply the missing held-out outcomes. Future comparison runs save distinct test_operating_points for all already-frozen policies; refreshing this report does not run inference or fill those gaps.
+| Pipeline | Development budget | Scored / intended mated | Scored / intended non-mated | End-to-end detection %, 95% CI | False reviews / 1,000 scored non-mated, 95% CI |
+| --- | --- | --- | --- | --- | --- |
+| YuNet + SFace | 0.10% | 942 / 1,000 | 2,859 / 3,000 | 40.50 [36.30, 44.70] | 0.00 [0.00, 0.00] |
+| YuNet + SFace | 0.30% | 942 / 1,000 | 2,859 / 3,000 | 87.20 [84.30, 90.00] | 5.25 [1.77, 9.11] |
+| YuNet + SFace | 1.00% | 942 / 1,000 | 2,859 / 3,000 | 89.20 [86.70, 91.40] | 17.84 [10.80, 25.60] |
+| SCRFD + SFace | 0.10% | 999 / 1,000 | 2,987 / 3,000 | 24.00 [20.50, 27.40] | 0.00 [0.00, 0.00] |
+| SCRFD + SFace | 0.30% | 999 / 1,000 | 2,987 / 3,000 | 94.90 [93.30, 96.30] | 6.36 [2.68, 11.04] |
+| SCRFD + SFace | 1.00% | 999 / 1,000 | 2,987 / 3,000 | 95.80 [94.40, 97.20] | 17.41 [9.71, 26.19] |
+| YuNet + ArcFace | 0.10% | 942 / 1,000 | 2,860 / 3,000 | 47.20 [42.70, 52.00] | 0.00 [0.00, 0.00] |
+| YuNet + ArcFace | 0.30% | 942 / 1,000 | 2,860 / 3,000 | 91.60 [89.40, 93.60] | 1.75 [0.35, 3.49] |
+| YuNet + ArcFace | 1.00% | 942 / 1,000 | 2,860 / 3,000 | 92.00 [89.80, 93.90] | 10.49 [6.01, 15.69] |
+| SCRFD + ArcFace | 0.10% | 999 / 1,000 | 2,987 / 3,000 | 28.30 [24.50, 32.00] | 0.00 [0.00, 0.00] |
+| SCRFD + ArcFace | 0.30% | 999 / 1,000 | 2,987 / 3,000 | 96.70 [95.40, 97.90] | 1.34 [0.00, 3.69] |
+| SCRFD + ArcFace | 1.00% | 999 / 1,000 | 2,987 / 3,000 | 97.40 [96.30, 98.40] | 10.71 [5.36, 17.71] |
+
+The original baseline-versus-comparator contrast is recomputed separately at each pre-frozen budget, using paired identity draws. Its direction must be interpreted at that budget rather than transferred from the primary policy.
+
+| Development budget | SCRFD + ArcFace minus YuNet + SFace, end-to-end percentage points (95% CI) | FPIR percentage points (95% CI) |
+| --- | --- | --- |
+| 0.10% | -12.20 [-15.20, -9.20] | 0.00 [0.00, 0.00] |
+| 0.30% | 9.50 [7.30, 12.10] | -0.39 [-0.71, -0.11] |
+| 1.00% | 8.20 [6.30, 10.40] | -0.71 [-1.44, -0.01] |
+
+Within-pipeline changes below are the higher budget minus the lower budget, using the same identity draws. A positive detection difference may come with increased false-referral workload; an interval including zero is unresolved.
+
+| Pipeline | Budget change | End-to-end change, percentage points (95% CI) | FPIR change, percentage points (95% CI) |
+| --- | --- | --- | --- |
+| SCRFD + ArcFace | 0.10% to 0.30% | 68.40 [64.60, 72.20] | 0.13 [0.00, 0.37] |
+| SCRFD + ArcFace | 0.10% to 1.00% | 69.10 [65.20, 72.90] | 1.07 [0.54, 1.77] |
+| SCRFD + ArcFace | 0.30% to 1.00% | 0.70 [0.20, 1.30] | 0.94 [0.50, 1.47] |
+| SCRFD + SFace | 0.10% to 0.30% | 70.90 [67.60, 74.30] | 0.64 [0.27, 1.10] |
+| SCRFD + SFace | 0.10% to 1.00% | 71.80 [68.40, 75.40] | 1.74 [0.97, 2.62] |
+| SCRFD + SFace | 0.30% to 1.00% | 0.90 [0.30, 1.60] | 1.10 [0.57, 1.67] |
+| YuNet + ArcFace | 0.10% to 0.30% | 44.40 [40.00, 49.00] | 0.17 [0.03, 0.35] |
+| YuNet + ArcFace | 0.10% to 1.00% | 44.80 [40.30, 49.30] | 1.05 [0.60, 1.57] |
+| YuNet + ArcFace | 0.30% to 1.00% | 0.40 [0.10, 0.80] | 0.87 [0.52, 1.30] |
+| YuNet + SFace | 0.10% to 0.30% | 46.70 [42.70, 50.80] | 0.52 [0.18, 0.91] |
+| YuNet + SFace | 0.10% to 1.00% | 48.70 [44.70, 52.60] | 1.78 [1.08, 2.56] |
+| YuNet + SFace | 0.30% to 1.00% | 2.00 [1.00, 3.10] | 1.26 [0.73, 1.85] |
+
+At zero-referral operating points with 200 independent non-mated identity clusters, the separate one-sided 95% upper bound for an identity having any referral is 1.49%. This is not a bound on conditional per-image FPIR.
+
+Complete cross-pipeline paired differences at each budget and the source policy/run fingerprints are stored in threshold_sensitivity.json. Sampling intervals exclude fitting, calibration, gallery selection and population shift uncertainty. Zero-event intervals such as 0–0 do not bound population FPIR; the JSON also reports a separate upper bound for an identity having any false referral under independent, exchangeable identity assumptions.
+
+Any remaining unavailable point lacks retained, provenance-validated canonical outcomes. Development rates and aggregate histograms never substitute for test results. Original primary measurements have not been replaced.
 
 ## 17. Evidence boundaries and statistical interpretation
 
@@ -364,6 +485,8 @@ Verified evidence: saved benchmark processing counts, frozen policies, test rate
 
 Statistically supported directions: a primary paired identity-bootstrap difference whose exploratory 95% interval excludes zero supports that direction under this fixed protocol. An interval including zero is unresolved, not evidence of equivalence or no effect. These unadjusted comparisons condition on fitted models, frozen thresholds and galleries; they exclude selection, calibration and population-shift uncertainty.
 
-Descriptive evidence: the three-budget sensitivity, subgroup patterns, gallery repeats, feature ablations and observational image-quality strata are exploratory. Detector interventions provide paired intervals for processing coverage within their fixed cohorts, not a validated replacement recognition policy. Conditional common-success comparisons describe a selected subset; approximate mixed-pipeline timings and workload scaling examples remain estimates rather than new direct measurements.
+Descriptive evidence: subgroup patterns, observed budget rankings, gallery repeats, untested feature comparisons and observational image-quality strata remain descriptive unless their own comparative intervals are supplied. Validated frozen-budget changes and pipeline contrasts have additional exploratory paired intervals in the sensitivity analysis; primary-policy intervals cannot substitute for those budget-specific estimates. Detector interventions provide paired intervals for processing coverage within their fixed cohorts, not a validated replacement recognition policy. Conditional common-success comparisons describe a selected subset; approximate mixed-pipeline timings and workload scaling examples remain estimates rather than new direct measurements.
 
 Claims requiring further investigation: a universally best recogniser or detector, stable rankings across budgets or new populations, deployment fairness, million-profile performance, calibrated real-world duplication probabilities, and economically optimal moderation policies. No independent deployment validation, moderator study or isolated architecture experiment establishes those claims here.
+
+</details>

@@ -158,6 +158,8 @@ python ACP_arden.py --mode mixed-pipelines
 python ACP_arden.py --mode comparison-diagnostics
 python ACP_arden.py --mode detector-settings
 python ACP_arden.py --mode comparative-statistics
+python ACP_arden.py --mode research-evaluation
+python ACP_arden.py --mode research-summary
 python ACP_arden.py --mode refresh-reports
 python ACP_arden.py --mode experiment-table
 ```
@@ -170,6 +172,20 @@ the first failed step.
 `--results-root PATH` selects an aggregate output directory.
 `python ACP_arden.py --help` lists all modes, including saved summary views.
 The existing reports can be read without loading models or rerunning inference.
+
+`--mode research-evaluation` (menu 29) evaluates the three existing frozen
+review budgets against the original validated development and test outcome
+caches. It performs no model inference, training or threshold selection. The
+analysis checks cache integrity and the original policy, model, protocol and
+result fingerprints before publishing aggregate counts and paired intervals.
+Missing or incompatible evidence is reported explicitly with a non-zero exit
+status. The full workflow includes this step before refreshing the reports.
+
+`--mode research-summary` (menu 30) reads the saved evidence without private
+data and presents the research assessment. The
+[research report](results/aggregate/RESEARCH_REPORT.md) opens with the critical
+comparison, contribution, controls and claim boundaries; detailed experimental
+measurements are available in an expandable section.
 
 ## Evaluation approach
 
@@ -246,6 +262,15 @@ percentage points, with an exploratory paired 95% interval of 7.30–12.10. The
 higher detection rate and lower false-referral rate therefore came with
 greater processing time and model storage in this benchmark setting.
 
+The ranking changes with the frozen review budget. At the stricter 0.1%
+development FPIR target, YuNet + ArcFace detected 47.20% of intended duplicate
+probes, compared with 28.30% for SCRFD + ArcFace. Their exploratory paired
+difference, expressed as SCRFD + ArcFace minus YuNet + ArcFace, was −18.90
+percentage points, with a 95% interval of −21.90 to −15.90. Both recorded zero
+false referrals at that point; this does not establish zero population risk.
+The primary-policy result therefore does not establish a best configuration
+across moderation requirements.
+
 These results compare configured pipelines. Detector settings, alignment,
 preprocessing and separately calibrated thresholds remain part of each
 configuration, so the comparison does not isolate a network architecture or
@@ -268,6 +293,14 @@ The [research report](results/aggregate/RESEARCH_REPORT.md) brings together the
 verification, gallery, classifier and cost findings. Aggregate figures are in
 [results/figures/](results/figures/), with an accompanying
 [caption inventory](results/figures/FIGURE_CAPTIONS.md).
+The machine-readable [research assessment](results/aggregate/research_assessment.json)
+classifies observations and paired claims, records source fingerprints and
+states the comparison controls. The
+[frozen-budget sensitivity analysis](results/aggregate/threshold_sensitivity.json)
+contains all twelve held-out operating points, their exact counts, confidence
+intervals and paired budget contrasts. These additional results reuse the
+original held-out outcomes and are retrospective analyses, not independent
+benchmark replications.
 
 ## Limitations and reproducibility
 
@@ -280,9 +313,11 @@ only 25 non-mated identities, despite its repeated probe photographs.
 
 Filename-based image selection, one identity split, small fixed galleries and
 unaudited pretraining overlap limit generalisation. A development FPIR budget
-may be exceeded on test. The original SCRFD + ArcFace comparison lacks
-non-primary held-out operating points; reports leave those results unavailable.
-Updated comparison runs record each pre-frozen operating point separately.
+may be exceeded on test. Non-primary SCRFD + ArcFace points omitted from the
+original summary are evaluated in the additive sensitivity analysis using the
+original validated outcome caches and frozen policies. Original primary
+measurements remain unchanged. Reports leave any unavailable or incompatible
+evidence unresolved and do not substitute development rates for test outcomes.
 
 Detection is not bit-stable across processes on the recorded platform.
 Borderline YuNet detections can change between fresh runs. OpenCL is disabled
