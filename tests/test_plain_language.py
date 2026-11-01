@@ -271,7 +271,7 @@ def test_the_experiment_eight_summary_carries_real_comparison_values() -> None:
         assert line.index(plain) < line.index(technical), plain
     # Real values, not placeholders.
     assert "[value]" not in text and "not available" not in text
-    assert "%" in text and "ms" in text and "MB" in text
+    assert "%" in text and "ms" in text and "MiB" in text
 
 
 def test_the_experiment_eight_summary_leads_with_readable_pipeline_names() -> None:
@@ -824,7 +824,7 @@ def test_the_model_table_reports_measured_cost() -> None:
     for label in ("Detection, mean per image", "Embedding, mean per image",
                   "Complete pipeline, mean per image", "Weight files on disk"):
         assert label in text, label
-    assert " ms" in text and " MB" in text
+    assert " ms" in text and " MiB" in text
     # A threshold belongs to the model that produced it.
     assert "never applied to the other" in text
 

@@ -185,9 +185,9 @@ def test_every_part_reads_its_values_from_the_saved_files(saved: Path) -> None:
         # Part C: intervals, cost, the two swaps and the workload at scale.
         "80.00% (75.00 to 85.00)", "93.00% (90.00 to 96.00)",
         "6.00 (2.00 to 10.00)", "1.00 (0.00 to 3.00)",
-        "swapping YuNet for SCRFD adds 18.00 ms per image and 4.0 MB of storage, "
+        "swapping YuNet for SCRFD adds 18.00 ms per image and 4.0 MiB of storage, "
         "and raises end to end detection from 80.00% to 85.00%",
-        "Swapping SFace for ArcFace adds 30.00 ms per image and 40.0 MB of storage, "
+        "Swapping SFace for ArcFace adds 30.00 ms per image and 40.0 MiB of storage, "
         "and cuts false reviews from 6.00 to 2.00 per 1,000 new profiles",
         "YuNet + SFace is the cheapest combination and SCRFD + ArcFace detects the most",
         "YuNet + SFace would need about 22 minutes of processing, and "

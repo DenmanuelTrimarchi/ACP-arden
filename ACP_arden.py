@@ -3722,7 +3722,7 @@ class BfwDatasetError(RuntimeError):
 
 
 # The eight official demographic subgroups. Used for stratification and for
-# aggregate fairness reporting only; never joined to an identifiable name in
+# descriptive subgroup reporting only; never joined to an identifiable name in
 # any published artefact.
 BFW_SUBGROUPS = (
     "asian_females",
@@ -5727,7 +5727,7 @@ def cluster_bootstrap_intervals(
 # 23. Demographic subgroup performance
 # =============================================================================
 #
-# Subgroup figures are aggregate fairness reporting over benchmark identities.
+# Subgroup figures describe aggregate outcomes over benchmark identities.
 # No subgroup label is ever published beside anything that identifies a person,
 # no attribute is inferred with another model, and the primary result uses one
 # global threshold — subgroup-specific thresholds would change what is being
@@ -6598,6 +6598,21 @@ def render_open_set_report(
     primary = method_b_test["primary_operating_point"]
     coverage = method_b_test["coverage"]
     control_rates = method_a_test["rates"]
+    above_budget = []
+    within_budget = []
+    for target in FPIR_TARGETS:
+        rate = _artefact_value(method_b_test, "operating_points", str(target), "fpir")
+        if _is_number(rate):
+            (above_budget if rate > target else within_budget).append(format_percentage(target))
+    budget_notes = []
+    if above_budget:
+        budget_notes.append("Observed test FPIR exceeds the development target at "
+                            + ", ".join(above_budget) + ".")
+    if within_budget:
+        budget_notes.append("Observed test FPIR is at or below the development target at "
+                            + ", ".join(within_budget) + ".")
+    if not budget_notes:
+        budget_notes.append("The development-to-test budget comparison is not available.")
 
     lines = [
         "# Open-set duplicate-profile evaluation (Experiment 6)",
@@ -6682,17 +6697,19 @@ def render_open_set_report(
         "| Target FPIR | Threshold | Achieved test FPIR | TPIR@1 |",
         "| --- | --- | --- | --- |",
         *[
-            f"| {target} | "
+            f"| {format_percentage(target)} | "
             f"{format_number(method_b_test['operating_points'][str(target)].get('threshold'), 4)} | "
             f"{format_percentage(method_b_test['operating_points'][str(target)]['fpir'])} | "
             f"{format_percentage(method_b_test['operating_points'][str(target)]['tpir_rank1'])} |"
             for target in FPIR_TARGETS
         ],
         "",
-        "Each achieved test FPIR exceeds the target it was calibrated for. That gap is the "
-        "cost of holding the threshold fixed across disjoint identities and is the reason "
-        "the policy is frozen on development data before the test partition is scored — "
-        "recalibrating on these figures would make them meaningless.",
+        " ".join(budget_notes),
+        "",
+        "A development constraint does not guarantee the realised rate on new identities. "
+        "The policies remain frozen; selecting a replacement threshold from these test "
+        "outcomes would bias the estimate of held-out performance. Zero observed events "
+        "do not establish zero population risk.",
         "",
         "### Coverage (quoted with every rate above)",
         "",
@@ -7550,8 +7567,8 @@ def write_pipeline_comparison_csv(
 # 26. Experiment 7 — interpretable machine-learning review classifier
 # =============================================================================
 #
-# Asks whether a small classifier over ranking context can refer fewer innocent
-# registrations for human review than a single similarity threshold, without
+# Asks whether a small classifier over ranking context can refer fewer non-mated
+# benchmark searches for review than a single similarity threshold, without
 # losing duplicate detection.
 #
 # Logistic regression is the primary model: its coefficients are directly
@@ -8327,8 +8344,8 @@ ML_REVIEW_LIMITATIONS = (
     "is not evidence of duplication, fraud or misuse, and no sanction follows from it.",
     "Coefficients describe association within this classifier on these benchmark "
     "identities. They are not causal, and they do not transfer to another population.",
-    "Demographic subgroup is never a classifier input. It is used only for post-hoc "
-    "fairness reporting.",
+    "Demographic subgroup is never a classifier input. It is used only for descriptive "
+    "benchmark subgroup analysis, which does not establish deployment fairness.",
     "Extraction failures are reported separately and are never counted as genuine "
     "negative decisions.",
 )
@@ -9288,6 +9305,27 @@ def _write_review_csvs(
         writer.writerow(["mean_probability", float(np.mean(probabilities)) if len(rows) else ""])
 
 
+def classifier_comparison_interpretation(test: Mapping[str, Any]) -> str:
+    """Describe recorded classifier rates without assuming its intended benefit."""
+    baseline = _artefact_value(test, "comparator_three_image_open_set_calibrated", "rates") or {}
+    classifier = test.get("classifier") or {}
+    values = [baseline.get("fpir"), classifier.get("fpir"),
+              baseline.get("tpir_rank1"), classifier.get("tpir_rank1")]
+    if not all(_is_number(value) and math.isfinite(float(cast(float, value))) for value in values):
+        return "The recorded classifier comparison is not available; no directional conclusion is inferred."
+
+    def change(before: float, after: float) -> str:
+        return "higher" if after > before else "lower" if after < before else "unchanged"
+
+    fpir_before, fpir_after, tpir_before, tpir_after = [float(cast(float, value)) for value in values]
+    return (f"The recorded classifier has {change(fpir_before, fpir_after)} FPIR "
+            f"({format_percentage(fpir_after)} versus {format_percentage(fpir_before)}) "
+            f"and {change(tpir_before, tpir_after)} conditional TPIR@1 "
+            f"({format_percentage(tpir_after)} versus {format_percentage(tpir_before)}). "
+            "These are descriptive policy outcomes, not a paired statistical conclusion "
+            "or a general benefit of adding a classifier.")
+
+
 def render_ml_review_report(
     test: Mapping[str, Any], intervals: Mapping[str, Any],
     per_subgroup: Mapping[str, Mapping[str, Any]], classifier: ReviewClassifier,
@@ -9296,10 +9334,18 @@ def render_ml_review_report(
     c = test["classifier"]
     b = test["comparator_three_image_open_set_calibrated"]["rates"]
     coverage = test["coverage"]
+    pipeline_name = str(_artefact_value(test, "pipeline", "pipeline_name") or "")
+    experiment = 11 if "scrfd" in pipeline_name.lower() and "arcface" in pipeline_name.lower() else 7
+    mode = "arcface-review" if experiment == 11 else "ml-review"
+    pipeline_label = pipeline_display_name(pipeline_name) if pipeline_name else "pipeline not recorded"
+    replicates = intervals["fpir"].get("requested_replicates", BOOTSTRAP_REPLICATES)
     lines = [
-        "# Machine-learning review classifier (Experiment 7)",
+        f"# Machine-learning review classifier (Experiment {experiment})",
         "",
-        f"Auto-generated by `ACP_arden.py --mode ml-review` on {test['created_at']}.",
+        f"Generated from the saved `--mode {mode}` results. "
+        f"Recorded evaluation timestamp: {test['created_at']}.",
+        "",
+        f"Pipeline: {pipeline_label}.",
         "",
         "> Can an interpretable machine-learning review classifier trained on BFW "
         "development identities reduce false duplicate-profile review referrals while "
@@ -9321,11 +9367,17 @@ def render_ml_review_report(
         "ranked first (or within five) *and* above the operating point. A referral to "
         "another identity is not an identification.",
         "",
+        classifier_comparison_interpretation(test),
+        "",
         f"Classifier FPIR 95% CI {format_percentage(intervals['fpir']['lower_95'])} – "
         f"{format_percentage(intervals['fpir']['upper_95'])}; TPIR@1 95% CI "
         f"{format_percentage(intervals['tpir_rank1']['lower_95'])} – "
         f"{format_percentage(intervals['tpir_rank1']['upper_95'])} "
-        f"(2,000 identity-cluster replicates).",
+        f"({format_count(replicates)} identity-cluster replicates).",
+        "",
+        "These are marginal intervals for the classifier, not a paired interval for "
+        "its difference from the threshold comparator. Observed changes in the table "
+        "do not by themselves establish a statistically supported improvement.",
         "",
         format_zero_event_note(intervals["fpir"]) if intervals["fpir"].get("bootstrap_degenerate_zero_events") else "",
         "### Decision counts",
@@ -9365,13 +9417,18 @@ def render_ml_review_report(
         )
 
     lines += ["", "## Standardised coefficients", "",
-              "Positive coefficients raise the probability of opening a review case; negative "
-              "coefficients lower it. These describe association inside this classifier, not "
-              "causation.", "", "| Feature | Coefficient |", "| --- | --- |"]
+              "Positive coefficients raise the fitted referral score; negative "
+              "coefficients lower it. These describe association inside this classifier, "
+              "not causation or a calibrated real-world probability of duplication.",
+              "", "| Feature | Coefficient |", "| --- | --- |"]
     for name, weight in zip(classifier.feature_order, classifier.coefficients):
         lines.append(f"| {name} | {weight:+.4f} |")
 
     lines += ["", "## Subgroup performance (95% confidence intervals)", "",
+              "These are descriptive outcomes within the benchmark's recorded labels. "
+              "Repeated images do not increase the independent identity sample. "
+              "Sparse errors and zero-event intervals do not establish equal "
+              "population performance, zero risk or deployment fairness.", "",
               "| Subgroup | FPIR | TPIR@1 |", "| --- | --- | --- |"]
     for subgroup in sorted(per_subgroup):
         r = per_subgroup[subgroup]
@@ -9835,14 +9892,25 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
             "policy_note": POLICY_NOTE,
         },
     )
+    write_markdown_artifact(
+        output_root / "PRETRAINED_PIPELINE_COMPARISON_REPORT.md", render_pipeline_comparison_report(payload)
+    )
+    # Readable wording in the terminal; the exact internal status stays in JSON.
+    announce(f"Pipeline comparison: {plain_status(payload['status'])}")
+    return payload
+
+
+def render_pipeline_comparison_report(payload: Mapping[str, Any]) -> str:
+    """Render Experiment 8 from saved measurements without changing their provenance."""
     report = [
         "# Pretrained pipeline comparison (Experiment 8)",
         "",
-        f"Auto-generated by `ACP_arden.py --mode pipeline-compare` on {payload['created_at']}.",
+        f"Generated from the saved `--mode pipeline-compare` results. "
+        f"Recorded evaluation timestamp: {payload['created_at']}.",
         "",
-        "> Does a stronger pretrained detection and face-embedding pipeline improve "
-        "extraction coverage, open-set duplicate detection and subgroup consistency "
-        "compared with YuNet + SFace under the same BFW protocol?",
+        "> How do SCRFD + ArcFace and YuNet + SFace compare in processing coverage, "
+        "rank-aware duplicate identification, false referrals and resource cost "
+        "under the same BFW protocol?",
         "",
         f"## Status: {payload['status']}",
         "",
@@ -9898,12 +9966,48 @@ def run_pipeline_comparison(*, output_root: Path = AGGREGATE_ROOT) -> Dict[str, 
         "",
         "Neither pipeline was trained or fine-tuned.",
     ]
-    (output_root / "PRETRAINED_PIPELINE_COMPARISON_REPORT.md").write_text(
-        "\n".join(report) + "\n", encoding="utf-8"
-    )
-    # Readable wording in the terminal; the exact internal status stays in JSON.
-    announce(f"Pipeline comparison: {plain_status(payload['status'])}")
-    return payload
+    return "\n".join(report) + "\n"
+
+
+def refresh_saved_evaluation_reports(output_root: Path = AGGREGATE_ROOT) -> List[Path]:
+    """Rebuild comparison/classifier Markdown from complete saved public evidence only."""
+    root = Path(output_root)
+    rendered: List[Tuple[Path, str]] = []
+    comparison_path = root / "pipeline_comparison_metrics.json"
+    if comparison_path.is_file():
+        path = root / "PRETRAINED_PIPELINE_COMPARISON_REPORT.md"
+        rendered.append((path, render_pipeline_comparison_report(read_json_artifact(comparison_path))))
+    classifier_sources = ("ml_review_test_metrics.json", "ml_review_confidence_intervals.json",
+                          "ml_review_subgroup_metrics.json", "ml_review_model.json")
+    for directory in (root, root / ARCFACE_REVIEW_DIRNAME):
+        if not all((directory / name).is_file() for name in classifier_sources):
+            continue
+        test, intervals, subgroups, saved = [read_json_artifact(directory / name) for name in classifier_sources]
+        model = saved.get("model")
+        if not isinstance(model, Mapping):
+            raise MlReviewError("Saved classifier model has no numeric model record.")
+        try:
+            classifier = ReviewClassifier(
+                feature_order=tuple(model["feature_order"]),
+                coefficients=[float(value) for value in model["coefficients"]],
+                intercept=float(model["intercept"]),
+                scaler_mean=[float(value) for value in model["scaler_mean"]],
+                scaler_scale=[float(value) for value in model["scaler_scale"]],
+            )
+        except (KeyError, TypeError, ValueError):
+            raise MlReviewError("Saved classifier model has incomplete or invalid numeric fields.") from None
+        dimension = len(classifier.feature_order)
+        if (dimension == 0 or not all(isinstance(name, str) for name in classifier.feature_order)
+                or any(len(values) != dimension for values in (classifier.coefficients, classifier.scaler_mean, classifier.scaler_scale))
+                or not all(math.isfinite(value) for value in (classifier.intercept, *classifier.coefficients,
+                                                              *classifier.scaler_mean, *classifier.scaler_scale))
+                or any(value <= 0 for value in classifier.scaler_scale)):
+            raise MlReviewError("Saved classifier model dimensions or finite scaling values are invalid.")
+        path = directory / "ML_REVIEW_EVALUATION_REPORT.md"
+        rendered.append((path, render_ml_review_report(test, intervals["intervals"], subgroups["subgroups"], classifier)))
+    for path, text in rendered:
+        write_markdown_artifact(path, text)
+    return [path for path, _ in rendered]
 
 
 def _render_comparison_result_sections(
@@ -9964,13 +10068,17 @@ def _render_comparison_result_sections(
         lines.append(f"| {label} | " + " | ".join(getter(n) for n in names) + " |")
 
     lines += ["", "## Cost", "",
+              "Processing-time samples condition on successful extraction. Failed "
+              "attempts did not supply timing samples, so these summaries do not "
+              "measure all-intended-upload throughput. Weight-file sizes use MiB "
+              "and exclude gallery templates, runtime memory and library binaries.", "",
               "| Measure | " + " | ".join(names) + " |",
               "| --- | " + " | ".join("---" for _ in names) + " |"]
     sizes = payload.get("model_file_sizes") or {}
     def size_of(name: str, which: int) -> str:
         group = sizes.get("primary" if "opencv" in name else "comparison") or {}
         values = list(group.values())
-        return f"{values[which]['megabytes']} MB" if len(values) > which else "n/a"
+        return f"{values[which]['megabytes']} MiB" if len(values) > which else "n/a"
     cost_rows = [
         ("Embedding dimensions",
          lambda n: str(held_out[n].get("embedding_dimensions")
@@ -10025,21 +10133,25 @@ def _render_comparison_result_sections(
                 f"{pct(entry['non_mated_probe_coverage'])} |"
             )
 
-    lines += ["", "## Subgroup extremes", ""]
-    for metric, label, best_is_low in (("fpir", "FPIR", True),
-                                       ("tpir_rank1", "TPIR@1", False),
-                                       ("mated_probe_coverage", "Mated coverage", False)):
+    lines += ["", "## Subgroup extremes", "",
+              "These are descriptive point estimates within fixed benchmark categories, "
+              "not statistically established subgroup rankings or evidence of deployment "
+              "fairness. Ties are retained. Sparse events and zero-event intervals do "
+              "not establish equal population error rates or zero risk.", ""]
+    for metric, label in (("fpir", "FPIR"), ("tpir_rank1", "TPIR@1"),
+                          ("mated_probe_coverage", "Mated coverage")):
         for name in names:
             subgroups = held_out[name].get("subgroups") or {}
             valid = {k: v[metric] for k, v in subgroups.items()
                      if isinstance(v.get(metric), float) and v[metric] == v[metric]}
             if not valid:
                 continue
-            best = min(valid, key=lambda k: valid[k]) if best_is_low else max(valid, key=lambda k: valid[k])
-            worst = max(valid, key=lambda k: valid[k]) if best_is_low else min(valid, key=lambda k: valid[k])
+            low, high = min(valid.values()), max(valid.values())
+            lowest = ", ".join(f"**{key}**" for key in sorted(valid) if valid[key] == low)
+            highest = ", ".join(f"**{key}**" for key in sorted(valid) if valid[key] == high)
             lines.append(
-                f"- {label}, {name}: strongest **{best}** ({pct(valid[best])}), "
-                f"weakest **{worst}** ({pct(valid[worst])})"
+                f"- {label}, {name}: lowest observed {lowest} ({pct(low)}); "
+                f"highest observed {highest} ({pct(high)})"
             )
 
     lines += ["", "## Profile-photo consistency", "",
@@ -10992,7 +11104,9 @@ def render_detector_ablation_brief(aggregate_root: Path = AGGREGATE_ROOT) -> str
     return '\n'.join(lines)
 
 
-def write_detector_ablation_outputs(aggregate_root: Path, figures_root: Path) -> Optional[Path]:
+def write_detector_ablation_outputs(
+    aggregate_root: Path, figures_root: Path, *, write_data_artifacts: bool = True,
+) -> Optional[Path]:
     path = Path(aggregate_root) / DETECTOR_ABLATION_DIR / 'detector_settings_metrics.json'
     if not path.is_file():
         return None
@@ -11004,7 +11118,8 @@ def write_detector_ablation_outputs(aggregate_root: Path, figures_root: Path) ->
             rows.append({'cohort':cohort, 'setting':label, 'intended_images':item['intended_images'],
                          **item['outcomes'], 'unprocessed_per_1000':item['unprocessed_per_1000_intended'],
                          'detector_mean_ms':item['detector_latency_mean_ms'], 'detector_p95_ms':item['detector_latency_p95_ms']})
-    write_csv_artifact(path.parent/'detector_settings_summary.csv',rows,fieldnames=list(rows[0]))
+    if write_data_artifacts:
+        write_csv_artifact(path.parent/'detector_settings_summary.csv',rows,fieldnames=list(rows[0]))
     plt = _figure_backend()
     fig, axes = plt.subplots(2,2,figsize=(15,12),sharex=True)
     colours = {'one_face':'#4C956C','zero_faces':'#DD8452','multiple_faces':'#8172B3','load_failure':'#777777'}
@@ -11204,6 +11319,12 @@ def _write_figure_captions(
         "threshold; a referral to another identity is a referral, not an identification. "
         "End-to-end detection divides by every intended mated probe, so extraction failures "
         "reduce it; conditional rates divide by those actually scored.",
+        "",
+        "**Processing costs.** Recognition-pipeline timing samples condition on "
+        "successful extraction; failed attempts did not contribute those timings. "
+        "They are not measurements of throughput across all intended uploads. "
+        "Mixed-pipeline times assembled from separate stages remain estimates. "
+        "Detector-only intervention timings have their own sampled-image denominator.",
         "",
         "**Confidence intervals.** All intervals are 95% percentile bounds from an "
         "identity-cluster bootstrap: identities are resampled with replacement, carrying "
@@ -12056,6 +12177,7 @@ def build_research_assessment(aggregate_root: Path = AGGREGATE_ROOT) -> Dict[str
         "threshold_sensitivity": threshold_sensitivity_rows(root),
         "classifier_comparisons": classifiers, "comparison_controls": research_comparison_controls(),
         "cost_profile": combination_cost_profile(root),
+        "timing_scope": "Processing-time samples condition on successful extraction. Failed-attempt times and all-intended-upload throughput are not measured by those summaries.",
         "primary_sources": dict(RESEARCH_PRIMARY_SOURCES),
         "evidence_classes": {
             "observed_benchmark_outcome": "Recorded counts, rates and measured costs within the stated protocol",
@@ -12125,13 +12247,14 @@ def render_research_assessment(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     storage = [entry.get("storage_mb") for entry in (baseline_cost, comparison_cost)]
     if all(_is_number(value) and value > 0 for value in times + storage):
         paragraphs.append(
-            f"**Observed resource trade-off.** Mean complete processing rises from "
-            f"{times[0]:.2f} to {times[1]:.2f} ms/image; weight-file storage rises from "
+            f"**Observed resource trade-off.** Mean complete processing for successfully "
+            f"extracted images rises from {times[0]:.2f} to {times[1]:.2f} ms/image; weight-file storage rises from "
             f"{storage[0]:.1f} to {storage[1]:.1f} MiB. The comparator therefore uses "
             f"{times[1] / times[0]:.2f} times the measured processing time and "
             f"{storage[1] / storage[0]:.2f} times the model storage. These recorded costs "
-            "exclude reviewer minutes, gallery templates, runtime memory and library "
-            "binaries; they do not establish an economic optimum.")
+            "exclude failed-attempt timings, reviewer minutes, gallery templates, runtime "
+            "memory and library binaries; they do not establish all-upload throughput "
+            "or an economic optimum.")
     for row in data["classifier_comparisons"]:
         paragraphs.append(f"**Descriptive classifier outcome, {row['pipeline']}.** Threshold FPIR "
             f"{format_percentage(row['threshold_fpir'])} becomes {format_percentage(row['classifier_fpir'])}; "
@@ -12295,9 +12418,9 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             "",
             f"The primary hypothesis was that the classifier would reduce false review "
             f"referrals while retaining detection. That criterion is "
-            f"**{str(achieved).replace('_', ' ')}**. The classifier raises identification "
-            f"while referring more non-mated benchmark searches, which is a trade-off rather than "
-            f"an improvement.",
+            f"**{str(achieved).replace('_', ' ')}**.",
+            "",
+            classifier_comparison_interpretation(review),
         ]
 
     held_out_all = (pipeline or {}).get("held_out_metrics") or {}
@@ -12414,7 +12537,7 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
                     f"{m['failure_breakdown'].get('multiple_faces', 0)} | "
                     f"{format_number(m['coverage'].get('embedding_latency_mean_ms'), 2)} ms | "
                     f"{format_number(m['coverage'].get('complete_pipeline_latency_mean_ms'), 2)} ms | "
-                    f"{format_number(total, 1)} MB |"
+                    f"{format_number(total, 1)} MiB |"
                 )
             lines += [
                 "",
@@ -12612,9 +12735,14 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 
 
 def generate_figures(
-    *, aggregate_root: Path = AGGREGATE_ROOT, figures_root: Path = FIGURES_ROOT
+    *, aggregate_root: Path = AGGREGATE_ROOT, figures_root: Path = FIGURES_ROOT,
+    write_data_artifacts: bool = True,
 ) -> List[Path]:
-    """Produce the research figures supported by the available artefacts."""
+    """Produce figures from saved evidence, optionally preserving aggregate data files.
+
+    Experiment runs publish their derived tables by default; presentation-only
+    refreshes disable those JSON/CSV writes without restoring files afterwards.
+    """
     plt = _figure_backend()
     # Imported here rather than at module scope, because matplotlib is only
     # required when figures are actually generated.
@@ -13515,10 +13643,12 @@ def generate_figures(
         path = figures_root / "paired_pipeline_comparison.png"
         _save_figure(fig, path); plt.close(fig); written.append(path)
 
-    detector_figure = write_detector_ablation_outputs(aggregate_root, figures_root)
+    detector_figure = write_detector_ablation_outputs(
+        aggregate_root, figures_root, write_data_artifacts=write_data_artifacts)
     if detector_figure is not None:
         written.append(detector_figure)
-    write_implementation_layer_artefacts(aggregate_root)
+    if write_data_artifacts:
+        write_implementation_layer_artefacts(aggregate_root)
     _write_figure_captions(aggregate_root, figures_root, written)
     (aggregate_root / "RESEARCH_REPORT.md").write_text(
         render_research_report(aggregate_root), encoding="utf-8"
@@ -14345,7 +14475,7 @@ def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         ["New-profile photographs processed (non-mated coverage)",
          *[cell(n, lambda m: _percentage_of(
              1.0 - m["coverage"]["non_mated_extraction_failure_rate"])) for n in names]],
-        ["Mean complete processing time per image",
+        ["Mean complete processing time per successful image",
          *[cell(n, lambda m: f"{m['coverage']['complete_pipeline_latency_mean_ms']:.1f} ms")
            for n in names]],
     ]
@@ -14365,7 +14495,7 @@ def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             entry.get("megabytes", 0.0) for entry in group.values()
             if isinstance(entry, Mapping)
         )
-        return f"{total:.1f} MB" if total else "not available"
+        return f"{total:.1f} MiB" if total else "not available"
 
     rows += [
         ["Numerical face representation size (embedding dimensions)",
@@ -14388,32 +14518,31 @@ def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "Result:",
         "",
     ]
-    # The conclusion is generated from the values rather than asserted, so it
-    # cannot contradict the table above it.
+    # The headline uses all intended mated probes, independently of conditional
+    # TPIR, and does not infer statistical support from an observed difference.
     baseline, comparison = names[0], names[-1]
-    better_detection = (held_out[comparison]["rates"]["tpir_rank1"]
-                        > held_out[baseline]["rates"]["tpir_rank1"])
-    fewer_reviews = (held_out[comparison]["rates"]["fpir"]
-                     < held_out[baseline]["rates"]["fpir"])
-    slower = (held_out[comparison]["coverage"]["complete_pipeline_latency_mean_ms"]
-              > held_out[baseline]["coverage"]["complete_pipeline_latency_mean_ms"])
-    verdict = (
-        f"{pipeline_display_name(comparison)} detected "
-        f"{'more' if better_detection else 'no more'} known duplicate cases and sent "
-        f"{'fewer' if fewer_reviews else 'no fewer'} new profiles for unnecessary review."
-    )
+    first, second = held_out[baseline], held_out[comparison]
+    verdict = (f"At the separate frozen primary policies, "
+               f"{pipeline_display_name(comparison)} recorded end-to-end detection "
+               f"{format_percentage(second.get('end_to_end_duplicate_detection_rate'))}, "
+               f"compared with {format_percentage(first.get('end_to_end_duplicate_detection_rate'))} "
+               f"for {pipeline_display_name(baseline)}. Conditional TPIR@1 uses only "
+               "successfully scored mated probes and is reported separately above.")
     lines += [
-        wrap_plain(verdict),
+        wrap_plain(verdict if len(names) >= 2 else
+                   "Only one evaluated pipeline is recorded; no comparative conclusion is inferred."),
         "",
         wrap_plain(
-            "The improvement required larger model files and more processing time."
-            if slower else
-            "The comparison pipeline did not cost additional processing time here."
+            "These are observed primary-policy differences. Paired intervals are "
+            "needed for comparative statistical support, and the ranking can change "
+            "at other frozen review budgets. The research assessment reports those comparisons."
         ),
         "",
         wrap_plain(
             "Because the detector, alignment, preprocessing and recognition model all "
-            "changed, the improvement must be described as a complete-pipeline result."
+            "changed, differences concern configured pipelines. Processing times "
+            "condition on successful extraction; they do not measure throughput "
+            "including every failed attempt."
         ),
         "",
         "Technical pipeline identifiers:",
@@ -14429,7 +14558,7 @@ def render_pipeline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 
 
 def render_experiment_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) -> str:
-    """All nine experiments side by side: models, dataset, task and outcome.
+    """All twelve experiments side by side: models, dataset, task and outcome.
 
     Read back from the published artefacts, so a row cannot disagree with the
     file it summarises. An experiment that has not been run yet is shown as
@@ -15163,10 +15292,10 @@ def render_cost_and_workload_part(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         time_change = after["time_ms"] - before["time_ms"]
         storage_change = after["storage_mb"] - before["storage_mb"]
         if time_change >= 0 and storage_change >= 0:
-            return f"adds {time_change:.2f} ms per image and {storage_change:.1f} MB of storage"
+            return f"adds {time_change:.2f} ms per image and {storage_change:.1f} MiB of storage"
         return (f"{'adds' if time_change >= 0 else 'saves'} {abs(time_change):.2f} ms per "
                 f"image and {'adds' if storage_change >= 0 else 'saves'} "
-                f"{abs(storage_change):.1f} MB of storage")
+                f"{abs(storage_change):.1f} MiB of storage")
 
     def movement(before: str, after: str, what: str, rise: str, fall: str, *, up: bool) -> str:
         # The verb follows the stored values, so the sentence cannot contradict
@@ -15235,16 +15364,19 @@ def render_cost_and_workload_part(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         scale_lines = [f"The workload for {DEPLOYMENT_SCALE_UPLOADS:,} uploads is not available."]
     elif cheapest == best:
         scale_lines = [
-            f"{best} is both the cheapest combination and the one that detects the most "
-            "duplicates, so no balance between cost and detection is needed here."
+            f"{best} has both the lowest processing time proxy and the highest observed "
+            "primary policy end to end detection. False referrals, unresolved attempts "
+            "and reviewer costs still prevent an inference of an optimal deployment policy."
         ]
     else:
         scale_lines = [
             f"{cheapest} is the cheapest combination and {best} detects the most duplicates.",
-            f"For {DEPLOYMENT_SCALE_UPLOADS:,} uploads, {cheapest} would need "
+            f"For {DEPLOYMENT_SCALE_UPLOADS:,} successfully processed images, {cheapest} would need "
             f"{processing(cheapest)} of processing, and {best} {processing(best)}. These "
-            "use the complete time per image measured on the machine used for these "
-            "runs, which also counts loading the photograph.",
+            "are successful processing timing proxies from the recorded machine, "
+            "including image loading. Failed attempts did not contribute timing "
+            "samples; their cost and the successful extraction rate prevent these "
+            "figures from estimating throughput for all intended uploads.",
         ]
         fpir_cheapest, fpir_best = estimate(cheapest, "fpir"), estimate(best, "fpir")
         if fpir_cheapest is not None and fpir_best is not None:
@@ -15271,18 +15403,19 @@ def render_cost_and_workload_part(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         render_plain_pipeline_table(
             ["Combination", "End to end detection (95% CI)",
              "False reviews per 1,000 (95% CI)", "Detection and embedding, ms",
-             "Model storage, MB"], rows
+             "Model storage, MiB"], rows
         ),
         _wrap_keeping_names(
             "End to end detection counts every intended known duplicate, including "
             "photographs that could not be processed. False reviews are counted per "
             "1,000 new profile photographs that were processed. Times are the mean "
-            "detection plus the mean embedding per image from the pipeline comparison "
+            "detection plus the mean embedding per successfully processed image from the pipeline comparison "
             "run. The two crossed combinations were not timed in that run, so their "
             "time adds one pipeline's detection to the other's embedding and is marked "
             "(estimated). Storage is the size of the two weight files. The saved MB "
             "fields use binary megabytes (MiB); gallery templates and runtime memory "
-            "are not included."
+            "are not included. These timing summaries condition on successful extraction "
+            "and do not include the time spent on failed attempts."
         ),
         _wrap_keeping_names(detector_sentence),
         _wrap_keeping_names(recogniser_sentence),
@@ -16171,7 +16304,7 @@ def render_model_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     def group_mb(group: str) -> str:
         entries = (sizes.get(group) or {}).values()
         total = sum(e.get("megabytes", 0.0) for e in entries if isinstance(e, Mapping))
-        return f"{total:.1f} MB" if total else "not available"
+        return f"{total:.1f} MiB" if total else "not available"
 
     def latency(key_fragment: str, stage: str) -> str:
         for name, metrics in held_out.items():
@@ -16183,13 +16316,13 @@ def render_model_comparison_table(aggregate_root: Path = AGGREGATE_ROOT) -> str:
 
     rows = [
         ["YuNet", "Finds the face", "OpenCV Zoo", "bounding box + 5 landmarks",
-         "no", "1-7"],
+         "no", "1-8, 12"],
         ["SFace", "Face to numbers", "OpenCV Zoo", "128 values",
-         "no", "1-7"],
+         "no", "1-8, 12"],
         ["SCRFD", "Finds the face", "InsightFace", "bounding box + 5 landmarks",
-         "no", "8-11"],
+         "no", "8-12"],
         ["ArcFace", "Face to numbers", "InsightFace buffalo_l", "512 values",
-         "no", "8-11"],
+         "no", "8-12"],
         ["Logistic regression", "Decides referral", "fitted here",
          f"{len(review['model']['feature_order'])} features" if review else "9 features",
          "yes", "7, 11"],
@@ -16255,8 +16388,10 @@ def render_overall_conclusion(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     calibrated = reviews_per_1000(
         open_set, "methods", METHOD_B, "primary_operating_point",
         "false_reviews_per_1000_non_mated")
-    classifier = reviews_per_1000(
-        review, "classifier", "false_reviews_per_1000_non_mated")
+    outcome = _artefact_value(review, "success_criteria", "fewer_false_reviews_than_threshold_method", "outcome")
+    criterion = (f" The recorded false-referral criterion was {outcome.replace('_', ' ')}."
+                 if isinstance(outcome, str) and outcome in {"achieved", "not_achieved", "not_measurable"}
+                 else " The false-referral criterion is not available.")
 
     lines = [
         "OVERALL PROJECT CONCLUSION",
@@ -16276,9 +16411,7 @@ def render_overall_conclusion(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         ),
         "",
         wrap_plain(
-            f"3. The baseline logistic-regression classifier increased conditional "
-            f"TPIR@1 but did not reduce false referrals ({classifier} per 1,000). Its "
-            f"main hypothesis was therefore not achieved."
+            "3. " + classifier_comparison_interpretation(review or {}) + criterion
         ),
         "",
     ]
@@ -16712,9 +16845,9 @@ def render_baseline_plain_summary(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             "",
             "Meaning:",
             "The transferred one-to-one threshold detected many known duplicate",
-            "cases, but it also referred far too many genuinely new profiles.",
+            "cases, while referring the recorded proportion of non-mated searches.",
             "This experiment demonstrates why gallery search needs its own",
-            "threshold.",
+            "calibration; no measured service limit defines an acceptable queue.",
             "",
         ]
     lines.append(wrap_plain(REFERRAL_DISCLAIMER))
@@ -17859,11 +17992,18 @@ def action_run_research_evaluation(output_root: Path = AGGREGATE_ROOT) -> int:
 
 
 def action_refresh_reports(output_root: Path = AGGREGATE_ROOT) -> int:
+    """Regenerate presentation from saved evidence, preserving measurement files."""
     baseline = ("lfw_development_metrics.json", "lfw_final_metrics.json", "cplfw_metrics.json", "calibrated_threshold.json")
     if all((output_root / name).is_file() for name in baseline) and any(
         (output_root / name).is_file() for name in ("duplicate_gallery_metrics_v2.json", "duplicate_gallery_metrics.json")
     ):
-        write_aggregate_reports(output_root, DEFAULT_GALLERY_MANIFEST, "raw")
+        payloads = {name: read_json_artifact(output_root / f"{name}_metrics.json")
+                    for name in ("lfw_development", "lfw_final", "cplfw")}
+        gallery_path = output_root / "duplicate_gallery_metrics_v2.json"
+        if not gallery_path.is_file():
+            gallery_path = output_root / "duplicate_gallery_metrics.json"
+        write_markdown_artifact(output_root / "FINAL_EVALUATION_REPORT.md",
+                                render_final_report(payloads, read_json_artifact(gallery_path)))
     open_set = ("bfw_open_set_protocol_summary.json", "bfw_open_set_development_metrics.json", "bfw_open_set_test_metrics.json",
                 "open_set_confidence_intervals.json", "bfw_subgroup_confidence_intervals.json")
     if all((output_root / name).is_file() for name in open_set):
@@ -17876,7 +18016,8 @@ def action_refresh_reports(output_root: Path = AGGREGATE_ROOT) -> int:
         write_markdown_artifact(output_root / "COMPARATIVE_STATISTICS_REPORT.md", render_paired_comparison_report(output_root))
     if (output_root / "comparison_diagnostics" / "comparison_diagnostics.json").is_file():
         write_markdown_artifact(output_root / "comparison_diagnostics" / "COMPARISON_DIAGNOSTICS_REPORT.md", render_comparison_diagnostics_summary(output_root))
-    written = generate_figures(aggregate_root=output_root)
+    refresh_saved_evaluation_reports(output_root)
+    written = generate_figures(aggregate_root=output_root, write_data_artifacts=False)
     write_research_assessment(output_root)
     announce(f"Refreshed reports and {len(written)} figures from saved results.")
     return 0

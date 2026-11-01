@@ -101,3 +101,77 @@ def test_research_evaluation_reports_incomplete_evidence_without_claiming_comple
     assert (tmp_path / "research_assessment.json").is_file()
     assert (tmp_path / "RESEARCH_REPORT.md").is_file()
     assert not any("feedback" in path.name.lower() or "guide" in path.name.lower() for path in tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("before,after,label", [(0.02, 0.01, "lower FPIR"),
+                                                (0.01, 0.02, "higher FPIR"),
+                                                (0.01, 0.01, "unchanged FPIR")])
+def test_classifier_description_follows_observed_rates_without_assuming_improvement(before, after, label) -> None:
+    test = {"classifier": {"fpir": after, "tpir_rank1": .8},
+            "comparator_three_image_open_set_calibrated": {"rates": {"fpir": before, "tpir_rank1": .9}}}
+    text = acp.classifier_comparison_interpretation(test)
+    assert label in text and "lower conditional TPIR@1" in text
+    assert "descriptive policy outcomes" in text and "not a paired statistical conclusion" in text
+    assert "not available" in acp.classifier_comparison_interpretation({})
+
+
+def test_legacy_pipeline_summary_does_not_substitute_conditional_for_end_to_end_detection(tmp_path: Path) -> None:
+    root = acp.AGGREGATE_ROOT
+    payload = json.loads((root / "pipeline_comparison_metrics.json").read_text())
+    baseline = payload["held_out_metrics"][acp.MODEL_VERSION]
+    comparator = next(value for name, value in payload["held_out_metrics"].items() if "arcface" in name)
+    baseline["end_to_end_duplicate_detection_rate"] = .9
+    comparator["end_to_end_duplicate_detection_rate"] = .7
+    baseline["rates"]["tpir_rank1"] = .8
+    comparator["rates"]["tpir_rank1"] = .95
+    comparator["coverage"]["complete_pipeline_latency_mean_ms"] = 1.0
+    save(tmp_path, "pipeline_comparison_metrics.json", payload)
+    text = " ".join(acp.render_pipeline_plain_summary(tmp_path).split())
+    assert "end-to-end detection 70.00%, compared with 90.00%" in text
+    assert "Conditional TPIR@1 uses only successfully scored" in text
+    assert "The improvement required" not in text
+    assert "Processing times condition on successful extraction" in text
+    assert "MiB" in text
+
+
+def test_open_set_report_does_not_claim_every_frozen_budget_is_exceeded() -> None:
+    root = acp.AGGREGATE_ROOT
+    load = lambda name: json.loads((root / name).read_text())
+    subgroups = load("bfw_subgroup_confidence_intervals.json")["subgroups"]
+    report = acp.render_open_set_report(
+        protocol_summary=load("bfw_open_set_protocol_summary.json"),
+        development=load("bfw_open_set_development_metrics.json"),
+        test=load("bfw_open_set_test_metrics.json"),
+        intervals=load("open_set_confidence_intervals.json")["intervals"],
+        per_subgroup=subgroups, disparity=acp.subgroup_disparity_summary(subgroups))
+    assert "exceeds the development target at 0.30%, 1.00%" in report
+    assert "at or below the development target at 0.10%" in report
+    assert "Each achieved test FPIR exceeds" not in report
+
+
+def test_subgroup_extremes_retain_ties_as_observations() -> None:
+    data = json.loads((acp.AGGREGATE_ROOT / "pipeline_comparison_metrics.json").read_text())
+    sections = "\n".join(acp._render_comparison_result_sections(data, data["held_out_metrics"]))
+    text = sections.split("## Subgroup extremes", 1)[1].split("## Profile-photo consistency", 1)[0]
+    assert "not statistically established subgroup rankings" in text
+    assert "lowest observed" in text and "highest observed" in text
+    assert "strongest" not in text and "weakest" not in text
+    # More than one subgroup has zero observed FPIR; the report must retain the ties.
+    baseline = next(line for line in text.splitlines() if line.startswith("- FPIR, opencv"))
+    assert "**black_females**" in baseline and "**black_males**" in baseline
+    assert "**white_females**" in baseline
+
+
+def test_lowest_timing_and_highest_detection_do_not_establish_economic_optimality(tmp_path: Path) -> None:
+    root = acp.AGGREGATE_ROOT
+    comparison = json.loads((root / "pipeline_comparison_metrics.json").read_text())
+    statistics = json.loads((root / "comparative_statistics.json").read_text())
+    for name, entry in statistics["analyses"]["full_protocol"]["pipelines"].items():
+        if name != "YuNet + SFace":
+            entry["end_to_end_duplicate_detection_rate"]["estimate"] = .1
+    save(tmp_path, "pipeline_comparison_metrics.json", comparison)
+    save(tmp_path, "comparative_statistics.json", statistics)
+    report = " ".join(acp.render_cost_and_workload_part(tmp_path).split())
+    assert "lowest processing time proxy" in report
+    assert "reviewer costs still prevent an inference of an optimal deployment policy" in report
+    assert "no balance between cost and detection is needed" not in report

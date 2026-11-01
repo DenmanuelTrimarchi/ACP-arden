@@ -117,7 +117,7 @@
       "time_ms": 20.793990622623028
     }
   },
-  "created_at": "2026-11-01T13:09:14.243277+00:00",
+  "created_at": "2026-11-01T16:00:42.976625+00:00",
   "evidence_classes": {
     "descriptive_only": "No admissible paired interval or compatible provenance supports a directional claim",
     "difference_unresolved": "A valid paired interval includes zero; no equivalence is established",
@@ -1039,6 +1039,7 @@
       "threshold": 0.333001217552
     }
   ],
+  "timing_scope": "Processing-time samples condition on successful extraction. Failed-attempt times and all-intended-upload throughput are not measured by those summaries.",
   "verification": [
     {
       "correct_decisions_per_intended_pair": 0.8933333333333333,

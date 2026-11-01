@@ -173,6 +173,12 @@ the first failed step.
 `python ACP_arden.py --help` lists all modes, including saved summary views.
 The existing reports can be read without loading models or rerunning inference.
 
+`--mode refresh-reports` rebuilds the saved evaluation reports and figures
+without changing measurement JSON, CSV or the original execution provenance.
+The research assessment remains a derived output. Classifier reports identify
+their recorded pipeline and experiment, and regenerated text retains the
+evaluation timestamp from its source artefacts.
+
 `--mode research-evaluation` (menu 29) evaluates the three existing frozen
 review budgets against the original validated development and test outcome
 caches. It performs no model inference, training or threshold selection. The
@@ -251,13 +257,14 @@ demonstrate equivalence.
 Under the recorded BFW protocol, YuNet + SFace detected 87.20% of all intended
 duplicate probes. Its conditional TPIR@1 was 92.57%, with 0.52% FPIR, or 5.25
 false referrals per 1,000 scored non-mated searches. Mean complete-pipeline
-latency was 21.72 ms per image and the weight files occupied approximately
-37.1 MiB.
+latency was 21.72 ms per successfully processed image and the weight files
+occupied approximately 37.1 MiB.
 
 SCRFD + ArcFace detected 96.70% of intended duplicate probes. Its conditional
 TPIR@1 was 96.80%, with 0.13% FPIR, or 1.34 false referrals per 1,000 scored
-non-mated searches. Mean complete-pipeline latency was 80.73 ms and weight-file
-storage was approximately 182.4 MiB. The end-to-end difference was 9.50
+non-mated searches. Mean complete-pipeline latency was 80.73 ms per successfully
+processed image and weight-file storage was approximately 182.4 MiB. The
+end-to-end difference was 9.50
 percentage points, with an exploratory paired 95% interval of 7.30–12.10. The
 higher detection rate and lower false-referral rate therefore came with
 greater processing time and model storage in this benchmark setting.
@@ -327,7 +334,9 @@ experiments; it does not guarantee identical fresh inference on another machine.
 Seeds, model hashes, dataset fingerprints, settings and software versions are
 recorded with the results.
 
-Latency is specific to the recorded environment. Mixed-pipeline timing summaries
+Latency is specific to the recorded environment and conditions on successful
+extraction. Failed attempts did not contribute timing samples, so these figures
+do not establish throughput for all intended uploads. Mixed-pipeline timings
 are stage-based estimates, and storage measurements cover weights only. False
 referrals are a workload proxy: reviewer time, decision quality, real duplicate
 prevalence and deployment costs were not measured.

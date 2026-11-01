@@ -6,6 +6,8 @@ Generated from the published JSON and CSV artefacts by `ACP_arden.py`. No value 
 
 **Metric definitions.** FPIR is the proportion of non-mated searches returning at least one candidate above threshold — a 1:N quantity that compounds with gallery size, and never interchangeable with the 1:1 false-match rate. TPIR@k is the proportion of mated searches placing the correct identity within rank k *and* above threshold; a referral to another identity is a referral, not an identification. End-to-end detection divides by every intended mated probe, so extraction failures reduce it; conditional rates divide by those actually scored.
 
+**Processing costs.** Recognition-pipeline timing samples condition on successful extraction; failed attempts did not contribute those timings. They are not measurements of throughput across all intended uploads. Mixed-pipeline times assembled from separate stages remain estimates. Detector-only intervention timings have their own sampled-image denominator.
+
 **Confidence intervals.** All intervals are 95% percentile bounds from an identity-cluster bootstrap: identities are resampled with replacement, carrying their complete protocol outcomes, with subgroup stratification preserved. Images are never resampled independently, which would treat correlated probes of one person as independent observations and understate the intervals.
 
 **Coefficients describe association inside the fitted classifier on these benchmark identities. They are not causal and do not transfer to another population.**

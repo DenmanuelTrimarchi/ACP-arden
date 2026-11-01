@@ -23,7 +23,7 @@ The study contributes a reproducible empirical comparison of four configured det
 | YuNet + ArcFace → SCRFD + ArcFace | End-to-end detection | +5.10 [+3.60, +6.90] | Exploratory interval excludes zero |
 | YuNet + ArcFace → SCRFD + ArcFace | FPIR | -0.04 [-0.21, +0.13] | Difference unresolved; interval includes zero |
 
-**Observed resource trade-off.** Mean complete processing rises from 21.72 to 80.73 ms/image; weight-file storage rises from 37.1 to 182.4 MiB. The comparator therefore uses 3.72 times the measured processing time and 4.92 times the model storage. These recorded costs exclude reviewer minutes, gallery templates, runtime memory and library binaries; they do not establish an economic optimum.
+**Observed resource trade-off.** Mean complete processing for successfully extracted images rises from 21.72 to 80.73 ms/image; weight-file storage rises from 37.1 to 182.4 MiB. The comparator therefore uses 3.72 times the measured processing time and 4.92 times the model storage. These recorded costs exclude failed-attempt timings, reviewer minutes, gallery templates, runtime memory and library binaries; they do not establish all-upload throughput or an economic optimum.
 
 **Descriptive classifier outcome, YuNet + SFace.** Threshold FPIR 0.52% becomes 0.70%; TPIR@1 92.57% becomes 94.27%. This policy comparison does not establish a general classifier benefit or deployment error rate.
 
@@ -101,7 +101,9 @@ FPIR 0.52%, TPIR@1 92.57%, 5.2 false reviews per 1,000. Comparing this row with 
 
 FPIR 0.70% against the threshold method's 0.52%; TPIR@1 94.27% against 92.57%; 7.00 false reviews per 1,000 against 5.25.
 
-The primary hypothesis was that the classifier would reduce false review referrals while retaining detection. That criterion is **not achieved**. The classifier raises identification while referring more non-mated benchmark searches, which is a trade-off rather than an improvement.
+The primary hypothesis was that the classifier would reduce false review referrals while retaining detection. That criterion is **not achieved**.
+
+The recorded classifier has higher FPIR (0.70% versus 0.52%) and higher conditional TPIR@1 (94.27% versus 92.57%). These are descriptive policy outcomes, not a paired statistical conclusion or a general benefit of adding a classifier.
 
 ## 7. Female subgroup analysis
 
@@ -145,8 +147,8 @@ A non-match indicates that the photograph is inconsistent with the enrolled faci
 
 | Pipeline | End-to-end (95% CI) | Zero-face | Multiple-face | Embed mean | Complete mean | Model size |
 | --- | --- | --- | --- | --- | --- | --- |
-| insightface-scrfd-arcface-buffalo_l | 96.70% [95.40%–97.90%] | 2 | 12 | 52.78 ms | 80.73 ms | 182.4 MB |
-| opencv-sface-2021dec-yunet-2023mar | 87.20% [84.30%–89.90%] | 189 | 0 | 17.89 ms | 21.72 ms | 37.1 MB |
+| insightface-scrfd-arcface-buffalo_l | 96.70% [95.40%–97.90%] | 2 | 12 | 52.78 ms | 80.73 ms | 182.4 MiB |
+| opencv-sface-2021dec-yunet-2023mar | 87.20% [84.30%–89.90%] | 189 | 0 | 17.89 ms | 21.72 ms | 37.1 MiB |
 
 Each pipeline was calibrated on its own development scores; the SFace threshold is never applied to ArcFace. This is a complete-pipeline comparison — detection, alignment, preprocessing, embedding width and runtime all differ — so no difference is attributable to the embedding model alone.
 
@@ -215,8 +217,8 @@ The following summary reads the saved measurements. Mixed-pipeline times are est
 ```text
 WHAT EACH COMBINATION COSTS AND WHAT IT BUYS
 
-  Combination      End to end detection (95% CI)  False reviews per 1,000 (95% CI)  Detection and embedding, ms  Model storage, MB
-  ---------------  -----------------------------  --------------------------------  ---------------------------  -----------------
+  Combination      End to end detection (95% CI)  False reviews per 1,000 (95% CI)  Detection and embedding, ms  Model storage, MiB
+  ---------------  -----------------------------  --------------------------------  ---------------------------  ------------------
   YuNet + SFace    87.20% (84.30 to 90.00)        5.25 (1.77 to 9.11)               20.79                        37.1
   SCRFD + SFace    94.90% (93.30 to 96.30)        6.36 (2.68 to 11.04)              44.32 (estimated)            53.0
   YuNet + ArcFace  91.60% (89.40 to 93.60)        1.75 (0.35 to 3.49)               55.68 (estimated)            166.5
@@ -225,27 +227,32 @@ WHAT EACH COMBINATION COSTS AND WHAT IT BUYS
 End to end detection counts every intended known duplicate, including
 photographs that could not be processed. False reviews are counted per 1,000
 new profile photographs that were processed. Times are the mean detection plus
-the mean embedding per image from the pipeline comparison run. The two crossed
-combinations were not timed in that run, so their time adds one pipeline's
-detection to the other's embedding and is marked (estimated). Storage is the
-size of the two weight files. The saved MB fields use binary megabytes (MiB);
-gallery templates and runtime memory are not included.
+the mean embedding per successfully processed image from the pipeline
+comparison run. The two crossed combinations were not timed in that run, so
+their time adds one pipeline's detection to the other's embedding and is
+marked (estimated). Storage is the size of the two weight files. The saved MB
+fields use binary megabytes (MiB); gallery templates and runtime memory are
+not included. These timing summaries condition on successful extraction and do
+not include the time spent on failed attempts.
 
 Starting from YuNet + SFace, swapping YuNet for SCRFD adds 23.52 ms per image
-and 15.9 MB of storage, and raises end to end detection from 87.20% to 94.90%.
+and 15.9 MiB of storage, and raises end to end detection from 87.20% to
+94.90%.
 
-Swapping SFace for ArcFace adds 34.89 ms per image and 129.4 MB of storage,
+Swapping SFace for ArcFace adds 34.89 ms per image and 129.4 MiB of storage,
 and cuts false reviews from 5.25 to 1.75 per 1,000 new profiles.
 
 YuNet + SFace is the cheapest combination and SCRFD + ArcFace detects the most
-duplicates. For 100,000 uploads, YuNet + SFace would need about 36 minutes of
-processing, and SCRFD + ArcFace about 2 hours 15 minutes. These use the
-complete time per image measured on the machine used for these runs, which
-also counts loading the photograph. For every 100,000 new profiles processed,
-SCRFD + ArcFace would raise roughly 390 fewer false reviews. Of every 1,000
-known duplicates, it would find about 95 more. Reviewer cost and the harm of a
-missed duplicate were not measured, so these figures cannot say which
-combination is worth its cost.
+duplicates. For 100,000 successfully processed images, YuNet + SFace would
+need about 36 minutes of processing, and SCRFD + ArcFace about 2 hours 15
+minutes. These are successful processing timing proxies from the recorded
+machine, including image loading. Failed attempts did not contribute timing
+samples; their cost and the successful extraction rate prevent these figures
+from estimating throughput for all intended uploads. For every 100,000 new
+profiles processed, SCRFD + ArcFace would raise roughly 390 fewer false
+reviews. Of every 1,000 known duplicates, it would find about 95 more.
+Reviewer cost and the harm of a missed duplicate were not measured, so these
+figures cannot say which combination is worth its cost.
 ```
 
 ## 11a. Additional controlled diagnostics

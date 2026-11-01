@@ -44,11 +44,13 @@ The middle row isolates the observed enrolment change at the transferred thresho
 
 | Target FPIR | Threshold | Achieved test FPIR | TPIR@1 |
 | --- | --- | --- | --- |
-| 0.001 | 0.7110 | 0.00% | 42.99% |
-| 0.003 | 0.4771 | 0.52% | 92.57% |
-| 0.01 | 0.4394 | 1.78% | 94.69% |
+| 0.10% | 0.7110 | 0.00% | 42.99% |
+| 0.30% | 0.4771 | 0.52% | 92.57% |
+| 1.00% | 0.4394 | 1.78% | 94.69% |
 
-Each achieved test FPIR exceeds the target it was calibrated for. That gap is the cost of holding the threshold fixed across disjoint identities and is the reason the policy is frozen on development data before the test partition is scored — recalibrating on these figures would make them meaningless.
+Observed test FPIR exceeds the development target at 0.30%, 1.00%. Observed test FPIR is at or below the development target at 0.10%.
+
+A development constraint does not guarantee the realised rate on new identities. The policies remain frozen; selecting a replacement threshold from these test outcomes would bias the estimate of held-out performance. Zero observed events do not establish zero population risk.
 
 ### Coverage (quoted with every rate above)
 
