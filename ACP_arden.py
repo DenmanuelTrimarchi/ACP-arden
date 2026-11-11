@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """COM7014 Advanced Computing Project: duplicate-profile screening.
 
-Compare four frozen pretrained detector-recogniser combinations assembled from
+Research question:
+
+How effectively can pretrained face models screen new profile photographs for
+duplicate identities under a human-review policy, once unprocessed photographs
+are counted, and which combination of detector and recogniser best balances
+duplicates detected, moderator workload and computational cost?
+
+Compare four pretrained detector-recogniser combinations assembled from
 YuNet, SCRFD, SFace and ArcFace. The evaluation covers LFW verification, raw
 CPLFW threshold transfer and a project-defined BFW open-set gallery protocol.
 It records processing coverage, rank-aware identification, false referrals,
