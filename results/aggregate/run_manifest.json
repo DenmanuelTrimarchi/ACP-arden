@@ -1,0 +1,41 @@
+{
+  "artifact_type": "run_manifest",
+  "cplfw_image_variant": "raw",
+  "created_at": "2026-07-30T16:24:42.755478+00:00",
+  "dataset_root_variable": "FACE_DATA_ROOT",
+  "dataset_storage": "private, gitignored local research storage; path omitted from public artifacts",
+  "frozen_threshold": 0.3630116835391414,
+  "frozen_threshold_candidate": "balanced_accuracy",
+  "gallery_manifest": "results/raw/gallery_manifest.json",
+  "model_root_variable": "FACE_MODEL_ROOT",
+  "output_file_sha256": {
+    "calibrated_threshold.json": "aab80f173ccc9201153a4a95872947d999792511d31041402f1db021f7a11a59",
+    "cplfw_metrics.json": "2066653b6106e7604f13d0d54b70a661e6cf017b5cf2f8bd865ba75982b49a64",
+    "duplicate_gallery_metrics.json": "8e8d80cb532beb9aa3dfbf39d8d0218be5b98183ef01437334e2abcf4809ec01",
+    "lfw_development_metrics.json": "7502b59d109e5ab796ba1348ff77d4a9a48fe03e1c2d5298f7a39080ec9e4c9d",
+    "lfw_final_metrics.json": "0b3c37aa69a6d3ead62333de28e73195f1edec64f20fc84e1fe87bafa5d80030"
+  },
+  "output_root": "results/aggregate",
+  "produced_by": "ACP_arden.py --mode full",
+  "protocol_root_variable": "FACE_PROTOCOL_ROOT",
+  "schema_version": 1,
+  "software_environment": {
+    "dependencies": {
+      "Pillow": {
+        "expected": "12.3.0",
+        "installed": "12.3.0"
+      },
+      "numpy": {
+        "expected": "2.5.1",
+        "installed": "2.5.1"
+      },
+      "opencv-python-headless": {
+        "expected": "4.13.0.92",
+        "installed": "4.13.0.92"
+      }
+    },
+    "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",
+    "processor": "arm",
+    "python_version": "3.13.0"
+  }
+}
