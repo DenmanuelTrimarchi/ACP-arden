@@ -1,0 +1,177 @@
+{
+  "artifact_type": "detector_settings_plan",
+  "cohorts": {
+    "BFW_development": {
+      "identities": 128,
+      "image_content_sha256": "722be2fbcdccfb401e391fc5ea7bc31da240391826d2e2c84e083321d54199de",
+      "images": 256
+    },
+    "BFW_test": {
+      "identities": 128,
+      "image_content_sha256": "824fb79e25b7ae9bde78f6d15809d2cd1be722ba448926a0c2fc0472b41d0261",
+      "images": 256
+    },
+    "CPLFW_raw": {
+      "identities": 128,
+      "image_content_sha256": "b23dcd8776239df330f4438e1db20583fa9f5fb85146235a58a770e368f49152",
+      "images": 256
+    },
+    "LFW_development": {
+      "identities": 128,
+      "image_content_sha256": "21de642ce6e9012e6a742708eea4018cdcf1dc0af4afd85da7598893207e081b",
+      "images": 256
+    }
+  },
+  "created_at": "2026-10-04T22:08:11.529741+00:00",
+  "detector_model_bytes": {
+    "SCRFD": 16923827,
+    "YuNet": 232589
+  },
+  "execution": {
+    "bitwise_reproducible_across_processes": false,
+    "opencv_opencl_enabled": false,
+    "opencv_parallel_framework": "GCD",
+    "opencv_threads_reported": 1,
+    "reproducibility_mechanism": "Canonical run cache. Detection is not bit-stable across fresh processes on this platform, so every derived artefact reads one cached extraction rather than re-deriving it."
+  },
+  "identities_per_cohort": 128,
+  "images_per_identity": 2,
+  "model_sha256": {
+    "SCRFD": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+    "YuNet": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
+  },
+  "revision": "fixed-images-one-factor-v1",
+  "schema_version": 1,
+  "scope": "Exploratory fixed-image detector intervention; main recognition policies unchanged; no configuration selected",
+  "scrfd_implementation_sha256": "ccb57a22db4977a558a4a9defb008c9d71edae6e6b88cdf8b1fcdf65e72a5bde",
+  "scrfd_nms": 0.4,
+  "seed": 20261004,
+  "selection": "Seeded, outcome-independent, equal images per identity; balanced BFW subgroup/role strata; at least two eligible images required",
+  "settings": [
+    {
+      "canvas": null,
+      "confidence": 0.9,
+      "detector": "YuNet",
+      "factor": "baseline",
+      "name": "YuNet_baseline"
+    },
+    {
+      "canvas": null,
+      "confidence": 0.7,
+      "detector": "YuNet",
+      "factor": "confidence",
+      "name": "YuNet_confidence_0.7"
+    },
+    {
+      "canvas": null,
+      "confidence": 0.8,
+      "detector": "YuNet",
+      "factor": "confidence",
+      "name": "YuNet_confidence_0.8"
+    },
+    {
+      "canvas": null,
+      "confidence": 0.95,
+      "detector": "YuNet",
+      "factor": "confidence",
+      "name": "YuNet_confidence_0.95"
+    },
+    {
+      "canvas": 320,
+      "confidence": 0.9,
+      "detector": "YuNet",
+      "factor": "canvas",
+      "name": "YuNet_canvas_320"
+    },
+    {
+      "canvas": 640,
+      "confidence": 0.9,
+      "detector": "YuNet",
+      "factor": "canvas",
+      "name": "YuNet_canvas_640"
+    },
+    {
+      "canvas": null,
+      "confidence": 0.9,
+      "detector": "YuNet",
+      "factor": "repeat_control",
+      "name": "YuNet_repeat"
+    },
+    {
+      "canvas": 320,
+      "confidence": 0.5,
+      "detector": "SCRFD",
+      "factor": "baseline",
+      "name": "SCRFD_baseline"
+    },
+    {
+      "canvas": 320,
+      "confidence": 0.3,
+      "detector": "SCRFD",
+      "factor": "confidence",
+      "name": "SCRFD_confidence_0.3"
+    },
+    {
+      "canvas": 320,
+      "confidence": 0.7,
+      "detector": "SCRFD",
+      "factor": "confidence",
+      "name": "SCRFD_confidence_0.7"
+    },
+    {
+      "canvas": 320,
+      "confidence": 0.9,
+      "detector": "SCRFD",
+      "factor": "confidence",
+      "name": "SCRFD_confidence_0.9"
+    },
+    {
+      "canvas": 160,
+      "confidence": 0.5,
+      "detector": "SCRFD",
+      "factor": "canvas",
+      "name": "SCRFD_canvas_160"
+    },
+    {
+      "canvas": 640,
+      "confidence": 0.5,
+      "detector": "SCRFD",
+      "factor": "canvas",
+      "name": "SCRFD_canvas_640"
+    },
+    {
+      "canvas": 320,
+      "confidence": 0.5,
+      "detector": "SCRFD",
+      "factor": "repeat_control",
+      "name": "SCRFD_repeat"
+    }
+  ],
+  "software_environment": {
+    "dependencies": {
+      "Pillow": {
+        "expected": "12.3.0",
+        "installed": "12.3.0"
+      },
+      "numpy": {
+        "expected": "2.5.1",
+        "installed": "2.5.1"
+      },
+      "opencv-python-headless": {
+        "expected": "4.13.0.92",
+        "installed": "4.13.0.92"
+      },
+      "scikit-learn": {
+        "expected": "1.9.0",
+        "installed": "1.9.0"
+      }
+    },
+    "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",
+    "processor": "arm",
+    "python_version": "3.13.0"
+  },
+  "status": "frozen_before_measurement",
+  "study_implementation_sha256": "f85f6c89b4224ad155fe56ce0b3ad94d8e4a61a96956809e5d2291aaeea16c7f",
+  "yunet_nms": 0.3,
+  "yunet_top_k": 5000
+}

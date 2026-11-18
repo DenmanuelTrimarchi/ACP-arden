@@ -1,0 +1,48 @@
+{
+  "artifact_type": "run_manifest",
+  "cplfw_image_variant": "raw",
+  "created_at": "2026-10-03T09:22:52.714650+00:00",
+  "dataset_root_variable": "FACE_DATA_ROOT",
+  "dataset_storage": "private, gitignored local research storage; path omitted from public artifacts",
+  "frozen_threshold": 0.3630116835391414,
+  "frozen_threshold_candidate": "balanced_accuracy",
+  "frozen_threshold_scope": "CPLFW and gallery transfer only; final LFW has per-fold training thresholds",
+  "gallery_manifest": "results/raw/gallery_manifest.json",
+  "lfw_evaluation_protocol": "lfw_official_10_fold_cross_validation",
+  "model_root_variable": "FACE_MODEL_ROOT",
+  "opaque_id_version": "hmac-sha256-v1",
+  "output_file_sha256": {
+    "calibrated_threshold.json": "f32cd16c97b6b29f2bbf1947fff65e1ca55382a651f13cd1e9f2be82e1da611e",
+    "cplfw_metrics.json": "7e6f4e5e285870dc5dcc7ff9623ae9375e90b1b0d4d8a05c6f5c1acc60a5e7ba",
+    "duplicate_gallery_metrics_v2.json": "9a3fc2126d0e40c14e2a6c1cffd09572dedf18934f9b34eeba1717417873dd7a",
+    "lfw_development_metrics.json": "e941b7d9d3dbbf422d5e76ce01bdbf6bfc025050c52c4d60c582b55a8a72376f",
+    "lfw_final_metrics.json": "a1483642c4d5f08e3816f0101fb401f2232d0df3175a4e835507c1bccc262ddc"
+  },
+  "output_root": "results/aggregate",
+  "produced_by": "ACP_arden.py --mode full",
+  "protocol_root_variable": "FACE_PROTOCOL_ROOT",
+  "schema_version": 1,
+  "software_environment": {
+    "dependencies": {
+      "Pillow": {
+        "expected": "12.3.0",
+        "installed": "12.3.0"
+      },
+      "numpy": {
+        "expected": "2.5.1",
+        "installed": "2.5.1"
+      },
+      "opencv-python-headless": {
+        "expected": "4.13.0.92",
+        "installed": "4.13.0.92"
+      },
+      "scikit-learn": {
+        "expected": "1.9.0",
+        "installed": "1.9.0"
+      }
+    },
+    "platform": "macOS-14.8.3-arm64-arm-64bit-Mach-O",
+    "processor": "arm",
+    "python_version": "3.13.0"
+  }
+}
