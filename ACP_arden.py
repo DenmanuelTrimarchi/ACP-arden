@@ -4,15 +4,16 @@
 Research question:
 
 How effectively can pretrained face recognition models flag possible duplicate
-profiles from newly submitted photographs for human review, once unprocessed
-photographs are counted, and which combination of detector and recogniser best
-balances duplicate detection, moderator workload and computational cost?
+profiles from newly submitted photographs when photographs that cannot be
+processed are included in the evaluation? Which combination of detector and
+recogniser offers the best balance between duplicate detection, referrals for
+human review and computational cost?
 
 Compare four pretrained detector-recogniser combinations assembled from
 YuNet, SCRFD, SFace and ArcFace. The evaluation covers LFW verification, raw
 CPLFW threshold transfer and a project-defined BFW open-set gallery protocol.
-It records processing coverage, rank-aware identification, false referrals,
-latency and model storage. A logistic-regression review classifier is fitted
+It records processing coverage, correct identifications, all photographs
+flagged for review, false referrals, latency and model storage. A logistic-regression review classifier is fitted
 on development identities separately from the face models.
 
 Development and test boundaries are enforced independently for each task:
@@ -94,10 +95,11 @@ PROGRAMME_VERSION = "1.0.0"
 
 # Shared wording for the introduction and generated research reports.
 RESEARCH_QUESTION = (
-    "How effectively can pretrained face recognition models flag possible duplicate "
-    "profiles from newly submitted photographs for human review, once unprocessed "
-    "photographs are counted, and which combination of detector and recogniser best "
-    "balances duplicate detection, moderator workload and computational cost?"
+    "How effectively can pretrained face recognition models flag possible "
+    "duplicate profiles from newly submitted photographs when photographs that "
+    "cannot be processed are included in the evaluation? Which combination of "
+    "detector and recogniser offers the best balance between duplicate "
+    "detection, referrals for human review and computational cost?"
 )
 
 # Every path in this programme is derived from the file's own location, so the
@@ -12206,6 +12208,43 @@ def build_research_assessment(aggregate_root: Path = AGGREGATE_ROOT) -> Dict[str
     }
 
 
+def _primary_referral_table(root: Path) -> str:
+    """Count each flagged photograph once using the validated frozen BFW outcomes."""
+    saved = _current_threshold_sensitivity(root)
+    if saved.get("primary_fpir_target") != PRIMARY_FPIR_TARGET:
+        return ""
+    rows = []
+    sizes: Set[Tuple[int, int]] = set()
+    for name in COMPARISON_PIPELINE_ORDER:
+        point = _artefact_value(saved, "pipelines", name, "test_operating_points", str(PRIMARY_FPIR_TARGET))
+        if not isinstance(point, dict):
+            return ""
+        counts = [point.get(key) for key in (
+            "intended_mated_probes", "intended_non_mated_probes", "mated_correct_rank1_referred",
+            "mated_wrong_identity_referred", "non_mated_incorrectly_referred")]
+        if any(type(n) is not int or n < 0 for n in counts):
+            return ""
+        known, new, correct, wrong, absent = cast(List[int], counts)
+        if not known or not new or correct + wrong > known or absent > new:
+            return ""
+        sizes.add((known, new))
+        rows.append(f"| {name} | {correct:,} | {wrong:,} | {absent:,} | {correct + wrong + absent:,} |")
+    if len(sizes) != 1:
+        return ""
+    known, new = sizes.pop()
+    return "\n".join([
+        f"**Photographs flagged for review at the primary BFW policy.** Each pipeline was evaluated "
+        f"on {known:,} known duplicates and {new:,} new profiles. Unprocessed photographs remain in "
+        "those counts and generate no match referral.", "",
+        "| Pipeline | Correct duplicate referrals | Duplicate referred to the wrong identity | "
+        "New profile referred in error | Total photographs flagged |",
+        "| --- | ---: | ---: | ---: | ---: |", *rows, "",
+        "The last column adds the three distinct referral outcomes. Each photograph counts once. "
+        "A system can flag fewer new profiles in error and still refer more photographs if it finds "
+        "more genuine duplicates. These counts do not measure the time spent on review.",
+    ])
+
+
 def render_research_assessment(aggregate_root: Path = AGGREGATE_ROOT) -> str:
     """Lead with the research argument; detailed measurements remain separately expandable."""
     root = Path(aggregate_root)
@@ -12217,6 +12256,9 @@ def render_research_assessment(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "performance, with resource costs and paired uncertainty retained. The "
         "contribution is the demonstrated relationships and executable controls, rather "
         "than applying a face lookup to another dataset or proposing a new general method."]
+    referrals = _primary_referral_table(root)
+    if referrals:
+        paragraphs.append(referrals)
     verification = data["verification"]
     if verification:
         cells = [f"{row['pipeline']}: conditional mean fold accuracy "
@@ -12364,13 +12406,12 @@ def render_research_report(aggregate_root: Path = AGGREGATE_ROOT) -> str:
         "",
         "**Research question.** " + RESEARCH_QUESTION,
         "",
-        "**Research objective.** Compare how effectively the configured pipelines flag "
-        "known duplicate profiles when unprocessed photographs remain in the denominator. "
-        "Assess the balance between detection, false referrals and computational cost, "
-        "while retaining the limits of the subgroup analysis. False referrals indicate "
-        "potential moderator workload; reviewer time and decision quality were not "
-        "measured. The face networks remain pretrained and frozen; only the review "
-        "classifier is fitted here.",
+        "**Research objective.** Count every intended duplicate, including photographs "
+        "that could not be processed. Compare detections, photographs flagged for review "
+        "and computational cost. A correct match also generates a referral, so the "
+        "number of new profiles flagged in error is only part of the total. Reviewer "
+        "time and decisions were not measured. Subgroup findings describe this benchmark. "
+        "The face networks remain frozen; only the review classifier is fitted here.",
         "",
         render_research_assessment(aggregate_root),
         "", "<details>",
@@ -14141,10 +14182,11 @@ Research question:
 {RESEARCH_QUESTION}
 
 Research objective:
-Count unprocessed photographs when measuring duplicate detection, then compare
-the configured pipelines through detection, false referrals and computational
-cost. False referrals indicate potential moderator workload; reviewer time and
-decision quality were not measured. Subgroup findings remain descriptive.
+Count every intended duplicate, including photographs that could not be
+processed. Compare the duplicates found, the total photographs flagged for
+review and the computing cost. A correct match also generates a referral.
+No reviewer time or decisions were measured. Subgroup findings describe this
+benchmark.
 
 The programme does not automatically identify fraud, ban users or prove that
 two profiles belong to the same person.
@@ -16446,7 +16488,9 @@ def render_overall_conclusion(aggregate_root: Path = AGGREGATE_ROOT) -> str:
             f"among the evaluated configurations: {format_percentage(detection)} of "
             f"intended mated probes, compared with conditional TPIR@1 "
             f"{format_percentage(conditional)}. The paired intervals are exploratory; "
-            "this ranking does not establish universal, architecture-only or economic superiority."
+            "this ranking does not establish universal, architecture-only or economic superiority. "
+            "The research summary counts all match referrals, including genuine duplicates as well as "
+            "photographs flagged in error. Reviewer time was not measured."
         ), ""]
     elif pipeline and pipeline.get("evaluated") == "yes":
         held_out = pipeline.get("held_out_metrics") or {}

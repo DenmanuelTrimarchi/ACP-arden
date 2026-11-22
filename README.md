@@ -4,16 +4,13 @@ This COM7014 Advanced Computing Project examines how pretrained face detection
 and recognition models can support duplicate-profile screening under a
 human-review policy. It is designed to answer the following research question:
 
-> How effectively can pretrained face recognition models flag possible duplicate profiles from newly submitted photographs for human review, once unprocessed photographs are counted, and which combination of detector and recogniser best balances duplicate detection, moderator workload and computational cost?
+> How effectively can pretrained face recognition models flag possible duplicate profiles from newly submitted photographs when photographs that cannot be processed are included in the evaluation? Which combination of detector and recogniser offers the best balance between duplicate detection, referrals for human review and computational cost?
 
-The first part of the question concerns effectiveness across all intended
-photographs. Failed face extraction and unsuccessful enrolment remain in the
-denominator for duplicate detection. The second part concerns the balance
-between detection, review referrals and computational cost across four
-detector–recogniser combinations and three frozen review budgets. False
-referrals indicate part of potential moderator workload; reviewer time and
-decision quality were not measured. Processing time and model storage
-describe the recorded computing cost.
+The evaluation counts every intended known duplicate, even when a photograph
+cannot be processed. It also counts each photograph flagged for review. A known
+duplicate can be referred against the correct or the wrong identity; a new
+profile can be referred in error. These are distinct outcomes. Processing time
+and model storage were measured, but reviewer time and decisions were not.
 
 The programme compares a submitted photograph with a gallery of enrolled
 reference identities. Potential matches are referred for human review. A
@@ -52,7 +49,7 @@ comparisons and analyses of specific settings examine how component choice,
 thresholds, gallery size and detector settings affect the results. The study's
 contribution is an empirical assessment of these configured screening
 pipelines: it brings processing coverage, correct duplicate identification,
-false referrals and computational cost into the same evaluation.
+total referrals, false referrals and computational cost into the same evaluation.
 
 ## Installation
 
@@ -263,21 +260,34 @@ demonstrate equivalence.
 
 ## Main findings
 
-At the primary development FPIR target of 0.3%, the recorded BFW results show
-a trade-off between duplicate detection and computational cost.
-YuNet + SFace detected 87.20% of all intended duplicate probes. Its conditional
-TPIR@1 was 92.57%, with 0.52% FPIR, or 5.25 false referrals per 1,000 scored
-non-mated searches. Mean complete-pipeline latency was 21.72 ms per successfully
-processed image and the weight files occupied approximately 37.1 MiB.
+At the primary BFW policy (0.30% development FPIR target), SCRFD + ArcFace
+correctly flagged **967 of 1,000 known duplicates (96.70%)**, against
+**872 (87.20%)** for YuNet + SFace. Both rates include unprocessed photographs
+as missed duplicates. The difference was 9.50 percentage points (exploratory
+paired 95% interval 7.30–12.10).
 
-SCRFD + ArcFace detected 96.70% of intended duplicate probes. Its conditional
-TPIR@1 was 96.80%, with 0.13% FPIR, or 1.34 false referrals per 1,000 scored
-non-mated searches. Mean complete-pipeline latency was 80.73 ms per successfully
-processed image and weight-file storage was approximately 182.4 MiB. The
-end-to-end difference was 9.50
-percentage points, with an exploratory paired 95% interval of 7.30–12.10. The
-higher detection rate and lower false-referral rate therefore came with
-greater processing time and model storage in this benchmark setting.
+Each pipeline saw the same 1,000 known duplicates and 3,000 new profiles.
+The counts below come from the primary operating point in
+[threshold_sensitivity.json](results/aggregate/threshold_sensitivity.json).
+
+| Pipeline | Duplicates correctly flagged | Known duplicates flagged against the wrong identity | New profiles flagged in error | Total photographs flagged |
+| --- | ---: | ---: | ---: | ---: |
+| YuNet + SFace | 872 | 1 | 15 | 888 |
+| SCRFD + SFace | 949 | 1 | 19 | 969 |
+| YuNet + ArcFace | 916 | 1 | 5 | 922 |
+| SCRFD + ArcFace | 967 | 1 | 4 | 972 |
+
+SCRFD + ArcFace wrongly flagged four new profiles rather than 15. Yet it sent
+more photographs for review overall (972 rather than 888) because it found
+more duplicates. Among scored new profiles, the respective false referral rates
+were 1.34 and 5.25 per 1,000 (0.13% and 0.52%). Conditional TPIR@1 was
+96.80% and 92.57%; these rates exclude unprocessed duplicates.
+
+The extra detections had a computing cost. Mean complete processing time for
+successful extractions was 80.73 ms with SCRFD + ArcFace and 21.72 ms with
+YuNet + SFace. Their model weights occupied 182.4 MiB and 37.1 MiB respectively.
+SCRFD + ArcFace was the stronger choice on this task when finding duplicates
+justified the extra processing and storage; YuNet + SFace was less costly.
 
 The ranking changes with the frozen review budget. At the stricter 0.1%
 development FPIR target, YuNet + ArcFace detected 47.20% of intended duplicate
@@ -293,20 +303,16 @@ preprocessing and separately calibrated thresholds remain part of each
 configuration, so the comparison does not isolate a network architecture or
 training-loss effect.
 
-The logistic-regression review classifier did not reduce false referrals on
-the baseline pipeline: they increased from 15 to 20, despite higher conditional
-TPIR@1. The outcome differs on the ArcFace pipeline, so the results do not
-establish a consistent benefit from adding the classifier. Its contribution
-depends on the pipeline and the operating policy under evaluation.
+With the YuNet + SFace review classifier, false referrals increased from 15
+to 20. With SCRFD + ArcFace, they fell from four to zero. With so few errors,
+neither change establishes a reliable improvement. Zero observed errors do
+not establish zero underlying risk.
 
-In relation to the research question, SCRFD + ArcFace detected the most
-duplicates at the primary operating point, while YuNet + SFace required less
-processing time and model storage. YuNet + ArcFace achieved the highest
-duplicate-detection rate at the strictest tested budget. The preferred
-combination therefore depends on the review policy and the relative importance
-of detection, false referrals and computational cost. These benchmark results
-support that comparison, but do not establish an operational optimum: moderator
-time, real duplicate prevalence and service-specific costs were not measured.
+The two pair benchmarks answer a different part of the question. Counting
+all intended pairs favoured YuNet + SFace on LFW but SCRFD + ArcFace on raw
+CPLFW. In the gallery test, the preferred pipeline depended on the referral
+policy and the resources available. No service prevalence, reviewer time or
+financial cost of operating a live service was measured.
 
 The evaluation was repeated only to test computational reproducibility;
 no repeated held-out result influenced model selection, threshold selection
