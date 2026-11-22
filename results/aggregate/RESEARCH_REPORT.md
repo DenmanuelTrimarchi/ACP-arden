@@ -2,15 +2,26 @@
 
 Generated from saved benchmark artefacts. The research assessment leads with methodological choices, comparative findings and limits; detailed experiment measurements follow in an expandable section.
 
-**Research question.** How effectively can pretrained face recognition models flag possible duplicate profiles from newly submitted photographs for human review, once unprocessed photographs are counted, and which combination of detector and recogniser best balances duplicate detection, moderator workload and computational cost?
+**Research question.** How effectively can pretrained face recognition models flag possible duplicate profiles from newly submitted photographs when photographs that cannot be processed are included in the evaluation? Which combination of detector and recogniser offers the best balance between duplicate detection, referrals for human review and computational cost?
 
-**Research objective.** Compare how effectively the configured pipelines flag known duplicate profiles when unprocessed photographs remain in the denominator. Assess the balance between detection, false referrals and computational cost, while retaining the limits of the subgroup analysis. False referrals indicate potential moderator workload; reviewer time and decision quality were not measured. The face networks remain pretrained and frozen; only the review classifier is fitted here.
+**Research objective.** Count every intended duplicate, including photographs that could not be processed. Compare detections, photographs flagged for review and computational cost. A correct match also generates a referral, so the number of new profiles flagged in error is only part of the total. Reviewer time and decisions were not measured. Subgroup findings describe this benchmark. The face networks remain frozen; only the review classifier is fitted here.
 
 ## Research assessment
 
 ### Contribution and principal findings
 
 The study contributes a reproducible empirical comparison of four configured detector–recogniser pipelines. Its added evidence concerns how coverage, calibration and review policies alter the interpretation of recognition performance, with resource costs and paired uncertainty retained. The contribution is the demonstrated relationships and executable controls, rather than applying a face lookup to another dataset or proposing a new general method.
+
+**Photographs flagged for review at the primary BFW policy.** Each pipeline was evaluated on 1,000 known duplicates and 3,000 new profiles. Unprocessed photographs remain in those counts and generate no match referral.
+
+| Pipeline | Correct duplicate referrals | Duplicate referred to the wrong identity | New profile referred in error | Total photographs flagged |
+| --- | ---: | ---: | ---: | ---: |
+| YuNet + SFace | 872 | 1 | 15 | 888 |
+| SCRFD + SFace | 949 | 1 | 19 | 969 |
+| YuNet + ArcFace | 916 | 1 | 5 | 922 |
+| SCRFD + ArcFace | 967 | 1 | 4 | 972 |
+
+The last column adds the three distinct referral outcomes. Each photograph counts once. A system can flag fewer new profiles in error and still refer more photographs if it finds more genuine duplicates. These counts do not measure the time spent on review.
 
 **Observed coverage effect.** YuNet + SFace: conditional mean fold accuracy 99.28%, coverage 89.98%, and correct decisions across all intended pairs 89.33%; SCRFD + ArcFace: conditional mean fold accuracy 99.79%, coverage 70.10%, and correct decisions across all intended pairs 69.95%. A high conditional score does not by itself determine the complete-pipeline result. These are different successful subsets, not an isolated recogniser comparison.
 

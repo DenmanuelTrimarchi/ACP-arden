@@ -4,7 +4,7 @@ Generated from saved evaluation results on 2026-11-01T16:00:31.608616+00:00. Eve
 
 ## Research question
 
-How effectively can pretrained face recognition models flag possible duplicate profiles from newly submitted photographs for human review, once unprocessed photographs are counted, and which combination of detector and recogniser best balances duplicate detection, moderator workload and computational cost?
+How effectively can pretrained face recognition models flag possible duplicate profiles from newly submitted photographs when photographs that cannot be processed are included in the evaluation? Which combination of detector and recogniser offers the best balance between duplicate detection, referrals for human review and computational cost?
 
 ## Experiments 1–2 — threshold calibration and selection
 
